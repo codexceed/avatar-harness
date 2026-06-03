@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.pyright/
+.uv-cache/
+
+# uv lockfile is committed; keep it. (uv.lock intentionally NOT ignored)
+
+# Harness runtime artifacts
+*.log
+events/
+*.jsonl
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
