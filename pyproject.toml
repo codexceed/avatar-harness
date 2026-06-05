@@ -17,7 +17,7 @@ dependencies = [
     "rich>=13.7",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "ruff>=0.5",
     "pyright>=1.1.370",

@@ -681,6 +681,8 @@ Order chosen so each step plugs into the previous:
 
 The first useful version can: accept a natural-language task; inspect relevant files; apply a small patch; run at least one verifier command; stop after bounded attempts; produce a clear summary with changed files and evidence; and leave an event log that explains what happened.
 
+> The 12 steps above order the *engine* components. The interactive terminal session that wraps them (§23) is built as a later phase. `PROGRESS.md` holds the authoritative phased build plan — grouped into demonstrable, test-gated milestones — and the live status; this section is the component-level decomposition it draws from.
+
 ## 21. Later extensions
 
 Once the MVP is reliable: AST/symbol-index retrieval · test-target inference · dependency-graph awareness · patch rollback on failed attempts · human approval checkpoints · branch-per-task workflow · PR creation · remote sandbox execution · multi-agent roles · A2A integration.
@@ -704,3 +706,107 @@ Harness design balances autonomy ↔ control, speed ↔ reliability, power ↔ s
 > Make the agent **reliable** first, then slowly increase autonomy.
 
 The useful first product is not a fully autonomous engineer. It is a bounded assistant that can inspect, edit, verify, and explain its work — with enough structure that failures are observable and recoverable.
+
+## 23. Interaction layer — the interactive terminal session
+
+§1–22 specify the **engine**: `run(goal) → Artifact`, a task executor that hands off, runs to a terminal outcome, and returns. The end goal — a terminal coding agent in the shape of a conversational assistant — is a **persistent session** that wraps that engine in a REPL. This section adds the session; **the engine is unchanged.** The interaction layer is purely additive, and it reuses three mechanisms the harness already owns rather than introducing new control paths.
+
+> **Load-bearing claim:** interactive and batch are *one code path*, not two products. Batch mode is the degenerate session — exactly one task, no REPL, approvals pre-decided by policy. Everything below toggles on config.
+
+### 23.1 Two state scopes
+
+`TaskState` (§7) is per-task and stays exactly as specified. The session adds a scope *above* it:
+
+| | `TaskState` (§7) | `SessionState` (new) |
+| --- | --- | --- |
+| Lifetime | one goal → one terminal outcome | the whole terminal session |
+| Holds | phase, evidence, files, verifier results | conversation history, the sequence of tasks, session-scoped policy |
+| Truth for | "how is *this task* going" | "what has the *user and agent* discussed/done" |
+
+```python
+class Turn(BaseModel):
+    role: Literal["user", "agent"]
+    text: str
+    task_id: str | None = None          # agent turns link to the TaskState they ran
+
+class SessionState(BaseModel):
+    session_id: str
+    workspace_root: str
+    config: HarnessConfig
+    history: list[Turn] = []            # conversational context, carried across tasks
+    tasks: list[TaskState] = []         # each user request spins up one TaskState
+    session_policy_overrides: dict = {} # "always allow X" promotions, session-scoped only
+```
+
+### 23.2 The REPL wraps the task loop
+
+```python
+session = SessionState(session_id=..., workspace_root=ws.root, config=config)
+while True:
+    user_input = ui.read()                       # blocking prompt
+    if is_meta_command(user_input):              # /diff, /undo, /state, /quit — never hit the model
+        handle_meta_command(user_input, session, ws); continue
+
+    state = TaskState(goal=user_input, constraints=session.config.constraints)
+    state.seed_from_history(session.history)     # conversational context becomes initial evidence
+    artifact = runner.run(state, ws, deps)       # the §5 loop, verbatim — no changes
+    session.tasks.append(state)
+    session.history.append(Turn(role="agent", text=artifact.answer, task_id=state.task_id))
+    ui.render(artifact)
+```
+
+```mermaid
+graph TD
+    subgraph Session [REPL — SessionState]
+        RD[read user input] --> MC{meta command?}
+        MC -- yes --> META[handle locally: /diff /undo /state /quit] --> RD
+        MC -- no --> TL[runner.run — the §5 task loop]
+        TL --> REN[render artifact + append to history] --> RD
+    end
+```
+
+### 23.3 Three UX surfaces, each mapped to an existing mechanism
+
+The interaction layer introduces **no new control plane**. Each surface is a thin adapter over a mechanism already specified:
+
+| UX surface | Built on | How |
+| --- | --- | --- |
+| Live streaming of thoughts, tool calls, and output | **event emitter (§13)** — observation only | A `RichRenderer` subscribes to the same events the `EventLog` does and paints the terminal. Streaming is just another subscriber; it cannot alter the loop. |
+| Real-time tool approval | **`before_tool_call` control hook (§11)** | In interactive mode the hook, instead of auto-deciding, surfaces the proposed call to the user and returns *their* decision. The hook already returns a `ToolPermission` the runner acts on — the human is simply the decider. |
+| Interrupt & steer mid-task | **cancellation token (§8) + `add_feedback` (§5)** | ESC/Ctrl-C trips the existing `CancellationToken`; the in-flight tool aborts via the `FIRST_COMPLETED` race (§18). The runner catches the cancellation, records the user's interjection as `add_feedback`, and returns control — to the model next turn, or to the prompt. A mid-task message is feedback, **not** a new task. |
+
+Approval UX (the hook rendering itself):
+
+```text
+● apply_patch wants to edit auth/session.py  (+12 −3)
+  [y] allow once   [a] always allow apply_patch (this session)   [d] deny   [v] view diff
+```
+
+`[a]` writes to `session_policy_overrides` — it promotes `ask → allow` **for this session only**, never globally and never for irreversible/external (tier 4) actions, which stay gated regardless.
+
+### 23.4 Meta commands
+
+A thin, optional set that operates on the session/workspace and **never goes through the model** — so they are always safe and instant:
+
+| Command | Effect |
+| --- | --- |
+| `/diff` | Show the current workspace diff (§10 `git_diff`). |
+| `/undo` | Roll back the last applied patch via the workspace (reversibility, §15). |
+| `/state` | Dump the current/last `TaskState` for debugging. |
+| `/quit` | End the session. |
+
+### 23.5 Verification in interactive mode
+
+The strict "verifier gates `success`" thesis (§12) is right for *autonomy*, but a conversational assistant would feel broken if every "explain this function" had to pass an edit-shaped gate. So verification **stays mandatory but its authority shifts with who is in the loop**:
+
+- **Autonomous task** (`--auto`, or the user explicitly says "go do X and verify it"): full §12 gate. The verifier sets `outcome`; the human is not consulted.
+- **Conversational task** (default interactive): the verifier still **runs and reports** — its evidence is rendered — but `final_answer` is delivered as a *reply* and does **not** block on a passing gate. **The human is the terminal authority**; they accept the reply or follow up, and the follow-up is the next turn.
+
+This preserves the engine's guarantee (verification always runs, evidence is always surfaced) while making casual use feel like a chat rather than a CI job. `task_kind` (§7) still selects *which* checks run; interactivity only changes *who decides on the result*.
+
+### 23.6 Interaction-layer MVP cut
+
+Built in the interaction phase (see `PROGRESS.md` for phased build order and exit criteria):
+
+- **In:** REPL read-loop · streaming render via an event subscriber · allow-once / deny approval · Ctrl-C cancellation · `/quit` and `/diff`.
+- **Defer:** persisted "always allow" across sessions · the full meta-command suite · rich mid-task steering (beyond cancel-and-refeed) · context carry-over richer than history concatenation · session persistence to disk / resume.
