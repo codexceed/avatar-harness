@@ -12,7 +12,13 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import RunDeps
 from avatar_harness.events import Emitter
-from avatar_harness.model_client import AskUser, FinalAnswer, ModelClient, ToolCall
+from avatar_harness.model_client import (
+    AskUser,
+    DecisionParseError,
+    FinalAnswer,
+    ModelClient,
+    ToolCall,
+)
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.verifier import Verifier
@@ -48,7 +54,15 @@ class AgentRunner:
             state.iterations += 1
             self.emitter.emit("turn_start", task_id=state.task_id, iteration=state.iterations)
             context = self.context_builder.build(state, ws, self.registry)
-            action = self.model_client.decide(context).action
+            try:
+                action = self.model_client.decide(context).action
+            except DecisionParseError as exc:
+                # A malformed decision is model-correctable: feed it back, don't crash (§6).
+                state.latest_error = str(exc)
+                state.add_feedback(f"invalid decision: {exc}", kind="decision_error")
+                state.consecutive_failures += 1
+                self.emitter.emit("turn_end", task_id=state.task_id)
+                continue
 
             if isinstance(action, ToolCall):
                 result = runtime.execute(action.name, action.input)

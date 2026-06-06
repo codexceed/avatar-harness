@@ -16,6 +16,7 @@ from avatar_harness.workspace import Workspace
 class ToolSummary(BaseModel):
     name: str
     description: str
+    input_schema: dict = Field(default_factory=dict)
 
 
 class ContextPacket(BaseModel):
@@ -45,7 +46,11 @@ class ContextBuilder:
             files_modified=sorted(state.files_modified),
             recent_evidence=[e.summary for e in state.evidence[-self.max_evidence :]],
             allowed_tools=[
-                ToolSummary(name=t.name, description=t.description)
+                ToolSummary(
+                    name=t.name,
+                    description=t.description,
+                    input_schema=t.input_model.model_json_schema(),
+                )
                 for t in registry.active_for_phase(state.phase)
             ],
             latest_error=state.latest_error,

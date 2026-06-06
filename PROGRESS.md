@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 1 — all 23 approved tests green (33/33 total); the read-only loop runs end-to-end with a scripted model. Remaining: wire a real `OpenAIModelClient` + CLI run-loop to dogfood ("answers a repo question").
+> **Current position:** Phase 1 ✅ logic + integration complete (35/35 green; CLI runs the real loop, scripted-model smoke: read → verify → success). Live dogfood pending a configured model endpoint/key. Next: Phase 2 (editing path).
 
 ## How to use this file
 
@@ -101,12 +101,18 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 - [x] `test_context_omits_out_of_phase_tools`
 - [x] impl `context.py` (`ContextPacket`, phase-gated tool list, recent evidence)
 
+**Integration — real model + CLI**
+- [x] `test_openai_client_builds_request_and_parses` (mocked transport)
+- [x] `test_malformed_decisions_yield_incomplete` (runner recovers from bad output)
+- [x] impl `OpenAIModelClient` + prompt assembly (`build_messages`); `cli.run_agent` wired; `tools.default_registry`
+
 **Exit criteria**
-- [ ] answers a repo question citing files/lines *(needs real `OpenAIModelClient` + CLI run-loop)*
 - [x] path-confinement refuses out-of-root read
 - [x] budgets respected; zero side-effecting tools registered
 - [x] `final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified
-- [x] all Phase 1 tests green (23/23) · `ruff` + `pyright` clean
+- [x] all Phase 1 tests green (35/35) · `ruff` + `pyright` clean
+- [x] CLI runs the real loop end-to-end (scripted-model smoke: read → verify → success)
+- [ ] **live**: answers a real repo question via a configured model (`OPENAI_API_KEY` [+ `AVATAR_BASE_URL`/`AVATAR_MODEL`]) — user dogfood
 
 ## Phase 2 — Closing the loop (MVP)
 
@@ -148,4 +154,5 @@ From §21, one at a time, each justified by friction actually hit.
 - **2026-06-06** — Added `ARCHITECTURE.md`: a visual, synthesized whole-system map (high-level graph + deep dives on task execution and verification + a dry-run walkthrough), with `[Implemented]`/`[Designed]` status tags. To be kept current with each architecture-altering change. `CLAUDE.md` updated with a documentation map and when-to-consult guidance (broad/global tasks yes; targeted edits no).
 - **2026-06-06** — `task_kind` confirmed kept as-is (`edit | investigate | test_only`; no rename, no fold). Clarified: kind is classified at intake from the goal, then its verification contract is applied — verification is per-kind (working diff / passing new tests / cited diff-free answer), not a choice made from what the agent happened to do.
 - **2026-06-06** — Documented two load-bearing verification clarifications (`ARCHITECTURE.md` §4.0, `HARNESS_DESIGN.md` §15): (a) the verifier runs **no LLM** — structural inspection is predicates over `TaskState`; (b) verification reads the **uncommitted** working tree vs a **pinned baseline** (HEAD-at-start), and the harness **never commits** — the diff is the deliverable. `state.files_modified` is the git-independent primary signal.
+- **2026-06-07** — Phase 1 complete (logic + real-model/CLI integration). Known gap for Phase 2: `Workspace` does not yet assert a clean-or-acknowledged git state at task start (§15 `workspace.open`). The verifier's `no_unintended_diff` diffs vs. the pinned baseline, so on a *dirty* repo a read-only investigate would wrongly fail (pre-existing uncommitted changes count). Fine on a clean checkout; add the clean-start assertion in Phase 2.
 - **2026-06-06** — Phase 1 will include a **minimal `investigate`-only verifier gate** (not deferred to Phase 2). It inspects `TaskState`/workspace only (positive evidence cited + no unintended diff), so it is self-contained and sidesteps the §4.3 command-source gap. The full `edit`/`test_only` verifier (which needs test/lint command resolution) stays Phase 2. This keeps "verifier-owned completion" true from the first loop.

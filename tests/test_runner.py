@@ -2,7 +2,13 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.events import Emitter
-from avatar_harness.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
+from avatar_harness.model_client import (
+    AskUser,
+    DecisionParseError,
+    FinalAnswer,
+    ModelDecision,
+    ToolCall,
+)
 from avatar_harness.runner import AgentRunner
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolRegistry
@@ -75,3 +81,29 @@ def test_ask_user_noninteractive_yields_blocked(tmp_path, read_registry):
     state = TaskState(goal="ambiguous request", task_kind="investigate")
     result = _runner(tmp_path, read_registry, decisions, interactive=False).run(state)
     assert result.outcome == "blocked"
+
+
+class _RaisingModel:
+    """A ModelClient whose decisions never parse — exercises recovery (§6)."""
+
+    def decide(self, context: object) -> ModelDecision:
+        raise DecisionParseError("garbage output")
+
+
+def test_malformed_decisions_yield_incomplete(tmp_path, read_registry):
+    config = HarnessConfig()
+    deps = RunDeps(
+        workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken()
+    )
+    runner = AgentRunner(
+        model_client=_RaisingModel(),
+        registry=read_registry,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(),
+        emitter=Emitter(),
+        config=config,
+    )
+    result = runner.run(TaskState(goal="x", task_kind="investigate"))
+    assert result.outcome == "incomplete"  # consecutive failures, never a verified claim
+    assert result.consecutive_failures == config.max_consecutive_failures
