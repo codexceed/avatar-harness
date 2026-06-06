@@ -22,23 +22,59 @@ Everything below serves five invariants (`§3`): explicit structured state · pr
 A central **`AgentRunner`** owns the loop and the `TaskState`. Everything else is a stateless worker or a passive store. In interactive use, a **`Session`** (`§23`) wraps the runner in a REPL; batch mode is the degenerate one-task session.
 
 ```mermaid
+---
+config:
+  flowchart:
+    rankSpacing: 70
+    nodeSpacing: 40
+    padding: 18
+  themeVariables:
+    fontSize: 18px
+---
 flowchart TD
-    CLI["CLI intake: goal + constraints"] --> R
-    SESS["Session / REPL: SessionState, history (sec 23)"] --> R
+    subgraph intake["Intake"]
+        CLI["CLI intake: goal + constraints"]
+        SESS["Session / REPL: SessionState, history (sec 23)"]
+    end
+
     R["AgentRunner: loop, budgets, phases, cancellation"]
-    R --> TS["TaskState: the source of truth"]
-    R --> CB["ContextBuilder: compact packet + compaction"]
-    R --> MC["ModelClient: constrained decision protocol"]
-    R --> TR["ToolRuntime: typed, phase-gated tools"]
-    R --> PP["PermissionPolicy: before_tool_call gate"]
-    R --> V["Verifier: external-evidence gate"]
-    R --> AM["ArtifactManager: status + diff + evidence"]
-    R -->|emits| EM["Emitter: observation only"]
+    R -.->|repair loop| R
+
+    subgraph turn["Per-turn workers"]
+        TS["TaskState: the source of truth"]
+        CB["ContextBuilder: compact packet + compaction"]
+        MC["ModelClient: constrained decision protocol"]
+    end
+
+    subgraph act["Execution & gates"]
+        TR["ToolRuntime: typed, phase-gated tools"]
+        PP["PermissionPolicy: before_tool_call gate"]
+        V["Verifier: external-evidence gate"]
+    end
+
+    subgraph report["Reporting & observation"]
+        AM["ArtifactManager: status + diff + evidence"]
+        EM["Emitter: observation only"]
+    end
+
+    CLI --> R
+    SESS --> R
+    R --> TS
+    R --> CB
+    R --> MC
+    R --> TR
+    R --> PP
+    R --> V
+    R --> AM
+    R -->|emits| EM
     EM --> EL["EventLog (JSONL)"]
     EM --> UI["Renderer / CLI display"]
     TR --> WS["Workspace: path-confined, diff/rollback, command exec"]
     V --> WS
-    R -.->|repair loop| R
+
+    %% force the tiers to stack vertically into one column
+    turn ~~~ act
+    act ~~~ report
 
     classDef done fill:#1b4332,stroke:#52b788,color:#d8f3dc;
     classDef todo fill:#343a40,stroke:#868e96,color:#dee2e6;
@@ -140,7 +176,7 @@ sequenceDiagram
                     R->>V: verify(state, ws)
                 end
             else blocked
-                R->>R: add_feedback(reason); loop continues
+                R->>R: add_feedback(reason), loop continues
             end
         else action = final_answer
             R->>V: verify(state, ws)
@@ -148,7 +184,7 @@ sequenceDiagram
             R->>R: ask human, or set blocked (non-interactive)
         end
     end
-    R-->>R: outcome set; finalize Artifact
+    R-->>R: outcome set — finalize Artifact
 ```
 
 Three load-bearing rules: **the verifier is not a tool**; **`terminate`/`final_answer` only *propose* completion — the verifier disposes**; **repair is just the loop continuing** (a failed verification appends evidence that the next context surfaces).
@@ -250,7 +286,7 @@ sequenceDiagram
     participant V as Verifier
     Note over R: phase = investigating
     M->>R: tool_call search_repo("test_auth")
-    R->>T: tier 0, allow; returns "tests/test_auth.py:31"
+    R->>T: tier 0, allow — returns "tests/test_auth.py:31"
     Note over R: files_read += tests/test_auth.py
     M->>R: tool_call read_file(tests/test_auth.py, 20-40)
     R->>T: returns "asserts session expires after 30 min"
@@ -258,13 +294,13 @@ sequenceDiagram
     R->>T: returns "expiry hardcoded to 30 seconds (the bug)"
     Note over R: phase = editing
     M->>R: tool_call apply_patch(diff on auth/session.py)
-    R->>T: tier 1, paths inside ws, allow; applied atomically
+    R->>T: tier 1, paths inside ws, allow — applied atomically
     Note over R: files_modified += auth/session.py
     M->>R: final_answer "fixed expiry units"
     Note over R: phase = verifying
     R->>V: verify(state, ws)
     V-->>R: passed = true (see breakdown)
-    Note over R: outcome = success; Artifact
+    Note over R: outcome = success — Artifact
 ```
 
 **The verification step, expanded** (`task_kind = edit`):
