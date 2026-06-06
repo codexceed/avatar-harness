@@ -66,7 +66,7 @@ class TaskState(BaseModel):
     task_id: str = Field(default_factory=lambda: uuid4().hex)
     goal: str
     constraints: list[str] = Field(default_factory=list)
-    task_kind: Literal["edit", "investigate", "explain", "test_only"] = "edit"
+    task_kind: Literal["edit", "investigate", "test_only"] = "edit"
 
     # Two independent axes (§7): phase = WHERE the work is; outcome = HOW it ended.
     phase: Literal["investigating", "editing", "verifying"] = "investigating"

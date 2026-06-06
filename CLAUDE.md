@@ -4,22 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Pre-implementation.** `HARNESS_DESIGN.md` specifies the complete architecture; no code exists yet beyond the package scaffold (`src/avatar_harness/__init__.py`). When implementing, follow the MVP build order in **§20** of that document — each step is ordered to plug into the previous one (e.g. `Workspace` before any tool, `PermissionPolicy` before any side-effecting tool).
+**In active development — TDD, phased.** Phase 0 (the walking skeleton) is implemented. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
 
-`HARNESS_DESIGN.md` is the source of truth for design decisions. Read the relevant section before implementing a component; the doc cross-references sections (§N) heavily. The suggested package layout is in §17.
+## Documentation map — which doc, when
+
+Three docs, deepest to most operational. Pick by the *breadth* of the task:
+
+| Doc | Holds | Consult when |
+| --- | --- | --- |
+| `HARNESS_DESIGN.md` | Full design spec — every decision + rationale, cross-referenced by §N. Source of truth. | Implementing a component (read its §N first); resolving *why* a thing is shaped as it is. |
+| `ARCHITECTURE.md` | A synthesized, **visual** map: high-level component graph + deep dives on task execution and verification + a dry-run walkthrough, with current implementation status. | **Broad, global-context work** — feature implementation, deep debugging, deep Q&A, onboarding — where you need the whole-system picture. |
+| `PROGRESS.md` | Phased build ledger (checklists), TDD protocol, decision log. | Resuming work; knowing what's done and what's next. |
+
+**When to skip `ARCHITECTURE.md`:** highly targeted, local work — a specific edit, a single command, a localized bugfix — where whole-system context would only add noise. Reach for it only when the task spans the system.
+
+**Keep `ARCHITECTURE.md` current:** when a change alters the architecture (new component, changed control flow, a built milestone), update it — including its diagrams and the implementation-status markers — as part of that change.
 
 ## Commands
 
-This project uses `uv`. There is no committed `uv.lock` yet (it is intentionally *not* gitignored — commit it once dependencies are installed).
+This project uses `uv`; `uv.lock` is committed. Dev tools live in `[dependency-groups].dev`, which `uv` syncs automatically — `make`/`uv run` need no extra flags. A `Makefile` wraps the common targets.
 
 ```bash
-uv sync                          # install deps (including dev extras)
-uv run avatar-harness            # run the CLI (entry point: avatar_harness.cli:main — not yet implemented)
+make install                     # uv sync (deps + dev group)
+make test                        # run the test suite
+make run TASK="explain the loop" # run the CLI on a task (Phase 0: echoes the task back)
+make lint                        # ruff check
+make format                      # ruff format
+make typecheck                   # pyright (standard mode; src + tests)
+make check                       # lint + typecheck + test — run before committing
 
-uv run ruff check .              # lint
-uv run ruff format .             # format
-uv run pyright                   # type-check (standard mode; src + tests)
-uv run pytest                    # run tests (asyncio_mode=auto, testpaths=tests)
 uv run pytest tests/test_x.py::test_name   # run a single test
 ```
 

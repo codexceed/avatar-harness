@@ -55,11 +55,11 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 
 ## Phase 1 — Read-only agent
 
-`Workspace`/`RunDeps` + read tools + `ModelClient` + loop. Investigate/explain only; tier-0; safe to dogfood. Engine steps §20: 4, 5, 9, 10.
+`Workspace`/`RunDeps` + read tools + `ModelClient` + loop + a **minimal `investigate` verifier gate**. Tier-0 only; safe to dogfood. Engine steps §20: 4, 5, 9, 10 (+ a thin slice of 11).
 
 - [ ] Tests proposed & approved
 - [ ] Tests red → green
-- [ ] Exit: answers a repo question citing files/lines; path-confinement refuses out-of-root read; budgets respected; zero side-effecting tools
+- [ ] Exit: answers a repo question citing files/lines; path-confinement refuses out-of-root read; budgets respected; zero side-effecting tools; **`final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified**
 
 ## Phase 2 — Closing the loop (MVP)
 
@@ -97,3 +97,8 @@ From §21, one at a time, each justified by friction actually hit.
 - **2026-06-05** — Build tracked here in `PROGRESS.md` (durable) rather than `ROADMAP.md`; in-session task lists are scratch, this file is source of truth. Progress measured as checklists.
 - **2026-06-05** — Multi-agent "agent teams" not the primary build driver (sequential, TDD-gated, human-reviewed). Reserved for bounded fan-out sub-tasks: test brainstorming, design exploration, adversarial phase review.
 - **2026-06-05** — TDD adopted: tests proposed and approved at each phase start before production code. Phase 0 tests approved.
+- **2026-06-06** — `task_kind` merged from four values to three (`edit | investigate | test_only`): `explain` folded into `investigate` (identical verification contract). Pure command-execution also maps to `investigate` — no `execute` kind, since `task_kind` is a taxonomy of verification contracts, not user intents. Updated `HARNESS_DESIGN.md` §7/§12 and `state.py`. Noted an open edge in §12: non-executable edits (docs/config) have no command-based positive signal.
+- **2026-06-06** — Added `ARCHITECTURE.md`: a visual, synthesized whole-system map (high-level graph + deep dives on task execution and verification + a dry-run walkthrough), with `[Implemented]`/`[Designed]` status tags. To be kept current with each architecture-altering change. `CLAUDE.md` updated with a documentation map and when-to-consult guidance (broad/global tasks yes; targeted edits no).
+- **2026-06-06** — `task_kind` confirmed kept as-is (`edit | investigate | test_only`; no rename, no fold). Clarified: kind is classified at intake from the goal, then its verification contract is applied — verification is per-kind (working diff / passing new tests / cited diff-free answer), not a choice made from what the agent happened to do.
+- **2026-06-06** — Documented two load-bearing verification clarifications (`ARCHITECTURE.md` §4.0, `HARNESS_DESIGN.md` §15): (a) the verifier runs **no LLM** — structural inspection is predicates over `TaskState`; (b) verification reads the **uncommitted** working tree vs a **pinned baseline** (HEAD-at-start), and the harness **never commits** — the diff is the deliverable. `state.files_modified` is the git-independent primary signal.
+- **2026-06-06** — Phase 1 will include a **minimal `investigate`-only verifier gate** (not deferred to Phase 2). It inspects `TaskState`/workspace only (positive evidence cited + no unintended diff), so it is self-contained and sidesteps the §4.3 command-source gap. The full `edit`/`test_only` verifier (which needs test/lint command resolution) stays Phase 2. This keeps "verifier-owned completion" true from the first loop.

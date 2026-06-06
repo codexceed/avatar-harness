@@ -271,7 +271,7 @@ class DecisionRecord(BaseModel):    # why the agent chose what it chose
 class TaskState(BaseModel):
     goal: str
     constraints: list[str] = []
-    task_kind: Literal["edit", "investigate", "explain", "test_only"] = "edit"
+    task_kind: Literal["edit", "investigate", "test_only"] = "edit"
 
     # Two independent axes (see below): phase = WHERE the work is; outcome = HOW it ended.
     phase: Literal["investigating", "editing", "verifying"] = "investigating"
@@ -302,7 +302,7 @@ Good state answers: What is the goal? What kind of task is it? What constraints 
 
 **`phase` and `outcome` are deliberately separate.** `phase` is a *control* axis — it advances through `investigating → editing → verifying` and gates which tools are available (§10) and how context is assembled. `outcome` is the *terminal result* axis — `None` while the run is live, then exactly one of `success` / `incomplete` / `blocked` / `failed`, which is what `ArtifactManager.status` reports (§14). Conflating the two (e.g. a single `phase` that also holds `done`/`failed`) is what leaves budget-exhaustion and verification-failure underspecified, so we keep them apart.
 
-**`task_kind` selects the verification contract** (§12). It is classified at intake (or inferred from the goal) and prevents edit-shaped verification ("a diff must exist") from being forced onto investigative or explanatory tasks.
+**`task_kind` selects the verification contract** (§12). It is classified at intake (or inferred from the goal) and prevents edit-shaped verification ("a diff must exist") from being forced onto read-only tasks (investigation, explanation, or running a command to report its output). It is a taxonomy of *verification contracts*, not of user intents — which is why there are only three (§12).
 
 ## 8. Run dependencies
 
@@ -501,10 +501,13 @@ class VerifierResult(BaseModel):
 | ------------ | --------------------------------------------------------------------- | --------------------------------------- |
 | `edit`       | a diff exists; no unexpected files changed; no placeholders/secrets; targeted tests pass *or* an allowed skip; lint/types clean | a passing targeted test, or (if none exists) clean lint/types over the diff |
 | `test_only`  | tests were added/changed; the new tests run and pass                  | the new tests executing and passing     |
-| `investigate`| answer cites concrete evidence (files/lines, command output); **no unintended diff** | inspected files / search or command results in the log |
-| `explain`    | answer cites concrete evidence; **no diff** unless explicitly requested | referenced sources in the log           |
+| `investigate`| answer cites concrete evidence (files/lines, command output); **no unintended diff** unless explicitly requested | inspected files / search or command results in the log |
 
 Checks that don't apply to a kind run as `optional` (recorded, never gating). The always-on guards — no edits outside the workspace, no likely secrets — stay `required` for every kind.
+
+**`investigate` is the single read-only kind.** It subsumes pure *explanation* (read → describe) and pure *execution* (run a command → report its output), because all three share one verification contract: the answer must cite real evidence from the log and leave no unintended diff. There is deliberately no separate `explain` or `execute` kind — `task_kind` classifies *how completion is judged*, and these are judged identically. Running a command is therefore a tool *action* inside an `investigate` task, not a kind of its own.
+
+**Open edge — non-executable edits.** An `edit` to a file with no tests *and* no meaningful lint/types (docs, a static config, an asset) has no command-based positive signal: tests skip, lint skips, and the verifier may never pass on zero evidence. Such an edit must fall back to a weaker external signal — a diff that parses/validates for its file type, plus the always-on secret/placeholder guard — or, when even that is unavailable, route to human confirmation (`ask_user` → `blocked`). This edge is noted, not yet resolved in the MVP verifier.
 
 `recommended_next_action` turns a failed verification into a useful repair signal rather than a bare rejection. The distinction that separates serious harnesses from demos:
 
@@ -574,8 +577,8 @@ The MVP runs inside a local workspace; the design leaves room for stronger isola
 MVP safeguards:
 
 - Operate only inside a configured workspace root; refuse edits outside it.
-- Require a clean (or explicitly acknowledged dirty) git state before starting.
-- Track all modified files; every edit is an inspectable diff (reversibility).
+- Require a clean (or explicitly acknowledged dirty) git state before starting, and **pin that HEAD as the diff baseline**. `Workspace.diff()` compares the working tree against this pinned baseline (not the git index), so the task's delta is well-defined and a stray `git add` cannot hide a change. The harness **never commits** — the uncommitted diff is the deliverable (verification reads it; a human applies it).
+- Track all modified files via `state.files_modified` (a git-independent ledger the runner maintains as `apply_patch` runs); every edit is an inspectable diff (reversibility).
 - Command timeouts; capture stdout/stderr; avoid network by default.
 
 > **Honest gap:** true isolation (ephemeral container/VM, resource limits, credential scoping) is the real demo-to-production line. The MVP runs in-process against a tracked workspace; containerization is a deliberate later step, not a solved problem.
