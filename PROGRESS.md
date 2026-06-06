@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 1 — in progress. Tests approved (22). Workspace done (4/4 green); next: read tools.
+> **Current position:** Phase 1 — in progress. Workspace + read tools + runtime done (21/21 green). Next: ModelClient.
 
 ## How to use this file
 
@@ -65,15 +65,17 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 - [x] impl `workspace.py` (confinement, line-range read, pinned-baseline diff)
 
 **Read tools — typed `ToolResult`s**
-- [ ] `test_search_repo_finds_matches`
-- [ ] `test_search_repo_no_matches_is_clean_success`
-- [ ] `test_list_files_matches_glob`
-- [ ] `test_read_missing_file_is_model_correctable`
+- [x] `test_search_repo_finds_matches`
+- [x] `test_search_repo_no_matches_is_clean_success`
+- [x] `test_list_files_matches_glob`
+- [x] `test_read_missing_file_is_model_correctable`
+- [x] impl `tools/filesystem.py` (`read_file`, `list_files`), `tools/search.py` (`search_repo`), `deps.py` (`RunDeps`)
 
 **ToolRuntime + registry — phase gating & validation**
-- [ ] `test_registry_exposes_only_phase_tools`
-- [ ] `test_unknown_tool_name_rejected`
-- [ ] `test_invalid_tool_input_fed_back`
+- [x] `test_registry_exposes_only_phase_tools`
+- [x] `test_unknown_tool_name_rejected`
+- [x] `test_invalid_tool_input_fed_back`
+- [x] impl `tools/base.py` (`ToolResult`, `ToolDefinition`, `ToolRegistry`, `ToolRuntime`)
 
 **ModelClient — constrained decision protocol (mocked)**
 - [ ] `test_parses_tool_call_decision`

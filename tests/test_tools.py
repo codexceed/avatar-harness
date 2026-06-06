@@ -1,0 +1,77 @@
+from avatar_harness.config import HarnessConfig
+from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolRuntime
+from avatar_harness.tools.filesystem import list_files, read_file
+from avatar_harness.tools.search import search_repo
+from avatar_harness.workspace import Workspace
+
+
+def _registry() -> ToolRegistry:
+    reg = ToolRegistry()
+    for tool in (read_file, list_files, search_repo):
+        reg.register(tool)
+    return reg
+
+
+def _runtime(tmp_path) -> ToolRuntime:
+    deps = RunDeps(
+        workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken()
+    )
+    return ToolRuntime(_registry(), deps)
+
+
+def test_search_repo_finds_matches(tmp_path):
+    (tmp_path / "a.py").write_text("def login():\n    pass\n", encoding="utf-8")
+    result = _runtime(tmp_path).execute("search_repo", {"query": "login"})
+    assert result.success
+    assert "a.py" in result.content
+    assert "login" in result.content
+
+
+def test_search_repo_no_matches_is_clean_success(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = _runtime(tmp_path).execute("search_repo", {"query": "zzz_absent"})
+    assert result.success
+    assert result.content == ""
+
+
+def test_list_files_matches_glob(tmp_path):
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": "*.py"})
+    assert result.success
+    assert result.content == "a.py"
+
+
+def test_read_missing_file_is_model_correctable(tmp_path):
+    result = _runtime(tmp_path).execute("read_file", {"path": "nope.txt"})
+    assert result.success is False
+    assert "not found" in (result.error or "")
+
+
+def test_registry_exposes_only_phase_tools():
+    reg = _registry()
+    reg.register(
+        ToolDefinition(
+            name="apply_patch",
+            description="edit-only",
+            input_model=read_file.input_model,
+            handler=read_file.handler,
+            phases=frozenset({"editing"}),
+        )
+    )
+    investigating = {t.name for t in reg.active_for_phase("investigating")}
+    assert {"read_file", "search_repo", "list_files"} <= investigating
+    assert "apply_patch" not in investigating
+
+
+def test_unknown_tool_name_rejected(tmp_path):
+    result = _runtime(tmp_path).execute("frobnicate", {})
+    assert result.success is False
+    assert "unknown tool" in (result.error or "")
+
+
+def test_invalid_tool_input_fed_back(tmp_path):
+    result = _runtime(tmp_path).execute("read_file", {})  # missing required 'path'
+    assert result.success is False
+    assert "invalid input" in (result.error or "")
