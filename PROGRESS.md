@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 0 — ✅ complete (10/10 tests green, `ruff` + `pyright` clean, CLI runs end-to-end). Next: Phase 1 — propose tests for sign-off.
+> **Current position:** Phase 1 — in progress. Tests approved (22). Workspace done (4/4 green); next: read tools.
 
 ## How to use this file
 
@@ -55,11 +55,52 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 
 ## Phase 1 — Read-only agent
 
-`Workspace`/`RunDeps` + read tools + `ModelClient` + loop + a **minimal `investigate` verifier gate**. Tier-0 only; safe to dogfood. Engine steps §20: 4, 5, 9, 10 (+ a thin slice of 11).
+`Workspace`/`RunDeps` + read tools + `ModelClient` + loop + a **minimal `investigate` verifier gate**. Tier-0 only; safe to dogfood. Engine steps §20: 4, 5, 9, 10 (+ a thin slice of 11). Tests approved 2026-06-06 (22).
 
-- [ ] Tests proposed & approved
-- [ ] Tests red → green
-- [ ] Exit: answers a repo question citing files/lines; path-confinement refuses out-of-root read; budgets respected; zero side-effecting tools; **`final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified**
+**Workspace — path confinement**
+- [x] `test_workspace_reads_inside_root`
+- [x] `test_workspace_refuses_path_outside_root`
+- [x] `test_workspace_refuses_symlink_escape`
+- [x] `test_workspace_read_respects_line_range`
+- [x] impl `workspace.py` (confinement, line-range read, pinned-baseline diff)
+
+**Read tools — typed `ToolResult`s**
+- [ ] `test_search_repo_finds_matches`
+- [ ] `test_search_repo_no_matches_is_clean_success`
+- [ ] `test_list_files_matches_glob`
+- [ ] `test_read_missing_file_is_model_correctable`
+
+**ToolRuntime + registry — phase gating & validation**
+- [ ] `test_registry_exposes_only_phase_tools`
+- [ ] `test_unknown_tool_name_rejected`
+- [ ] `test_invalid_tool_input_fed_back`
+
+**ModelClient — constrained decision protocol (mocked)**
+- [ ] `test_parses_tool_call_decision`
+- [ ] `test_parses_final_answer_decision`
+- [ ] `test_malformed_decision_is_recoverable`
+
+**Verifier — minimal `investigate` gate**
+- [ ] `test_investigate_gate_passes_with_cited_evidence`
+- [ ] `test_investigate_gate_fails_on_zero_evidence`
+- [ ] `test_investigate_gate_fails_on_unintended_diff`
+
+**AgentRunner — the read-only loop**
+- [ ] `test_investigate_loop_runs_to_answer_and_verifies`
+- [ ] `test_final_answer_without_evidence_is_rejected`
+- [ ] `test_iteration_budget_yields_incomplete`
+- [ ] `test_ask_user_noninteractive_yields_blocked`
+
+**ContextBuilder — the compact packet**
+- [ ] `test_context_contains_goal_phase_and_recent_evidence`
+- [ ] `test_context_omits_out_of_phase_tools`
+
+**Exit criteria**
+- [ ] answers a repo question citing files/lines
+- [ ] path-confinement refuses out-of-root read
+- [ ] budgets respected; zero side-effecting tools registered
+- [ ] `final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified
+- [ ] all Phase 1 tests green · `ruff` + `pyright` clean
 
 ## Phase 2 — Closing the loop (MVP)
 
