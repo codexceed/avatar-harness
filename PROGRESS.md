@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 1 — in progress. Workspace + read tools + runtime done (21/21 green). Next: ModelClient.
+> **Current position:** Phase 1 — all 23 approved tests green (33/33 total); the read-only loop runs end-to-end with a scripted model. Remaining: wire a real `OpenAIModelClient` + CLI run-loop to dogfood ("answers a repo question").
 
 ## How to use this file
 
@@ -78,31 +78,35 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 - [x] impl `tools/base.py` (`ToolResult`, `ToolDefinition`, `ToolRegistry`, `ToolRuntime`)
 
 **ModelClient — constrained decision protocol (mocked)**
-- [ ] `test_parses_tool_call_decision`
-- [ ] `test_parses_final_answer_decision`
-- [ ] `test_malformed_decision_is_recoverable`
+- [x] `test_parses_tool_call_decision`
+- [x] `test_parses_final_answer_decision`
+- [x] `test_malformed_decision_is_recoverable`
+- [x] impl `model_client.py` (decision models, `parse_decision`, `ModelClient` protocol)
 
 **Verifier — minimal `investigate` gate**
-- [ ] `test_investigate_gate_passes_with_cited_evidence`
-- [ ] `test_investigate_gate_fails_on_zero_evidence`
-- [ ] `test_investigate_gate_fails_on_unintended_diff`
+- [x] `test_investigate_gate_passes_with_cited_evidence`
+- [x] `test_investigate_gate_fails_on_zero_evidence`
+- [x] `test_investigate_gate_fails_on_unintended_diff`
+- [x] impl `verifier.py` (`investigate` gate — structural, no model)
 
 **AgentRunner — the read-only loop**
-- [ ] `test_investigate_loop_runs_to_answer_and_verifies`
-- [ ] `test_final_answer_without_evidence_is_rejected`
-- [ ] `test_iteration_budget_yields_incomplete`
-- [ ] `test_ask_user_noninteractive_yields_blocked`
+- [x] `test_investigate_loop_runs_to_answer_and_verifies`
+- [x] `test_final_answer_without_evidence_is_rejected`
+- [x] `test_iteration_budget_yields_incomplete`
+- [x] `test_ask_user_noninteractive_yields_blocked`
+- [x] impl `runner.py` (the §5 loop; runner-owned mutation; bounding)
 
 **ContextBuilder — the compact packet**
-- [ ] `test_context_contains_goal_phase_and_recent_evidence`
-- [ ] `test_context_omits_out_of_phase_tools`
+- [x] `test_context_contains_goal_phase_and_recent_evidence`
+- [x] `test_context_omits_out_of_phase_tools`
+- [x] impl `context.py` (`ContextPacket`, phase-gated tool list, recent evidence)
 
 **Exit criteria**
-- [ ] answers a repo question citing files/lines
-- [ ] path-confinement refuses out-of-root read
-- [ ] budgets respected; zero side-effecting tools registered
-- [ ] `final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified
-- [ ] all Phase 1 tests green · `ruff` + `pyright` clean
+- [ ] answers a repo question citing files/lines *(needs real `OpenAIModelClient` + CLI run-loop)*
+- [x] path-confinement refuses out-of-root read
+- [x] budgets respected; zero side-effecting tools registered
+- [x] `final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified
+- [x] all Phase 1 tests green (23/23) · `ruff` + `pyright` clean
 
 ## Phase 2 — Closing the loop (MVP)
 
