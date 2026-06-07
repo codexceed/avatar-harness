@@ -24,6 +24,8 @@ class HarnessConfig(BaseSettings):
     # Workspace (§15).
     workspace_root: str = "."
 
-    # Model — unused until Phase 1; declared now so the config shape is stable.
-    model: str = "gpt-4o-mini"
-    base_url: str | None = None
+    # Model endpoint (OpenAI-compatible). Defaults to OpenRouter so we can test
+    # many models by overriding AVATAR_MODEL; override AVATAR_BASE_URL for others.
+    model: str = "openai/gpt-4o-mini"
+    base_url: str = "https://openrouter.ai/api/v1"
+    api_key: str | None = None  # AVATAR_API_KEY; if unset, the client falls back to OPENAI_API_KEY

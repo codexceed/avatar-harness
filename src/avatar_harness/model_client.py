@@ -124,7 +124,8 @@ class OpenAIModelClient:
         if client is None:
             from openai import OpenAI
 
-            client = OpenAI(base_url=config.base_url)
+            # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
+            client = OpenAI(api_key=config.api_key, base_url=config.base_url)
         self.client = client
 
     def decide(self, context: ContextPacket) -> ModelDecision:
