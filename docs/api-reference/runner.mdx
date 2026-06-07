@@ -1,0 +1,26 @@
+---
+title: avatar_harness.runner
+---
+
+AgentRunner — the bounded loop that terminates on verification (§5).
+
+The runner owns *all* `TaskState` mutation (§8); tools and the verifier are
+pure-ish workers. Phase 1 covers the read-only path: tier-0 tools, no permission
+gate (every tool is tier 0), and the minimal `investigate` verifier. The loop is
+deliberately a near-verbatim transcription of the §5 pseudocode.
+
+## Classes
+### `AgentRunner`
+
+The bounded loop that owns all state mutation and ends on verification (§5, §8).
+
+Collaborators are injected explicitly so a run is self-contained and replayable;
+the runner orchestrates them but mutates `TaskState` itself.
+
+```python
+AgentRunner(*, model_client: ModelClient, registry: ToolRegistry, deps: RunDeps, context_builder: ContextBuilder, verifier: Verifier, emitter: Emitter, config: HarnessConfig) -> None
+```
+
+#### `AgentRunner.run(self, state: TaskState) -> TaskState`
+
+Drive the loop to a terminal outcome and return the final state (§5).

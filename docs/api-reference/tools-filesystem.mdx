@@ -1,0 +1,34 @@
+---
+title: avatar_harness.tools.filesystem
+---
+
+Read-only filesystem tools: read_file, list_files (§10, tier 0).
+
+## Classes
+### `ListFilesInput`
+
+Input for `list_files`: a glob pattern (defaults to the whole tree).
+
+```python
+ListFilesInput(*, glob: str = '**/*') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `glob` | `str` | no |
+### `ReadFileInput`
+
+Input for `read_file`: a workspace path and optional 1-indexed line range.
+
+```python
+ReadFileInput(*, path: str, line_range: tuple[int, int] | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `path` | `str` | yes |
+| `line_range` | `tuple[int, int] | None` | no |

@@ -1,0 +1,40 @@
+---
+title: avatar-harness
+description: A bounded, verifiable loop around an LLM — a coding-agent harness, not a chat app.
+---
+
+## What this is
+
+**avatar-harness** is the runtime *around* a language model that turns a
+natural-language task into a bounded, verifiable engineering loop.
+
+The defining inversion versus a chat app:
+
+> The model **proposes** actions; the harness **owns** execution, state,
+> permissions, logging, and verification. The loop terminates on **external
+> verification**, not on a text reply from the model.
+
+## How the loop works
+
+Each turn, the harness assembles a compact context packet from `TaskState`, asks
+the model for exactly one validated decision (a tool call, a final answer, or a
+question), executes it through a path-confined `Workspace`, records the result,
+and applies it back to state. A proposed "final answer" is not the end — it is a
+*proposal* the `Verifier` disposes of using external evidence (tests, lint,
+diff). Only the harness marks a task `success`, and only on positive signal.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Core invariants" icon="shield-check" href="/concepts/invariants">
+    The five load-bearing rules that thread through every component.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    The component map: runner, state, tools, verifier, events.
+  </Card>
+</CardGroup>
+
+<Note>
+  The **API reference** tab is generated directly from the codebase's
+  docstrings — it is always in sync with the source.
+</Note>

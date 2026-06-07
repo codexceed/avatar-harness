@@ -76,6 +76,8 @@ ignore = [
 "src/avatar_harness/workspace.py" = ["S603", "S607"]
 # The CLI legitimately writes to stdout.
 "src/avatar_harness/cli.py" = ["T201"]
+# Build tooling, not library code: relax annotation/print/complexity strictness.
+"scripts/**" = ["ANN", "T20", "C901", "PLR0912", "PLR0913", "PLR0915"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

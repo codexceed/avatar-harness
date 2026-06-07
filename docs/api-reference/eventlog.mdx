@@ -1,0 +1,17 @@
+---
+title: avatar_harness.eventlog
+---
+
+EventLog — a JSONL subscriber to the emitter (§13).
+
+Writes one JSON object per event, append-only, for replay, debugging, audit,
+and eval data. It is a plain subscriber: it observes, never influences.
+
+## Classes
+### `EventLog`
+
+An append-only JSONL subscriber: one timestamped record per event (§13).
+
+```python
+EventLog(path: Path) -> None
+```

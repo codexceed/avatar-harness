@@ -1,0 +1,111 @@
+---
+title: avatar_harness.model_client
+---
+
+Model decision protocol: constrained, validated decisions (§6).
+
+The model returns one of three actions, never arbitrary prose. The harness
+validates every decision before acting; a malformed decision is a *recoverable*
+error fed back to the model, never executed and never fatal.
+
+`parse_decision` is the pure validation boundary (no network), so it — and the
+fakes that stand in for a real client in tests — are trivially testable.
+
+## Classes
+### `AskUser`
+
+Decision to ask the user a question (blocks in a non-interactive run) (§6).
+
+```python
+AskUser(*, type: Literal['ask_user'] = 'ask_user', question: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `Literal['ask_user']` | no |
+| `question` | `str` | yes |
+### `DecisionParseError`
+
+Malformed model output — recoverable; fed back to the model (§6), never fatal.
+### `FinalAnswer`
+
+Decision claiming the task is complete — a proposal for the verifier (§6, §12).
+
+```python
+FinalAnswer(*, type: Literal['final_answer'] = 'final_answer', answer: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `Literal['final_answer']` | no |
+| `answer` | `str` | yes |
+### `ModelClient`
+
+Anything that turns a context packet into a validated decision (§6).
+
+The real implementation calls an OpenAI-compatible endpoint and runs the
+result through `parse_decision`; tests substitute a scripted fake.
+
+```python
+ModelClient(*args, **kwargs)
+```
+
+#### `ModelClient.decide(self, context: ContextPacket) -> ModelDecision`
+
+Turn a context packet into a validated decision for the current turn.
+### `ModelDecision`
+
+One validated model decision: a thought plus exactly one action (§6).
+
+```python
+ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `thought_summary` | `str` | no |
+| `action` | `ToolCall | FinalAnswer | AskUser` | yes |
+### `OpenAIModelClient`
+
+Calls an OpenAI-compatible endpoint and validates the reply (§6, §18).
+
+A malformed reply is fed back to the model for a bounded number of retries
+before surfacing as a `DecisionParseError` (which the runner treats as a
+recoverable, model-correctable error).
+
+```python
+OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None
+```
+
+#### `OpenAIModelClient.decide(self, context: ContextPacket) -> ModelDecision`
+
+Call the endpoint and validate the reply, retrying on malformed output (§6).
+### `ToolCall`
+
+Decision to invoke a named tool with validated input (§6).
+
+```python
+ToolCall(*, type: Literal['tool_call'] = 'tool_call', name: str, input: dict = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `Literal['tool_call']` | no |
+| `name` | `str` | yes |
+| `input` | `dict` | no |
+
+## Functions
+### `build_messages(context: ContextPacket) -> list[dict[str, str]]`
+
+Assemble the system + user messages for one decision (§9 packet → prompt).
+### `parse_decision(raw: str) -> ModelDecision`
+
+Validate raw model output into a `ModelDecision`, or raise a recoverable error.

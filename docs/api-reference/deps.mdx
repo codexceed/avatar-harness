@@ -1,0 +1,29 @@
+---
+title: avatar_harness.deps
+---
+
+Run-scoped dependencies handed to tools and the runtime (§8).
+
+Tools receive these explicitly — never via globals — so a run stays
+self-contained and replayable. Phase 1 carries the minimum the read tools
+need; `state` and `event_log` join when the runner is built.
+
+## Classes
+### `CancellationToken`
+
+Trips to abort an in-flight tool (per-tool timeout, user interrupt — §23).
+
+```python
+CancellationToken(cancelled: bool = False) -> None
+```
+
+#### `CancellationToken.cancel(self) -> None`
+
+Trip the token so an in-flight tool can abort at its next checkpoint.
+### `RunDeps`
+
+The run-scoped dependencies handed explicitly to tools and the runtime (§8).
+
+```python
+RunDeps(workspace: Workspace, config: HarnessConfig, cancellation: CancellationToken) -> None
+```

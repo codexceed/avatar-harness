@@ -3,7 +3,7 @@
 # Soft-gate tools run ephemerally via `uvx` to keep the locked dev env minimal.
 
 .PHONY: install test run lint format typecheck docstrings deps smoke \
-        check check-hard check-soft clean
+        docs-api docs-serve check check-hard check-soft clean
 
 # Install/sync dependencies (including the dev group).
 install:
@@ -40,6 +40,14 @@ docstrings:
 deps:
 	uv run deptry src
 
+# Generate Mintlify API-reference MDX from docstrings (source of truth = the code).
+docs-api:
+	uv run python scripts/gen_api_docs.py
+
+# Live-preview the docs site (requires the Mintlify CLI: `npm i -g mint`).
+docs-serve:
+	mint dev
+
 # Stage 0: compiles AND imports — the cheap "does it run" gate, before tests.
 smoke:
 	uv run python -m compileall -q src tests
@@ -61,6 +69,7 @@ check-soft:
 	-uvx interrogate -c pyproject.toml -vv src
 	-uvx vulture src --min-confidence 80
 	-uv run --with pip-audit pip-audit
+	-uv run python scripts/gen_api_docs.py --check
 	# semgrep (deep SAST) — heavier; enable when desired:
 	# -uvx semgrep --config auto src
 

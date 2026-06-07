@@ -1,0 +1,60 @@
+---
+title: avatar_harness.context
+---
+
+ContextBuilder — the compact per-turn working packet (§9).
+
+Assembles only what the model needs *this* turn: goal, phase, recent evidence
+(summaries, most-recent-first-budgeted), and the tools allowed for the current
+phase. The model discovers the repo incrementally through tools; it never
+receives the whole repository by default.
+
+## Classes
+### `ContextBuilder`
+
+Builds the per-turn `ContextPacket` from `TaskState` under a fixed budget (§9).
+
+```python
+ContextBuilder(max_evidence: int = 5, max_detail_chars: int = 1500) -> None
+```
+
+#### `ContextBuilder.build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket`
+
+Assemble the working packet for the current turn from `state` (§9).
+### `ContextPacket`
+
+The compact, per-turn working set assembled for one model decision (§9).
+
+```python
+ContextPacket(*, goal: str, constraints: list[str] = <factory>, phase: str, plan: list[str] = <factory>, files_read: list[str] = <factory>, files_modified: list[str] = <factory>, recent_evidence: list[str] = <factory>, allowed_tools: list[ToolSummary] = <factory>, latest_error: str | None = None, has_uncommitted_changes: bool = False) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `goal` | `str` | yes |
+| `constraints` | `list[str]` | no |
+| `phase` | `str` | yes |
+| `plan` | `list[str]` | no |
+| `files_read` | `list[str]` | no |
+| `files_modified` | `list[str]` | no |
+| `recent_evidence` | `list[str]` | no |
+| `allowed_tools` | `list[ToolSummary]` | no |
+| `latest_error` | `str | None` | no |
+| `has_uncommitted_changes` | `bool` | no |
+### `ToolSummary`
+
+A tool's name, description, and input schema, as shown to the model.
+
+```python
+ToolSummary(*, name: str, description: str, input_schema: dict = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `name` | `str` | yes |
+| `description` | `str` | yes |
+| `input_schema` | `dict` | no |

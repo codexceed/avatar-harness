@@ -1,0 +1,46 @@
+---
+title: Core invariants
+description: The five load-bearing rules that thread through every component.
+---
+
+Five invariants hold the design together. Violating one quietly breaks the
+harness, so they are stated up front and enforced throughout.
+
+<Steps>
+  <Step title="TaskState is the source of truth">
+    The model's message history is *derived* from `TaskState` each turn — not the
+    other way around. State is explicit, structured (pydantic), and append-mostly,
+    so a run is inspectable and replayable.
+  </Step>
+  <Step title="The runner owns all mutation">
+    Tools are pure-ish: they receive a run-scoped `RunDeps`, touch the filesystem
+    or run commands only through the `Workspace` handle, and return a `ToolResult`.
+    They never mutate `TaskState`. The runner applies results *after* logging and
+    permission checks.
+  </Step>
+  <Step title="'Done' is a proposal the verifier disposes of">
+    A final answer marks a task *ready for verification* — it never ends the run.
+    Only the harness-owned `Verifier` sets `outcome = "success"`, and only on
+    positive external evidence. The model never self-certifies.
+  </Step>
+  <Step title="Control hooks vs. observation events are a hard line">
+    The permission gate is an awaited control hook that can block or redirect the
+    loop. The event emitter is observation-only: synchronous, fire-and-forget, and
+    unable to alter control flow. Never route control through the emitter.
+  </Step>
+  <Step title="Everything is reversible and observable">
+    Work happens on a tracked, path-confined `Workspace`; every edit is an
+    inspectable diff. An append-only JSONL event log gives replay, debugging, and
+    eval data for free.
+  </Step>
+</Steps>
+
+## Two axes, kept separate
+
+| Axis | Values | Role |
+| --- | --- | --- |
+| `phase` | `investigating → editing → verifying` | **Control** — gates which tools are active and how context is built. |
+| `outcome` | `success` / `incomplete` / `blocked` / `failed` (or `None` while live) | **Terminal result** — what the run ultimately reports. |
+
+Conflating them is what leaves "ran out of budget" and "failed verification"
+ambiguous. Keeping them separate keeps the loop's exit conditions legible.

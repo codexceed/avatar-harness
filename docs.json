@@ -1,0 +1,58 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "avatar-harness",
+  "colors": {
+    "primary": "#15803D",
+    "light": "#4ADE80",
+    "dark": "#15803D"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "index",
+              "concepts/invariants",
+              "concepts/architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API reference",
+        "groups": [
+          {
+            "group": "API reference",
+            "pages": [
+              "api-reference/cli",
+              "api-reference/config",
+              "api-reference/context",
+              "api-reference/deps",
+              "api-reference/eventlog",
+              "api-reference/events",
+              "api-reference/model_client",
+              "api-reference/runner",
+              "api-reference/state",
+              "api-reference/tools",
+              "api-reference/tools-base",
+              "api-reference/tools-filesystem",
+              "api-reference/tools-search",
+              "api-reference/verifier",
+              "api-reference/workspace"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/codexceed/avatar-harness"
+    }
+  }
+}

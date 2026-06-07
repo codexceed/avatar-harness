@@ -1,0 +1,23 @@
+---
+title: avatar_harness.verifier
+---
+
+Verifier — proves completion via external evidence, never self-certification (§12).
+
+It runs **no model**: every check is a predicate over structured `TaskState` plus
+the workspace diff. Phase 1 implements the `investigate` gate only — the read-only
+contract — which is self-contained (no test/lint command resolution needed, so it
+sidesteps the §4.3 command-source gap). The `edit` / `test_only` gates land in Phase 2.
+
+## Classes
+### `Verifier`
+
+Disposes of a completion proposal via external evidence, never a model (§12).
+
+```python
+Verifier()
+```
+
+#### `Verifier.verify(self, state: TaskState, ws: Workspace) -> VerifierResult`
+
+Run the verification contract for the task's `task_kind` (§12).

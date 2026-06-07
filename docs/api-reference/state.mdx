@@ -1,0 +1,143 @@
+---
+title: avatar_harness.state
+---
+
+TaskState — the structured source of truth for one task (§7).
+
+The model's message history is *derived* from this; it is not the source of
+truth. State is explicit, append-mostly, and fully serializable so a run can be
+inspected and replayed. The runner owns all mutation (§8); these helpers are the
+only sanctioned mutations.
+
+## Classes
+### `CheckResult`
+
+One verifier check with an explicit status (§12).
+
+A skipped check is not a passed check: ``skip_reason`` is required when
+``status == "skip"`` so the gate can distinguish allowed skips from evasions.
+
+```python
+CheckResult(*, name: str, kind: Literal['required', 'optional'], status: Literal['pass', 'fail', 'skip'], evidence: str, skip_reason: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `name` | `str` | yes |
+| `kind` | `Literal['required', 'optional']` | yes |
+| `status` | `Literal['pass', 'fail', 'skip']` | yes |
+| `evidence` | `str` | yes |
+| `skip_reason` | `str | None` | no |
+### `CommandRecord`
+
+A command the harness ran on the workspace's behalf.
+
+```python
+CommandRecord(*, step: int, command: str, exit_code: int | None = None, summary: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `step` | `int` | yes |
+| `command` | `str` | yes |
+| `exit_code` | `int | None` | no |
+| `summary` | `str` | no |
+### `DecisionRecord`
+
+Why the agent chose what it chose (§7).
+
+```python
+DecisionRecord(*, step: int, rationale: str, chosen: str, rejected: list[str] = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `step` | `int` | yes |
+| `rationale` | `str` | yes |
+| `chosen` | `str` | yes |
+| `rejected` | `list[str]` | no |
+### `Evidence`
+
+A test output, command result, file finding, or error (§7).
+
+```python
+Evidence(*, step: int, kind: str, summary: str, detail: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `step` | `int` | yes |
+| `kind` | `str` | yes |
+| `summary` | `str` | yes |
+| `detail` | `str | None` | no |
+### `TaskState`
+
+The full, serializable state of one task — the harness's source of truth (§7).
+
+Carries the two independent axes (``phase`` = where the work is, ``outcome`` =
+how it ended), the bounding counters, and the accumulated evidence/decisions
+the context builder draws on. The model's message history is derived from this.
+
+```python
+TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task_id` | `str` | no |
+| `goal` | `str` | yes |
+| `constraints` | `list[str]` | no |
+| `task_kind` | `Literal['edit', 'investigate', 'test_only']` | no |
+| `phase` | `Literal['investigating', 'editing', 'verifying']` | no |
+| `outcome` | `Literal['success', 'incomplete', 'blocked', 'failed'] | None` | no |
+| `iterations` | `int` | no |
+| `consecutive_failures` | `int` | no |
+| `repair_failures` | `int` | no |
+| `files_read` | `set[str]` | no |
+| `files_modified` | `set[str]` | no |
+| `commands_run` | `list[CommandRecord]` | no |
+| `evidence` | `list[Evidence]` | no |
+| `decisions` | `list[DecisionRecord]` | no |
+| `verifier_results` | `list[VerifierResult]` | no |
+| `current_plan` | `list[str]` | no |
+| `open_questions` | `list[str]` | no |
+| `latest_error` | `str | None` | no |
+| `final_answer` | `str | None` | no |
+
+#### `TaskState.add_feedback(self, summary: str, *, detail: str | None = None, kind: str = 'feedback') -> None`
+
+Append evidence the next context build will surface (§5 repair loop).
+
+#### `TaskState.block(self, reason: str) -> None`
+
+Terminal: the task needs human input (§5 ask_user in a non-interactive run).
+
+#### `TaskState.terminal`
+
+Whether the task has reached a terminal outcome (loop should stop).
+### `VerifierResult`
+
+The verifier's verdict for one verification attempt (§12).
+
+```python
+VerifierResult(*, passed: bool, summary: str, checks: list[CheckResult] = <factory>, recommended_next_action: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `passed` | `bool` | yes |
+| `summary` | `str` | yes |
+| `checks` | `list[CheckResult]` | no |
+| `recommended_next_action` | `str | None` | no |

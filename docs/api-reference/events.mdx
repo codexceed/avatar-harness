@@ -1,0 +1,28 @@
+---
+title: avatar_harness.events
+---
+
+Lifecycle event emitter — observation only (§13).
+
+Synchronous, fire-and-forget. Subscribers react to what happened; they can
+*never* block or redirect the loop. ``emit`` returns ``None`` by design: there
+is no value a caller could branch on. This is the deliberate, narrow line that
+keeps control out of the emitter — permission and context are awaited control
+hooks elsewhere, not subscribers here.
+
+## Classes
+### `Emitter`
+
+Fans lifecycle events out to observation-only subscribers (§13).
+
+```python
+Emitter() -> None
+```
+
+#### `Emitter.emit(self, event_type: str, **payload: object) -> None`
+
+Build the event and deliver it to every subscriber, isolating failures.
+
+#### `Emitter.subscribe(self, subscriber: Callable[[dict[str, object]], None]) -> None`
+
+Register a subscriber to receive every subsequent event.

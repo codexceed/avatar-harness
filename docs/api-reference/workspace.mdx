@@ -1,0 +1,35 @@
+---
+title: avatar_harness.workspace
+---
+
+Workspace — a tracked, path-confined handle to the repo (§8, §15).
+
+Tools touch the filesystem and run commands *only* through this handle, so a
+tool physically cannot reach outside the workspace root. It also owns the diff
+baseline: at construction it pins the current git HEAD, and `diff()` compares
+the working tree against that pinned baseline (not the git index), so the task's
+delta is well-defined and the harness never needs to commit (§15).
+
+## Classes
+### `PathOutsideWorkspaceError`
+
+Raised when a requested path resolves outside the workspace root.
+### `Workspace`
+
+A tracked, path-confined handle to the repo; tools reach the FS only here (§8, §15).
+
+```python
+Workspace(root: Path | str) -> None
+```
+
+#### `Workspace.diff(self) -> str`
+
+Working-tree delta vs. the pinned baseline (empty when no baseline).
+
+#### `Workspace.list_files(self, glob: str) -> list[str]`
+
+Return workspace-relative paths of files matching `glob`, sorted.
+
+#### `Workspace.read(self, path: str, line_range: tuple[int, int] | None = None) -> str`
+
+Read a workspace file, optionally a 1-indexed inclusive line range.

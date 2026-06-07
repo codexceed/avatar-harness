@@ -1,0 +1,37 @@
+---
+title: avatar_harness.cli
+---
+
+CLI entry point.
+
+`run_echo` is the Phase 0 skeleton (kept for the event-spine tests); `main()`
+now drives the real Phase 1 read-only loop via `run_agent`. The CLI stays a thin
+shell over the loop — wiring components and event subscribers, nothing more.
+
+## Classes
+### `EchoResult`
+
+Result of the Phase 0 echo skeleton: the task id, echoed answer, and outcome.
+
+```python
+EchoResult(*, task_id: str, answer: str, outcome: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task_id` | `str` | yes |
+| `answer` | `str` | yes |
+| `outcome` | `str` | yes |
+
+## Functions
+### `main(argv: list[str] | None = None) -> int`
+
+CLI entry point: parse args, wire the loop, run the task, render the result.
+### `run_agent(task: str, *, config: HarnessConfig, emitter: Emitter, model_client: ModelClient | None = None) -> TaskState`
+
+Run the read-only investigate loop over `task` (Phase 1).
+### `run_echo(task: str, *, emitter: Emitter, config: HarnessConfig | None = None) -> EchoResult`
+
+Phase 0 skeleton: echo the task, bracketed by lifecycle events.

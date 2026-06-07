@@ -1,0 +1,69 @@
+---
+title: avatar_harness.tools.base
+---
+
+Tool contracts: result shape, definition, registry, and runtime (§10).
+
+Tools are narrow, typed, and self-describing. The runtime validates every call
+(known name, well-formed input) before executing; model-correctable errors come
+back as `ToolResult(success=False, error=...)` — recoverable feedback for the
+model, never an exception thrown at the loop (§10 retry semantics).
+
+## Classes
+### `ToolDefinition`
+
+A registered tool: its schema, handler, the phases it is active in, and tier (§10).
+
+```python
+ToolDefinition(name: str, description: str, input_model: type[BaseModel], handler: Callable[[Any, RunDeps], ToolResult], phases: frozenset[str], permission_tier: int = 0) -> None
+```
+### `ToolRegistry`
+
+The set of available tools, queryable by name and by active phase (§10).
+
+```python
+ToolRegistry() -> None
+```
+
+#### `ToolRegistry.active_for_phase(self, phase: str) -> list[ToolDefinition]`
+
+Return the tools enabled in the given phase (§10/§21 capability groups).
+
+#### `ToolRegistry.get(self, name: str) -> ToolDefinition | None`
+
+Return the tool registered under `name`, or None if unknown.
+
+#### `ToolRegistry.register(self, tool: ToolDefinition) -> None`
+
+Add (or replace) a tool definition by name.
+### `ToolResult`
+
+The typed outcome of one tool call; the model only ever sees `content` (§10).
+
+```python
+ToolResult(*, tool_name: str, success: bool, content: str = '', summary: str = '', error: str | None = None, files_read: list[str] = <factory>, files_changed: list[str] = <factory>, terminate: bool = False) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `tool_name` | `str` | yes |
+| `success` | `bool` | yes |
+| `content` | `str` | no |
+| `summary` | `str` | no |
+| `error` | `str | None` | no |
+| `files_read` | `list[str]` | no |
+| `files_changed` | `list[str]` | no |
+| `terminate` | `bool` | no |
+### `ToolRuntime`
+
+Validates and dispatches tool calls; never raises into the loop (§10).
+
+```python
+ToolRuntime(registry: ToolRegistry, deps: RunDeps) -> None
+```
+
+#### `ToolRuntime.execute(self, name: str, raw_input: dict) -> ToolResult`
+
+Resolve, validate, and run a tool call; errors return as a failed `ToolResult`.
