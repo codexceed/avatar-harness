@@ -11,6 +11,8 @@ _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 
 
 class SearchRepoInput(BaseModel):
+    """Input for `search_repo`: the ripgrep query pattern."""
+
     query: str
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from avatar_harness.workspace import PathOutsideWorkspace, Workspace
+from avatar_harness.workspace import PathOutsideWorkspaceError, Workspace
 
 
 def test_workspace_reads_inside_root(tmp_path):
@@ -14,9 +14,9 @@ def test_workspace_refuses_path_outside_root(tmp_path):
     root.mkdir()
     (tmp_path / "secret.txt").write_text("top secret", encoding="utf-8")
     ws = Workspace(root)
-    with pytest.raises(PathOutsideWorkspace):
+    with pytest.raises(PathOutsideWorkspaceError):
         ws.read("../secret.txt")
-    with pytest.raises(PathOutsideWorkspace):
+    with pytest.raises(PathOutsideWorkspaceError):
         ws.read("/etc/passwd")
 
 
@@ -27,7 +27,7 @@ def test_workspace_refuses_symlink_escape(tmp_path):
     secret.write_text("top secret", encoding="utf-8")
     (root / "link.txt").symlink_to(secret)
     ws = Workspace(root)
-    with pytest.raises(PathOutsideWorkspace):
+    with pytest.raises(PathOutsideWorkspaceError):
         ws.read("link.txt")
 
 

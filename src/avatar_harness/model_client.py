@@ -18,22 +18,30 @@ from avatar_harness.context import ContextPacket, ToolSummary
 
 
 class ToolCall(BaseModel):
+    """Decision to invoke a named tool with validated input (§6)."""
+
     type: Literal["tool_call"] = "tool_call"
     name: str  # must match a tool active for the current phase
     input: dict = Field(default_factory=dict)  # validated against the tool's input_schema
 
 
 class FinalAnswer(BaseModel):
+    """Decision claiming the task is complete — a proposal for the verifier (§6, §12)."""
+
     type: Literal["final_answer"] = "final_answer"
     answer: str  # claims completion; subject to verification (§12)
 
 
 class AskUser(BaseModel):
+    """Decision to ask the user a question (blocks in a non-interactive run) (§6)."""
+
     type: Literal["ask_user"] = "ask_user"
     question: str
 
 
 class ModelDecision(BaseModel):
+    """One validated model decision: a thought plus exactly one action (§6)."""
+
     thought_summary: str = ""  # for logging/context only — never control flow
     action: ToolCall | FinalAnswer | AskUser = Field(discriminator="type")
 
@@ -61,7 +69,9 @@ class ModelClient(Protocol):
     result through `parse_decision`; tests substitute a scripted fake.
     """
 
-    def decide(self, context: ContextPacket) -> ModelDecision: ...
+    def decide(self, context: ContextPacket) -> ModelDecision:
+        """Turn a context packet into a validated decision for the current turn."""
+        ...
 
 
 _SYSTEM_TEMPLATE = """You are the reasoning core of a coding-agent harness on a READ-ONLY \
@@ -122,13 +132,14 @@ class OpenAIModelClient:
         self.config = config
         self.max_parse_retries = max_parse_retries
         if client is None:
-            from openai import OpenAI
+            from openai import OpenAI  # noqa: PLC0415 — lazy: only needed when no client is injected
 
             # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
             client = OpenAI(api_key=config.api_key, base_url=config.base_url)
         self.client = client
 
     def decide(self, context: ContextPacket) -> ModelDecision:
+        """Call the endpoint and validate the reply, retrying on malformed output (§6)."""
         messages = build_messages(context)
         last_error: DecisionParseError | None = None
         for _ in range(self.max_parse_retries + 1):
@@ -149,5 +160,6 @@ class OpenAIModelClient:
                     {"role": "assistant", "content": raw},
                     {"role": "user", "content": retry},
                 ]
-        assert last_error is not None
-        raise last_error
+        # The loop only exits without returning via the except branch, which always
+        # sets last_error; the fallback keeps this total without an (O-stripped) assert.
+        raise last_error or DecisionParseError("model returned no valid decision")

@@ -22,8 +22,13 @@ from avatar_harness.tools import default_registry
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
+# Truncation width for event values rendered to the terminal.
+_EVENT_VALUE_WIDTH = 160
+
 
 class EchoResult(BaseModel):
+    """Result of the Phase 0 echo skeleton: the task id, echoed answer, and outcome."""
+
     task_id: str
     answer: str
     outcome: str
@@ -73,8 +78,8 @@ def _print_event(event: Event) -> None:
         if key == "type":
             continue
         text = str(value).replace("\n", " ")
-        if len(text) > 160:
-            text = text[:160] + "…"
+        if len(text) > _EVENT_VALUE_WIDTH:
+            text = text[:_EVENT_VALUE_WIDTH] + "…"
         parts.append(f"{key}={text}")
     print(f"[{event['type']}] " + ", ".join(parts))
 
@@ -88,6 +93,7 @@ def _render_result(state: TaskState) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: parse args, wire the loop, run the task, render the result."""
     parser = argparse.ArgumentParser(
         prog="avatar-harness",
         description="A bounded, verifiable coding-agent harness.",

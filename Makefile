@@ -1,7 +1,9 @@
 # avatar-harness — common developer tasks.
 # `uv` manages the environment; the default dependency group (dev) is synced automatically.
+# Soft-gate tools run ephemerally via `uvx` to keep the locked dev env minimal.
 
-.PHONY: install test run lint format typecheck check clean
+.PHONY: install test run lint format typecheck docstrings deps smoke \
+        check check-hard check-soft clean
 
 # Install/sync dependencies (including the dev group).
 install:
@@ -16,6 +18,8 @@ TASK ?= Describe this repository.
 run:
 	uv run avatar-harness "$(TASK)"
 
+# --- Individual checks ---
+
 # Lint.
 lint:
 	uv run ruff check .
@@ -24,13 +28,45 @@ lint:
 format:
 	uv run ruff format .
 
-# Type-check.
+# Type-check (Pyrefly — sole hard type gate).
 typecheck:
-	uv run pyright
+	uv run pyrefly check
 
-# Full gate: lint + types + tests. Run before committing.
-check: lint typecheck test
+# Docstring<->signature agreement (Google style).
+docstrings:
+	uv run pydoclint src
+
+# Dependency hygiene (unused / missing / transitive).
+deps:
+	uv run deptry src
+
+# Stage 0: compiles AND imports — the cheap "does it run" gate, before tests.
+smoke:
+	uv run python -m compileall -q src tests
+	uv run python -c "import importlib, pkgutil, avatar_harness as p; [importlib.import_module(m.name) for m in pkgutil.walk_packages(p.__path__, p.__name__ + '.')]"
+
+# --- HARD gate: fail-fast, staged. Run before committing. ---
+# Stage 0 (compile/import) -> Stage 1 (lint/types/docs/deps) -> Stage 2 (tests).
+check-hard:
+	uv run ruff format --check .
+	uv run ruff check .
+	$(MAKE) smoke
+	uv run pyrefly check
+	uv run pydoclint src
+	uv run deptry src
+	uv run pytest
+
+# --- SOFT gate: report only, never blocks (note the leading `-`). ---
+check-soft:
+	-uvx interrogate -c pyproject.toml -vv src
+	-uvx vulture src --min-confidence 80
+	-uv run --with pip-audit pip-audit
+	# semgrep (deep SAST) — heavier; enable when desired:
+	# -uvx semgrep --config auto src
+
+# Default gate alias.
+check: check-hard
 
 # Remove tooling caches and build artifacts.
 clean:
-	rm -rf .ruff_cache .pytest_cache dist build src/*.egg-info events
+	rm -rf .ruff_cache .pytest_cache .pyrefly_cache dist build src/*.egg-info events

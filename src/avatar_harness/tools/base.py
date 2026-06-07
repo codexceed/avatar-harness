@@ -16,6 +16,8 @@ from avatar_harness.deps import RunDeps
 
 
 class ToolResult(BaseModel):
+    """The typed outcome of one tool call; the model only ever sees `content` (§10)."""
+
     tool_name: str
     success: bool
     content: str = ""  # what the model MAY see
@@ -32,6 +34,8 @@ ToolHandler = Callable[[Any, RunDeps], ToolResult]
 
 @dataclass(frozen=True)
 class ToolDefinition:
+    """A registered tool: its schema, handler, the phases it is active in, and tier (§10)."""
+
     name: str
     description: str
     input_model: type[BaseModel]
@@ -41,25 +45,33 @@ class ToolDefinition:
 
 
 class ToolRegistry:
+    """The set of available tools, queryable by name and by active phase (§10)."""
+
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
 
     def register(self, tool: ToolDefinition) -> None:
+        """Add (or replace) a tool definition by name."""
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> ToolDefinition | None:
+        """Return the tool registered under `name`, or None if unknown."""
         return self._tools.get(name)
 
     def active_for_phase(self, phase: str) -> list[ToolDefinition]:
+        """Return the tools enabled in the given phase (§10/§21 capability groups)."""
         return [tool for tool in self._tools.values() if phase in tool.phases]
 
 
 class ToolRuntime:
+    """Validates and dispatches tool calls; never raises into the loop (§10)."""
+
     def __init__(self, registry: ToolRegistry, deps: RunDeps) -> None:
         self.registry = registry
         self.deps = deps
 
     def execute(self, name: str, raw_input: dict) -> ToolResult:
+        """Resolve, validate, and run a tool call; errors return as a failed `ToolResult`."""
         tool = self.registry.get(name)
         if tool is None:
             return ToolResult(tool_name=name, success=False, error=f"unknown tool: {name!r}")

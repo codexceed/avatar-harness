@@ -4,13 +4,15 @@ from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
-from avatar_harness.workspace import PathOutsideWorkspace
+from avatar_harness.workspace import PathOutsideWorkspaceError
 
 # Repo inspection is available in every phase ("always", §21 capability groups).
 _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 
 
 class ReadFileInput(BaseModel):
+    """Input for `read_file`: a workspace path and optional 1-indexed line range."""
+
     path: str
     line_range: tuple[int, int] | None = None
 
@@ -20,10 +22,8 @@ def _read_file(args: ReadFileInput, deps: RunDeps) -> ToolResult:
         content = deps.workspace.read(args.path, args.line_range)
     except FileNotFoundError:
         return ToolResult(tool_name="read_file", success=False, error=f"file not found: {args.path}")
-    except PathOutsideWorkspace:
-        return ToolResult(
-            tool_name="read_file", success=False, error=f"path outside workspace: {args.path}"
-        )
+    except PathOutsideWorkspaceError:
+        return ToolResult(tool_name="read_file", success=False, error=f"path outside workspace: {args.path}")
     return ToolResult(
         tool_name="read_file",
         success=True,
@@ -43,6 +43,8 @@ read_file = ToolDefinition(
 
 
 class ListFilesInput(BaseModel):
+    """Input for `list_files`: a glob pattern (defaults to the whole tree)."""
+
     glob: str = "**/*"
 
 

@@ -63,6 +63,13 @@ class VerifierResult(BaseModel):
 
 
 class TaskState(BaseModel):
+    """The full, serializable state of one task — the harness's source of truth (§7).
+
+    Carries the two independent axes (``phase`` = where the work is, ``outcome`` =
+    how it ended), the bounding counters, and the accumulated evidence/decisions
+    the context builder draws on. The model's message history is derived from this.
+    """
+
     task_id: str = Field(default_factory=lambda: uuid4().hex)
     goal: str
     constraints: list[str] = Field(default_factory=list)
@@ -90,6 +97,7 @@ class TaskState(BaseModel):
 
     @property
     def terminal(self) -> bool:
+        """Whether the task has reached a terminal outcome (loop should stop)."""
         return self.outcome is not None
 
     def add_feedback(self, summary: str, *, detail: str | None = None, kind: str = "feedback") -> None:

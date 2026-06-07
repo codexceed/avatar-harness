@@ -35,7 +35,13 @@ def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
 
 
 class AgentRunner:
-    def __init__(
+    """The bounded loop that owns all state mutation and ends on verification (§5, §8).
+
+    Collaborators are injected explicitly so a run is self-contained and replayable;
+    the runner orchestrates them but mutates `TaskState` itself.
+    """
+
+    def __init__(  # noqa: PLR0913 — keyword-only dependency injection of the run's collaborators
         self,
         *,
         model_client: ModelClient,
@@ -55,6 +61,7 @@ class AgentRunner:
         self.config = config
 
     def run(self, state: TaskState) -> TaskState:
+        """Drive the loop to a terminal outcome and return the final state (§5)."""
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)

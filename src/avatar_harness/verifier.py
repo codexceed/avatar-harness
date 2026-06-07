@@ -11,7 +11,10 @@ from avatar_harness.workspace import Workspace
 
 
 class Verifier:
+    """Disposes of a completion proposal via external evidence, never a model (§12)."""
+
     def verify(self, state: TaskState, ws: Workspace) -> VerifierResult:
+        """Run the verification contract for the task's `task_kind` (§12)."""
         if state.task_kind == "investigate":
             return self._verify_investigate(state, ws)
         raise NotImplementedError(f"verifier for task_kind={state.task_kind!r} arrives in Phase 2")

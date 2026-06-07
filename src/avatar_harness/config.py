@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class HarnessConfig(BaseSettings):
+    """The single, explicit run configuration: budgets, session, workspace, endpoint (§8)."""
+
     model_config = SettingsConfigDict(env_prefix="AVATAR_", env_file=".env", extra="ignore")
 
     # Budgets — the bounding conditions of the loop (§5).

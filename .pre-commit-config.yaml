@@ -1,0 +1,39 @@
+# Hard-gate hooks only. Soft tools (interrogate/vulture/pip-audit/semgrep) run via
+# `make check-soft` and CI, not on every commit. Run `pre-commit autoupdate` to bump revs.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: compileall
+        name: compileall (syntax — compiles)
+        entry: python -m compileall -q src tests
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pyrefly
+        name: pyrefly (type check)
+        entry: uv run pyrefly check
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pydoclint
+        name: pydoclint (Google docstrings)
+        entry: uv run pydoclint src
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: deptry
+        name: deptry (dependency hygiene)
+        entry: uv run deptry src
+        language: system
+        types: [python]
+        pass_filenames: false

@@ -14,9 +14,7 @@ def _registry() -> ToolRegistry:
 
 
 def _runtime(tmp_path) -> ToolRuntime:
-    deps = RunDeps(
-        workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken()
-    )
+    deps = RunDeps(workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken())
     return ToolRuntime(_registry(), deps)
 
 

@@ -11,11 +11,13 @@ import subprocess
 from pathlib import Path
 
 
-class PathOutsideWorkspace(Exception):
+class PathOutsideWorkspaceError(Exception):
     """Raised when a requested path resolves outside the workspace root."""
 
 
 class Workspace:
+    """A tracked, path-confined handle to the repo; tools reach the FS only here (§8, §15)."""
+
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root).resolve()
         self._baseline = self._capture_baseline()
@@ -30,12 +32,13 @@ class Workspace:
         """
         candidate = (self.root / rel_path).resolve()
         if candidate != self.root and not candidate.is_relative_to(self.root):
-            raise PathOutsideWorkspace(rel_path)
+            raise PathOutsideWorkspaceError(rel_path)
         return candidate
 
     # --- reads (tier 0) --------------------------------------------------
 
     def read(self, path: str, line_range: tuple[int, int] | None = None) -> str:
+        """Read a workspace file, optionally a 1-indexed inclusive line range."""
         text = self._resolve(path).read_text(encoding="utf-8")
         if line_range is None:
             return text
@@ -43,9 +46,8 @@ class Workspace:
         return "".join(text.splitlines(keepends=True)[start - 1 : end])
 
     def list_files(self, glob: str) -> list[str]:
-        return sorted(
-            str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file()
-        )
+        """Return workspace-relative paths of files matching `glob`, sorted."""
+        return sorted(str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file())
 
     # --- diff against the pinned baseline (§15) --------------------------
 

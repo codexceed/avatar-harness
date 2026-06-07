@@ -18,11 +18,14 @@ class CancellationToken:
     cancelled: bool = False
 
     def cancel(self) -> None:
+        """Trip the token so an in-flight tool can abort at its next checkpoint."""
         self.cancelled = True
 
 
 @dataclass
 class RunDeps:
+    """The run-scoped dependencies handed explicitly to tools and the runtime (§8)."""
+
     workspace: Workspace
     config: HarnessConfig
     cancellation: CancellationToken

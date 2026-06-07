@@ -31,9 +31,7 @@ class ScriptedModel:
 
 def _runner(tmp_path, registry: ToolRegistry, decisions, *, emitter=None, **config_kw) -> AgentRunner:
     config = HarnessConfig(**config_kw)
-    deps = RunDeps(
-        workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken()
-    )
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
     return AgentRunner(
         model_client=ScriptedModel(decisions),
         registry=registry,
@@ -114,9 +112,7 @@ class _RaisingModel:
 
 def test_malformed_decisions_yield_incomplete(tmp_path, read_registry):
     config = HarnessConfig()
-    deps = RunDeps(
-        workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken()
-    )
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
     runner = AgentRunner(
         model_client=_RaisingModel(),
         registry=read_registry,
