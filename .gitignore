@@ -14,6 +14,7 @@ venv/
 .ruff_cache/
 .pytest_cache/
 .pyright/
+.pyrefly_cache/
 .uv-cache/
 
 # uv lockfile is committed; keep it. (uv.lock intentionally NOT ignored)
@@ -30,3 +31,11 @@ events/
 .DS_Store
 .idea/
 .vscode/
+
+# Agent / editor local state
+# Local symlinks + machine-specific settings (.claude/settings.local.json).
+# Shared agent config IS committed: .mcp.json, skills-lock.json, .agents/.
+.claude/
+
+# Mintlify local preview build
+.mint/
