@@ -41,3 +41,4 @@ def test_eventlog_writes_valid_jsonl(tmp_path):
     events = [json.loads(line) for line in lines]
     assert [e["type"] for e in events] == ["agent_start", "tool_call", "agent_end"]
     assert events[0]["goal"] == "fix bug"
+    assert "ts" in events[0]  # each record is timestamped
