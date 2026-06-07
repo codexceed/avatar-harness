@@ -116,11 +116,68 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 
 ## Phase 2 — Closing the loop (MVP)
 
-`PermissionPolicy` + `apply_patch` + one verifier command + `Verifier` + `ArtifactManager`. Engine steps §20: 6, 7, 8, 11, 12.
+`PermissionPolicy` + `apply_patch` + bounded `run_tests`/`run_linter` + full `Verifier` (`edit`/`test_only` gates) + `ArtifactManager`. Engine steps §20: 6, 7, 8, 11, 12. Plus closing the known Phase-1 gap: `Workspace` clean-start assertion (§15). **Tests approved 2026-06-07 (~34).**
 
-- [ ] Tests proposed & approved
-- [ ] Tests red → green
-- [ ] Exit: `edit` task patches atomically, runs a verifier command, `outcome` set by verifier (not self-certified), artifact has status+files+evidence; gate blocks a tier-3 action; bad patch leaves workspace unchanged
+**Confirmed design forks (2026-06-07):** (1) the **verifier runs the verification command itself** (`ws.run(config.test_command)`), independent of any `run_tests` the model called — the gate's signal is harness-owned, never model-mediated (§5); (2) command source is **explicit config** (`AVATAR_TEST_COMMAND`/`AVATAR_LINT_COMMAND`), not target inference (§21 deferred); (3) the permission gate stays **synchronous** in Phase 2 (`policy.check(...) -> ToolPermission`), called directly by the runner — `async` lands with the Phase 3 REPL; (4) `Workspace` asserts a **clean-or-acknowledged git state** at open (`allow_dirty`), closing the gap logged 2026-06-07.
+
+**Workspace — patch write, command exec, clean-start (§10, §15)**
+- [ ] `test_workspace_applies_multi_file_patch_atomically`
+- [ ] `test_workspace_rejects_patch_touching_outside_root`
+- [ ] `test_workspace_stale_patch_applies_nothing`
+- [ ] `test_workspace_patch_creates_and_deletes_only_when_explicit`
+- [ ] `test_workspace_diff_reflects_applied_patch`
+- [ ] `test_workspace_run_captures_stdout_stderr_exit_code`
+- [ ] `test_workspace_run_times_out`
+- [ ] `test_workspace_open_accepts_clean_state_and_pins_head`
+- [ ] `test_workspace_open_rejects_dirty_unless_allowed`
+- [ ] impl `workspace.py` (`apply_patch`, `run`, `open`/clean-start, `PatchError`, `CommandOutput`)
+
+**PermissionPolicy — tiers + gate (§11)**
+- [ ] `test_tier0_reads_allowed`
+- [ ] `test_apply_patch_allowed_when_paths_validate`
+- [ ] `test_apply_patch_blocked_when_path_escapes`
+- [ ] `test_tier2_commands_allowed_with_timeout`
+- [ ] `test_tier3_action_blocked_by_default`
+- [ ] `test_gate_returns_control_decision_not_event`
+- [ ] impl `permission.py` (`PermissionPolicy`, `ToolPermission`, tier table)
+
+**Side-effecting tools — apply_patch / run_tests / run_linter (§10)**
+- [ ] `test_apply_patch_tool_reports_changed_files`
+- [ ] `test_apply_patch_tool_stale_context_is_model_correctable`
+- [ ] `test_run_tests_passing_surfaces_evidence`
+- [ ] `test_run_tests_failure_is_not_a_tool_error`
+- [ ] `test_run_tests_target_not_found_is_model_correctable`
+- [ ] `test_run_linter_runs_configured_command`
+- [ ] impl `tools/edit.py` (`apply_patch`), `tools/commands.py` (`run_tests`, `run_linter`)
+
+**Verifier — `edit` + `test_only` gates (§12)**
+- [ ] `test_edit_gate_passes_with_diff_and_passing_tests`
+- [ ] `test_edit_gate_fails_with_no_diff`
+- [ ] `test_edit_gate_fails_on_failing_tests`
+- [ ] `test_edit_gate_passes_on_clean_lint_when_no_test_target`
+- [ ] `test_edit_gate_fails_on_disallowed_skip`
+- [ ] `test_edit_gate_flags_placeholder_or_secret`
+- [ ] `test_test_only_gate_passes_when_new_tests_added_and_pass`
+- [ ] `test_test_only_gate_fails_when_no_tests_changed`
+- [ ] `test_verifier_never_passes_on_zero_positive_signal`
+- [ ] impl `verifier.py` (`edit`/`test_only` gates; runs the verification command via `ws.run`)
+
+**ArtifactManager — final summary (§14)**
+- [ ] `test_artifact_status_is_state_outcome_verbatim`
+- [ ] `test_artifact_lists_files_commands_verification_and_diff_ref`
+- [ ] impl `artifact.py` (`Artifact`, `ArtifactManager.build`/`render`)
+
+**Runner integration — gate wired + edit end-to-end (§5)**
+- [ ] `test_runner_consults_gate_before_execution`
+- [ ] `test_edit_task_runs_to_verified_success`
+- [ ] `test_bad_patch_leaves_workspace_unchanged_and_loops`
+- [ ] `test_repair_budget_exhaustion_yields_failed`
+- [ ] impl runner: consult `policy` before execute; wire `apply_patch`/commands into `default_registry`; config `test_command`/`lint_command`/`command_timeout_seconds`
+
+**Exit criteria**
+- [ ] `edit` task patches atomically, runs a verifier command, `outcome` set by verifier (not self-certified), artifact has status+files+evidence
+- [ ] gate blocks a tier-3 action; bad patch leaves workspace unchanged
+- [ ] all Phase 2 tests green · `ruff` + `pyright` clean
 
 ## Phase 3 — Interactive cockpit
 
