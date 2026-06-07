@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 1 ✅ logic + integration complete (35/35 green; CLI runs the real loop, scripted-model smoke: read → verify → success). Live dogfood pending a configured model endpoint/key. Next: Phase 2 (editing path).
+> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. Live model dogfood still pending a configured endpoint/key (carried from Phase 1). Next: Phase 3 (interactive cockpit).
 
 ## How to use this file
 
@@ -121,63 +121,63 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 **Confirmed design forks (2026-06-07):** (1) the **verifier runs the verification command itself** (`ws.run(config.test_command)`), independent of any `run_tests` the model called — the gate's signal is harness-owned, never model-mediated (§5); (2) command source is **explicit config** (`AVATAR_TEST_COMMAND`/`AVATAR_LINT_COMMAND`), not target inference (§21 deferred); (3) the permission gate stays **synchronous** in Phase 2 (`policy.check(...) -> ToolPermission`), called directly by the runner — `async` lands with the Phase 3 REPL; (4) `Workspace` asserts a **clean-or-acknowledged git state** at open (`allow_dirty`), closing the gap logged 2026-06-07.
 
 **Workspace — patch write, command exec, clean-start (§10, §15)**
-- [ ] `test_workspace_applies_multi_file_patch_atomically`
-- [ ] `test_workspace_rejects_patch_touching_outside_root`
-- [ ] `test_workspace_stale_patch_applies_nothing`
-- [ ] `test_workspace_patch_creates_and_deletes_only_when_explicit`
-- [ ] `test_workspace_diff_reflects_applied_patch`
-- [ ] `test_workspace_run_captures_stdout_stderr_exit_code`
-- [ ] `test_workspace_run_times_out`
-- [ ] `test_workspace_open_accepts_clean_state_and_pins_head`
-- [ ] `test_workspace_open_rejects_dirty_unless_allowed`
-- [ ] impl `workspace.py` (`apply_patch`, `run`, `open`/clean-start, `PatchError`, `CommandOutput`)
+- [x] `test_workspace_applies_multi_file_patch_atomically`
+- [x] `test_workspace_rejects_patch_touching_outside_root`
+- [x] `test_workspace_stale_patch_applies_nothing`
+- [x] `test_workspace_patch_creates_and_deletes_only_when_explicit`
+- [x] `test_workspace_diff_reflects_applied_patch`
+- [x] `test_workspace_run_captures_stdout_stderr_exit_code`
+- [x] `test_workspace_run_times_out`
+- [x] `test_workspace_open_accepts_clean_state_and_pins_head`
+- [x] `test_workspace_open_rejects_dirty_unless_allowed`
+- [x] impl `workspace.py` (`apply_patch` via `git apply --check`, `run`, clean-start, `PatchError`, `CommandOutput`)
 
 **PermissionPolicy — tiers + gate (§11)**
-- [ ] `test_tier0_reads_allowed`
-- [ ] `test_apply_patch_allowed_when_paths_validate`
-- [ ] `test_apply_patch_blocked_when_path_escapes`
-- [ ] `test_tier2_commands_allowed_with_timeout`
-- [ ] `test_tier3_action_blocked_by_default`
-- [ ] `test_gate_returns_control_decision_not_event`
-- [ ] impl `permission.py` (`PermissionPolicy`, `ToolPermission`, tier table)
+- [x] `test_tier0_reads_allowed`
+- [x] `test_apply_patch_allowed_when_paths_validate`
+- [x] `test_apply_patch_blocked_when_path_escapes`
+- [x] `test_tier2_commands_allowed_with_timeout`
+- [x] `test_tier3_action_blocked_by_default`
+- [x] `test_gate_returns_control_decision_not_event`
+- [x] impl `permission.py` (`PermissionPolicy`, `ToolPermission`, tier table)
 
 **Side-effecting tools — apply_patch / run_tests / run_linter (§10)**
-- [ ] `test_apply_patch_tool_reports_changed_files`
-- [ ] `test_apply_patch_tool_stale_context_is_model_correctable`
-- [ ] `test_run_tests_passing_surfaces_evidence`
-- [ ] `test_run_tests_failure_is_not_a_tool_error`
-- [ ] `test_run_tests_target_not_found_is_model_correctable`
-- [ ] `test_run_linter_runs_configured_command`
-- [ ] impl `tools/edit.py` (`apply_patch`), `tools/commands.py` (`run_tests`, `run_linter`)
+- [x] `test_apply_patch_tool_reports_changed_files`
+- [x] `test_apply_patch_tool_stale_context_is_model_correctable`
+- [x] `test_run_tests_passing_surfaces_evidence`
+- [x] `test_run_tests_failure_is_not_a_tool_error`
+- [x] `test_run_tests_target_not_found_is_model_correctable`
+- [x] `test_run_linter_runs_configured_command`
+- [x] impl `tools/edit.py` (`apply_patch`), `tools/commands.py` (`run_tests`, `run_linter`)
 
 **Verifier — `edit` + `test_only` gates (§12)**
-- [ ] `test_edit_gate_passes_with_diff_and_passing_tests`
-- [ ] `test_edit_gate_fails_with_no_diff`
-- [ ] `test_edit_gate_fails_on_failing_tests`
-- [ ] `test_edit_gate_passes_on_clean_lint_when_no_test_target`
-- [ ] `test_edit_gate_fails_on_disallowed_skip`
-- [ ] `test_edit_gate_flags_placeholder_or_secret`
-- [ ] `test_test_only_gate_passes_when_new_tests_added_and_pass`
-- [ ] `test_test_only_gate_fails_when_no_tests_changed`
-- [ ] `test_verifier_never_passes_on_zero_positive_signal`
-- [ ] impl `verifier.py` (`edit`/`test_only` gates; runs the verification command via `ws.run`)
+- [x] `test_edit_gate_passes_with_diff_and_passing_tests`
+- [x] `test_edit_gate_fails_with_no_diff`
+- [x] `test_edit_gate_fails_on_failing_tests`
+- [x] `test_edit_gate_passes_on_clean_lint_when_no_test_target`
+- [x] `test_edit_gate_fails_on_disallowed_skip`
+- [x] `test_edit_gate_flags_placeholder_or_secret`
+- [x] `test_test_only_gate_passes_when_new_tests_added_and_pass`
+- [x] `test_test_only_gate_fails_when_no_tests_changed`
+- [x] `test_verifier_never_passes_on_zero_positive_signal`
+- [x] impl `verifier.py` (`edit`/`test_only` gates; runs the verification command via `ws.run`)
 
 **ArtifactManager — final summary (§14)**
-- [ ] `test_artifact_status_is_state_outcome_verbatim`
-- [ ] `test_artifact_lists_files_commands_verification_and_diff_ref`
-- [ ] impl `artifact.py` (`Artifact`, `ArtifactManager.build`/`render`)
+- [x] `test_artifact_status_is_state_outcome_verbatim`
+- [x] `test_artifact_lists_files_commands_verification_and_diff_ref`
+- [x] impl `artifact.py` (`Artifact`, `ArtifactManager.build`/`render`)
 
 **Runner integration — gate wired + edit end-to-end (§5)**
-- [ ] `test_runner_consults_gate_before_execution`
-- [ ] `test_edit_task_runs_to_verified_success`
-- [ ] `test_bad_patch_leaves_workspace_unchanged_and_loops`
-- [ ] `test_repair_budget_exhaustion_yields_failed`
-- [ ] impl runner: consult `policy` before execute; wire `apply_patch`/commands into `default_registry`; config `test_command`/`lint_command`/`command_timeout_seconds`
+- [x] `test_runner_consults_gate_before_execution`
+- [x] `test_edit_task_runs_to_verified_success`
+- [x] `test_bad_patch_leaves_workspace_unchanged_and_loops`
+- [x] `test_repair_budget_exhaustion_yields_failed`
+- [x] impl runner: consult `policy` before execute; wire `apply_patch`/commands into `default_registry`; config `test_command`/`lint_command`/`command_timeout_seconds`
 
 **Exit criteria**
-- [ ] `edit` task patches atomically, runs a verifier command, `outcome` set by verifier (not self-certified), artifact has status+files+evidence
-- [ ] gate blocks a tier-3 action; bad patch leaves workspace unchanged
-- [ ] all Phase 2 tests green · `ruff` + `pyright` clean
+- [x] `edit` task patches atomically, runs a verifier command, `outcome` set by verifier (not self-certified), artifact has status+files+evidence
+- [x] gate blocks a tier-3 action; bad patch leaves workspace unchanged
+- [x] all Phase 2 tests green (73/73) · `ruff` + `pyrefly` clean (`make check`)
 
 ## Phase 3 — Interactive cockpit
 
@@ -217,5 +217,6 @@ From §21, one at a time, each justified by friction actually hit.
 - **2026-06-06** — Documented two load-bearing verification clarifications (`ARCHITECTURE.md` §4.0, `HARNESS_DESIGN.md` §15): (a) the verifier runs **no LLM** — structural inspection is predicates over `TaskState`; (b) verification reads the **uncommitted** working tree vs a **pinned baseline** (HEAD-at-start), and the harness **never commits** — the diff is the deliverable. `state.files_modified` is the git-independent primary signal.
 - **2026-06-07** — Dogfooding bug fix: the runner recorded only tool *summaries* into evidence, so the model never saw tool *content* (search hits, file text) and looped calling `search_repo` until the iteration budget. Now `_apply_tool_result` stores `result.content` as evidence detail and `ContextBuilder` surfaces it (truncated). Also enriched the event trajectory: `model_decision` (thought + action), tool `input`/`content`, `verification_end` (summary + next_action), `decision_error`. Console truncates long values; JSONL keeps full. Observability tooling (Langfuse/Helicone/Phoenix) still TBD.
 - **2026-06-07** — Tabled the agent-performance-analysis / eval work until **after Phase 3 (interactive REPL)**; scheduled in Phase 4+. Landscape surveyed — tracing: Langfuse / Arize Phoenix / LangSmith / Braintrust / Helicone / OTel-GenAI; eval frameworks: Inspect (AISI) / promptfoo / DeepEval; coding benchmarks: SWE-bench Verified, Terminal-Bench, Aider polyglot. Key insight driving the plan: our **`Verifier` is already a deterministic scorer** and the **event log is already a trajectory dataset**, so the highest-leverage move is a small *internal* eval harness (pass@1 on a held task set, verifier-as-scorer) + one tracer — not a platform purchase. North-star metric: resolution rate on a held task set; secondary: iterations/tokens/cost per solved task + failure-mode distribution.
+- **2026-06-07** — Phase 2 complete (closing the loop). `apply_patch` applies a multi-file unified diff atomically via `git apply --check` then `git apply` (path-confined first, so an escape is refused before any write; a stale hunk raises `PatchError` and nothing is written). `PermissionPolicy` is a synchronous `before_tool_call` control gate (tier table: 0/2 allow, 1 allow iff patch paths resolve inside the root, 3+ block) consulted by the runner before every execution — never an emitter subscriber. The `Verifier` gained `edit`/`test_only` gates that **run the verification command themselves** (`config.test_command`/`lint_command` via `ws.run`), so the success signal is harness-owned, never the model's `run_tests`; the gate enforces all three §12 criteria (no required fail · no disallowed skip · ≥1 positive signal), with allowed-skip reasons whitelisted and an always-on secret/placeholder diff guard. `ArtifactManager` reports `status = state.outcome` verbatim. `Workspace.open(allow_dirty=False)` now asserts a clean git tree and pins HEAD, closing the dirty-repo gap. 73/73 green, `make check` clean. Two scope notes: phase transitions (investigating→editing→verifying) are not yet automated — tools are registered phase-gated but the runner doesn't advance `phase`, which only matters once a real model drives tool exposure (Phase 3); and run_tests maps pytest exit 4→model-correctable "target not found", exit 5→allowed "no test target", which is pytest-specific (revisit if the default command changes).
 - **2026-06-07** — Phase 1 complete (logic + real-model/CLI integration). Known gap for Phase 2: `Workspace` does not yet assert a clean-or-acknowledged git state at task start (§15 `workspace.open`). The verifier's `no_unintended_diff` diffs vs. the pinned baseline, so on a *dirty* repo a read-only investigate would wrongly fail (pre-existing uncommitted changes count). Fine on a clean checkout; add the clean-start assertion in Phase 2.
 - **2026-06-06** — Phase 1 will include a **minimal `investigate`-only verifier gate** (not deferred to Phase 2). It inspects `TaskState`/workspace only (positive evidence cited + no unintended diff), so it is self-contained and sidesteps the §4.3 command-source gap. The full `edit`/`test_only` verifier (which needs test/lint command resolution) stays Phase 2. This keeps "verifier-owned completion" true from the first loop.

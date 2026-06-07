@@ -15,6 +15,13 @@ def _diff(path: str, old: str, new: str) -> str:
     return f"--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-{old}\n+{new}\n"
 
 
+# A correct hunk for the two-line `calc.py` the git_repo fixture commits (the bug
+# is on line 2, so it needs a context line — `_diff` only addresses line-1 files).
+_CALC_FIX = (
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+)
+
+
 def test_workspace_reads_inside_root(tmp_path):
     (tmp_path / "hello.txt").write_text("line1\nline2\n", encoding="utf-8")
     ws = Workspace(tmp_path)
@@ -60,7 +67,7 @@ def test_workspace_applies_multi_file_patch_atomically(git_repo):
         ["git", "-C", str(git_repo), "commit", "-q", "-m", "add b"], check=True, capture_output=True
     )
     ws = Workspace(git_repo)
-    diff = _diff("calc.py", "    return a - b", "    return a + b") + _diff("b.py", "x = 1", "x = 2")
+    diff = _CALC_FIX + _diff("b.py", "x = 1", "x = 2")
     changed = ws.apply_patch(diff)
     assert set(changed) == {"calc.py", "b.py"}
     assert "a + b" in ws.read("calc.py")
@@ -98,7 +105,7 @@ def test_workspace_patch_creates_and_deletes_only_when_explicit(git_repo):
 def test_workspace_diff_reflects_applied_patch(git_repo):
     ws = Workspace(git_repo)
     assert ws.diff() == ""  # clean at open
-    ws.apply_patch(_diff("calc.py", "    return a - b", "    return a + b"))
+    ws.apply_patch(_CALC_FIX)
     delta = ws.diff()
     assert "a + b" in delta
     assert "calc.py" in delta

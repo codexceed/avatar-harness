@@ -20,6 +20,14 @@ class HarnessConfig(BaseSettings):
     max_repair_attempts: int = 3
     max_context_tokens: int = 100_000
 
+    # Verification commands (§12). The verifier runs these ITSELF — independent of
+    # any run_tests/run_linter the model called — so its signal is harness-owned,
+    # never model-mediated. Empty disables the command (an allowed/disallowed skip
+    # per the gate). Target inference is deferred (§21); the command is explicit.
+    test_command: str = "pytest -q"
+    lint_command: str = "ruff check"
+    command_timeout_seconds: int = 120
+
     # Session / UX (§23).
     interactive: bool = True
 

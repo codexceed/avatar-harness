@@ -19,6 +19,7 @@ from avatar_harness.model_client import (
     ModelClient,
     ToolCall,
 )
+from avatar_harness.permission import PermissionPolicy
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.verifier import Verifier
@@ -51,6 +52,7 @@ class AgentRunner:
         verifier: Verifier,
         emitter: Emitter,
         config: HarnessConfig,
+        policy: PermissionPolicy | None = None,
     ) -> None:
         self.model_client = model_client
         self.registry = registry
@@ -59,6 +61,8 @@ class AgentRunner:
         self.verifier = verifier
         self.emitter = emitter
         self.config = config
+        # The before-tool-call control gate (§11); defaults to the standard tier policy.
+        self.policy = policy or PermissionPolicy()
 
     def run(self, state: TaskState) -> TaskState:
         """Drive the loop to a terminal outcome and return the final state (§5)."""
@@ -90,6 +94,16 @@ class AgentRunner:
             )
 
             if isinstance(action, ToolCall):
+                tool = self.registry.get(action.name)
+                # Consult the control gate before execution (§11). A block redirects the
+                # loop — the action never runs — and the reason is fed back as evidence.
+                permission = self.policy.check(tool, action.input, state, ws) if tool is not None else None
+                if permission is not None and permission.blocked:
+                    state.latest_error = permission.reason
+                    state.add_feedback(permission.reason, kind="permission_blocked")
+                    self.emitter.emit("permission_blocked", tool=action.name, reason=permission.reason)
+                    self.emitter.emit("turn_end", task_id=state.task_id)
+                    continue
                 result = runtime.execute(action.name, action.input)
                 self._apply_tool_result(state, result)
                 self.emitter.emit(

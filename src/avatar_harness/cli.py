@@ -65,7 +65,7 @@ def run_agent(
         registry=default_registry(),
         deps=deps,
         context_builder=ContextBuilder(),
-        verifier=Verifier(),
+        verifier=Verifier(config),
         emitter=emitter,
         config=config,
     )
