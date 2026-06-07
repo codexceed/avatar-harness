@@ -3,7 +3,10 @@
 # Soft-gate tools run ephemerally via `uvx` to keep the locked dev env minimal.
 
 .PHONY: install test run lint format typecheck docstrings deps smoke \
-        docs-api docs-serve check check-hard check-soft clean
+        docs-api docs-serve docs-validate check check-hard check-soft clean
+
+# Mintlify's CLI needs Node LTS (not 25+); use fnm to pin it (repo .node-version = 22).
+MINT := $(shell command -v fnm >/dev/null 2>&1 && echo "fnm exec --using=22 mint" || echo "mint")
 
 # Install/sync dependencies (including the dev group).
 install:
@@ -44,9 +47,13 @@ deps:
 docs-api:
 	uv run python scripts/gen_api_docs.py
 
-# Live-preview the docs site (requires the Mintlify CLI: `npm i -g mint`).
+# Live-preview the docs site at http://localhost:3000 (run `make docs-api` first).
 docs-serve:
-	mint dev
+	cd docs && $(MINT) dev
+
+# Validate the docs build in strict mode (broken links, missing pages, MDX errors).
+docs-validate:
+	cd docs && $(MINT) validate
 
 # Stage 0: compiles AND imports — the cheap "does it run" gate, before tests.
 smoke:

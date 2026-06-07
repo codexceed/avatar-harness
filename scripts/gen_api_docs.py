@@ -28,7 +28,7 @@ import avatar_harness
 
 DOCS_ROOT = Path("docs")
 API_DIR = DOCS_ROOT / "api-reference"
-DOCS_JSON = Path("docs.json")
+DOCS_JSON = DOCS_ROOT / "docs.json"  # config lives at the docs content root (Mintlify convention)
 API_GROUP = "API reference"
 
 
