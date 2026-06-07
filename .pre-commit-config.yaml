@@ -1,10 +1,12 @@
 # Hard-gate hooks only. Soft tools (interrogate/vulture/pip-audit/semgrep) run via
-# `make check-soft` and CI, not on every commit. Run `pre-commit autoupdate` to bump revs.
+# `make check-soft` and CI, not on every commit.
+# NOTE: keep this rev in lockstep with the `ruff` dev dependency (uv.lock) — a skew
+# lets one ruff strip a noqa the other still enforces. Bump both together.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.0
+    rev: v0.15.16
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
 
