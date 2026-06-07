@@ -1,8 +1,11 @@
 from avatar_harness.config import HarnessConfig
 
 
-def test_config_loads_defaults():
-    config = HarnessConfig()
+def test_config_loads_defaults(monkeypatch):
+    # Hermetic: ignore a developer's local .env / shell AVATAR_* vars.
+    for var in ("AVATAR_API_KEY", "AVATAR_MODEL", "AVATAR_BASE_URL"):
+        monkeypatch.delenv(var, raising=False)
+    config = HarnessConfig(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert config.max_iterations == 50
     assert config.max_repair_attempts == 3
     assert config.interactive is True

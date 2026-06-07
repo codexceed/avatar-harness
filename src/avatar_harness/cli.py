@@ -68,8 +68,15 @@ def run_agent(
 
 
 def _print_event(event: Event) -> None:
-    rest = ", ".join(f"{k}={v}" for k, v in event.items() if k != "type")
-    print(f"[{event['type']}] {rest}")
+    parts = []
+    for key, value in event.items():
+        if key == "type":
+            continue
+        text = str(value).replace("\n", " ")
+        if len(text) > 160:
+            text = text[:160] + "…"
+        parts.append(f"{key}={text}")
+    print(f"[{event['type']}] " + ", ".join(parts))
 
 
 def _render_result(state: TaskState) -> None:

@@ -14,6 +14,15 @@ def test_context_contains_goal_phase_and_recent_evidence(tmp_path, read_registry
     assert any("runner.py" in line for line in packet.recent_evidence)
 
 
+def test_context_surfaces_evidence_detail(tmp_path, read_registry):
+    # Tool CONTENT (stored as evidence detail) must reach the packet, not just summaries —
+    # otherwise the model is blind to what its tools found and loops forever.
+    state = TaskState(goal="x", task_kind="investigate")
+    state.add_feedback("search done", detail="src/app.py:12: def handler()")
+    packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
+    assert any("def handler()" in line for line in packet.recent_evidence)
+
+
 def test_context_omits_out_of_phase_tools(tmp_path, read_registry):
     read_registry.register(
         ToolDefinition(

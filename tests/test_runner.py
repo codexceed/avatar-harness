@@ -29,7 +29,7 @@ class ScriptedModel:
         return decision
 
 
-def _runner(tmp_path, registry: ToolRegistry, decisions, **config_kw) -> AgentRunner:
+def _runner(tmp_path, registry: ToolRegistry, decisions, *, emitter=None, **config_kw) -> AgentRunner:
     config = HarnessConfig(**config_kw)
     deps = RunDeps(
         workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken()
@@ -40,7 +40,7 @@ def _runner(tmp_path, registry: ToolRegistry, decisions, **config_kw) -> AgentRu
         deps=deps,
         context_builder=ContextBuilder(),
         verifier=Verifier(),
-        emitter=Emitter(),
+        emitter=emitter or Emitter(),
         config=config,
     )
 
@@ -81,6 +81,28 @@ def test_ask_user_noninteractive_yields_blocked(tmp_path, read_registry):
     state = TaskState(goal="ambiguous request", task_kind="investigate")
     result = _runner(tmp_path, read_registry, decisions, interactive=False).run(state)
     assert result.outcome == "blocked"
+
+
+def test_runner_emits_model_decisions(tmp_path, read_registry):
+    # The trajectory must capture the model's voice (thought + chosen action),
+    # not just tool names — otherwise the logs are inscrutable.
+    (tmp_path / "app.py").write_text("def handler():\n    return 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(
+            thought_summary="check app.py", action=ToolCall(name="read_file", input={"path": "app.py"})
+        ),
+        ModelDecision(action=FinalAnswer(answer="the handler is in app.py")),
+    ]
+    events: list = []
+    emitter = Emitter()
+    emitter.subscribe(events.append)
+    _runner(tmp_path, read_registry, decisions, emitter=emitter).run(
+        TaskState(goal="where?", task_kind="investigate")
+    )
+    logged = [e for e in events if e["type"] == "model_decision"]
+    assert logged
+    assert logged[0]["thought"] == "check app.py"
+    assert "read_file" in logged[0]["action"]
 
 
 class _RaisingModel:

@@ -8,7 +8,7 @@ receives the whole repository by default.
 
 from pydantic import BaseModel, Field
 
-from avatar_harness.state import TaskState
+from avatar_harness.state import Evidence, TaskState
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.workspace import Workspace
 
@@ -33,8 +33,16 @@ class ContextPacket(BaseModel):
 
 
 class ContextBuilder:
-    def __init__(self, max_evidence: int = 5) -> None:
+    def __init__(self, max_evidence: int = 5, max_detail_chars: int = 1500) -> None:
         self.max_evidence = max_evidence
+        self.max_detail_chars = max_detail_chars
+
+    def _render_evidence(self, evidence: Evidence) -> str:
+        """Render one evidence item, including its detail (tool content) so the
+        model can actually see what a tool found — truncated to the detail budget."""
+        if evidence.detail:
+            return f"{evidence.summary}\n{evidence.detail[: self.max_detail_chars]}"
+        return evidence.summary
 
     def build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket:
         return ContextPacket(
@@ -44,7 +52,9 @@ class ContextBuilder:
             plan=list(state.current_plan),
             files_read=sorted(state.files_read),
             files_modified=sorted(state.files_modified),
-            recent_evidence=[e.summary for e in state.evidence[-self.max_evidence :]],
+            recent_evidence=[
+                self._render_evidence(e) for e in state.evidence[-self.max_evidence :]
+            ],
             allowed_tools=[
                 ToolSummary(
                     name=t.name,

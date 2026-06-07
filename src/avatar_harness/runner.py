@@ -25,6 +25,15 @@ from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
 
+def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
+    """A one-line description of an action, for the trajectory log."""
+    if isinstance(action, ToolCall):
+        return f"{action.name}({action.input})"
+    if isinstance(action, FinalAnswer):
+        return action.answer
+    return action.question
+
+
 class AgentRunner:
     def __init__(
         self,
@@ -55,19 +64,35 @@ class AgentRunner:
             self.emitter.emit("turn_start", task_id=state.task_id, iteration=state.iterations)
             context = self.context_builder.build(state, ws, self.registry)
             try:
-                action = self.model_client.decide(context).action
+                decision = self.model_client.decide(context)
             except DecisionParseError as exc:
                 # A malformed decision is model-correctable: feed it back, don't crash (§6).
                 state.latest_error = str(exc)
                 state.add_feedback(f"invalid decision: {exc}", kind="decision_error")
                 state.consecutive_failures += 1
+                self.emitter.emit("decision_error", error=str(exc))
                 self.emitter.emit("turn_end", task_id=state.task_id)
                 continue
+
+            action = decision.action
+            self.emitter.emit(
+                "model_decision",
+                thought=decision.thought_summary,
+                action_type=action.type,
+                action=_action_brief(action),
+            )
 
             if isinstance(action, ToolCall):
                 result = runtime.execute(action.name, action.input)
                 self._apply_tool_result(state, result)
-                self.emitter.emit("tool_execution_end", tool=action.name, success=result.success)
+                self.emitter.emit(
+                    "tool_execution_end",
+                    tool=action.name,
+                    input=action.input,
+                    success=result.success,
+                    summary=result.summary,
+                    content=result.content if result.success else (result.error or ""),
+                )
             elif isinstance(action, FinalAnswer):
                 state.final_answer = action.answer
                 self._verify(state, ws)
@@ -89,7 +114,13 @@ class AgentRunner:
         if result.success:
             state.files_read |= set(result.files_read)
             state.files_modified |= set(result.files_changed)
-            state.add_feedback(result.summary or f"{result.tool_name} ok", kind="tool_result")
+            # Record the tool's CONTENT (not just the summary) so the next context
+            # surfaces it — otherwise the model is blind to what it found.
+            state.add_feedback(
+                result.summary or f"{result.tool_name} ok",
+                kind="tool_result",
+                detail=result.content or None,
+            )
             state.consecutive_failures = 0
         else:
             state.latest_error = result.error
@@ -99,7 +130,12 @@ class AgentRunner:
     def _verify(self, state: TaskState, ws: Workspace) -> None:
         self.emitter.emit("verification_start")
         report = self.verifier.verify(state, ws)
-        self.emitter.emit("verification_end", passed=report.passed)
+        self.emitter.emit(
+            "verification_end",
+            passed=report.passed,
+            summary=report.summary,
+            next_action=report.recommended_next_action,
+        )
         state.verifier_results.append(report)
         if report.passed:
             state.outcome = "success"
