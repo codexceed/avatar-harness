@@ -23,6 +23,14 @@ def test_context_surfaces_evidence_detail(tmp_path, read_registry):
     assert any("def handler()" in line for line in packet.recent_evidence)
 
 
+def test_context_packet_carries_task_kind(tmp_path, read_registry):
+    # task_kind is threaded onto the packet so the model adapter can frame the prompt
+    # per kind (edit vs investigate) — see model_client._KIND_FRAMING.
+    state = TaskState(goal="fix the bug", task_kind="edit")
+    packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
+    assert packet.task_kind == "edit"
+
+
 def test_context_omits_out_of_phase_tools(tmp_path, read_registry):
     read_registry.register(
         ToolDefinition(

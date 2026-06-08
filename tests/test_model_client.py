@@ -85,21 +85,27 @@ def test_openai_client_builds_request_and_parses():
 
 
 def test_default_prompt_is_kind_aware():
-    # The default system prompt must NOT be hard-locked to a READ-ONLY investigation
-    # task: an edit task framed as READ-ONLY would forbid the very mutation it needs.
-    # task_kind is not (yet) carried on the ContextPacket, so the prompt is kind-NEUTRAL:
-    # it must not assert READ-ONLY framing for any packet.
-    packet = ContextPacket(
+    # task_kind is now carried on the ContextPacket, so the prompt frames the mission
+    # per kind: an edit task is told to make a working change; an investigate task is
+    # told NOT to edit. An edit task must never be re-locked to READ-ONLY framing.
+    edit = ContextPacket(
         goal="fix the off-by-one in app.py",
         phase="editing",
+        task_kind="edit",
         allowed_tools=[ToolSummary(name="apply_patch", description="apply a patch")],
     )
-    system = next(m["content"] for m in build_messages(packet) if m["role"] == "system")
-    assert "READ-ONLY" not in system
-    assert "read-only" not in system.lower()
-    # Still a usable, schema-bearing harness prompt.
-    assert "JSON" in system
-    assert "apply_patch" in system
+    inv = ContextPacket(
+        goal="explain the loop",
+        phase="investigating",
+        task_kind="investigate",
+        allowed_tools=[ToolSummary(name="read_file", description="read a file")],
+    )
+    edit_sys = next(m["content"] for m in build_messages(edit) if m["role"] == "system")
+    inv_sys = next(m["content"] for m in build_messages(inv) if m["role"] == "system")
+    assert edit_sys != inv_sys  # framing genuinely varies by kind
+    assert "READ-ONLY" not in edit_sys and "read-only" not in edit_sys.lower()
+    assert "without editing" in inv_sys.lower()  # investigate explicitly forbids mutation
+    assert "JSON" in edit_sys and "apply_patch" in edit_sys  # still schema-bearing
 
 
 def test_core_imports_without_openai(monkeypatch):
