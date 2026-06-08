@@ -9,7 +9,8 @@ fakes that stand in for a real client in tests — are trivially testable.
 """
 
 import json
-from typing import Any, Literal, Protocol
+from abc import ABC, abstractmethod
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -72,13 +73,14 @@ def parse_decision(raw: str) -> ModelDecision:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
 
 
-class ModelClient(Protocol):
+class ModelClient(ABC):
     """Anything that turns a context packet into a validated decision (§6).
 
     The real implementation calls an OpenAI-compatible endpoint and runs the
     result through `parse_decision`; tests substitute a scripted fake.
     """
 
+    @abstractmethod
     def decide(self, context: ContextPacket) -> ModelDecision:
         """Turn a context packet into a validated decision for the current turn.
 
@@ -144,7 +146,7 @@ def build_messages(context: ContextPacket) -> list[dict[str, str]]:
     ]
 
 
-class OpenAIModelClient:
+class OpenAIModelClient(ModelClient):
     """Calls an OpenAI-compatible endpoint and validates the reply (§6, §18).
 
     A malformed reply is fed back to the model for a bounded number of retries
