@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextPacket, ToolSummary
+from avatar_harness.context import ContextBuilder, ContextPacket, ToolSummary
+from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.events import Emitter
 from avatar_harness.model_client import (
     DecisionParseError,
     FinalAnswer,
@@ -17,6 +19,10 @@ from avatar_harness.model_client import (
     build_messages,
     parse_decision,
 )
+from avatar_harness.runner import AgentRunner
+from avatar_harness.state import TaskState
+from avatar_harness.verifier import Verifier
+from avatar_harness.workspace import Workspace
 
 
 def test_parses_tool_call_decision():
@@ -132,21 +138,13 @@ class _ScriptedModel(ModelClient):
         self._decisions = decisions
         self._i = 0
 
-    def decide(self, context: ContextPacket) -> ModelDecision:  # noqa: ARG002
+    def decide(self, context: ContextPacket) -> ModelDecision:
         decision = self._decisions[min(self._i, len(self._decisions) - 1)]
         self._i += 1
         return decision
 
 
 def test_custom_model_client_runs_end_to_end(tmp_path, read_registry):
-    from avatar_harness.context import ContextBuilder
-    from avatar_harness.deps import CancellationToken, RunDeps
-    from avatar_harness.events import Emitter
-    from avatar_harness.runner import AgentRunner
-    from avatar_harness.state import TaskState
-    from avatar_harness.verifier import Verifier
-    from avatar_harness.workspace import Workspace
-
     (tmp_path / "app.py").write_text("def handler():\n    return 1\n", encoding="utf-8")
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "app.py"})),

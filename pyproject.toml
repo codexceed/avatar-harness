@@ -9,10 +9,15 @@ authors = [{ name = "Sarthak Joshi" }]
 keywords = ["llm", "agent", "coding-agent", "harness", "tool-calling"]
 
 dependencies = [
-    "openai>=1.40",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
 ]
+
+# Provider backends are optional extras: the core package (state, tools, runner,
+# verifier, prompt assembly) imports without them. `OpenAIModelClient` lazily imports
+# `openai` and raises a clear error if the extra is missing.
+[project.optional-dependencies]
+openai = ["openai>=1.40"]
 
 [dependency-groups]
 # Hard-gate tools are pinned and installed (reproducible CI gate).
@@ -26,6 +31,7 @@ dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
     "pre-commit>=3.7",
+    "openai>=1.40",  # the OpenAI extra, installed for dev/CI so the test suite can exercise it
 ]
 
 [project.scripts]

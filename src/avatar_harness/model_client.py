@@ -93,19 +93,28 @@ class ModelClient(ABC):
         ...
 
 
-_SYSTEM_TEMPLATE = """You are the reasoning core of a coding-agent harness on a READ-ONLY \
-investigation task. Return EXACTLY ONE JSON object per turn and nothing else.
+# Kind-NEUTRAL default prompt. It must fit any `task_kind` (edit / investigate /
+# test_only), so it never asserts a READ-ONLY framing — an edit task needs to mutate,
+# and read-only framing would forbid the very `apply_patch` it must call. Tool exposure
+# (not prose) is what actually gates capability per phase (§10/§21), so the prompt only
+# has to describe the decision protocol and let the advertised tools speak for themselves.
+#
+# Follow-up: kind-AWARE framing (e.g. "make a working change" vs. "answer without
+# editing") is the ideal, but `task_kind` is not carried on `ContextPacket` today.
+# Add it to the packet (in context.py/state.py) and branch the framing here once it is.
+_SYSTEM_TEMPLATE = """You are the reasoning core of a coding-agent harness. Return EXACTLY \
+ONE JSON object per turn and nothing else.
 
 Decision schema:
   {{"thought_summary": "<brief reasoning>", "action": <action>}}
 where <action> is exactly one of:
   {{"type": "tool_call", "name": "<tool name>", "input": {{...}}}}
-  {{"type": "final_answer", "answer": "<answer citing files/lines you actually read>"}}
+  {{"type": "final_answer", "answer": "<answer citing concrete evidence>"}}
   {{"type": "ask_user", "question": "<question>"}}
 
 Rules:
 - You begin with no files; discover the repo incrementally using tools.
-- Your final answer MUST cite concrete evidence (paths you actually read).
+- Your final answer MUST cite concrete evidence (paths/lines you actually inspected).
 - Call only the tools listed below, with input matching their schema.
 
 Available tools:
@@ -161,13 +170,23 @@ class OpenAIModelClient(ModelClient):
         config: The harness configuration.
         client: An injected OpenAI-compatible client, or `None` to construct one.
         max_parse_retries: Number of retries on malformed model output.
+
+    Raises:
+        ImportError: If `client` is `None` and the optional `openai` extra is not installed.
     """
 
     def __init__(self, config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None:
         self.config = config
         self.max_parse_retries = max_parse_retries
         if client is None:
-            from openai import OpenAI  # noqa: PLC0415 — lazy: only needed when no client is injected
+            try:
+                from openai import OpenAI  # noqa: PLC0415 — lazy: `openai` is an optional extra
+            except ImportError as exc:  # openai not installed — it is an optional extra
+                raise ImportError(
+                    "OpenAIModelClient requires the optional 'openai' extra. "
+                    "Install it with `pip install avatar-harness[openai]` (or `uv sync --extra openai`), "
+                    "or inject a `client` / use a custom ModelClient instead."
+                ) from exc
 
             # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
             client = OpenAI(api_key=config.api_key, base_url=config.base_url)
