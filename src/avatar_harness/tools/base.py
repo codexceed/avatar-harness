@@ -6,8 +6,8 @@ back as `ToolResult(success=False, error=...)` — recoverable feedback for the
 model, never an exception thrown at the loop (§10 retry semantics).
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -34,7 +34,13 @@ ToolHandler = Callable[[Any, RunDeps], ToolResult]
 
 @dataclass(frozen=True)
 class ToolDefinition:
-    """A registered tool: its schema, handler, the phases it is active in, and tier (§10)."""
+    """A registered tool: its schema, handler, the phases it is active in, and tier (§10).
+
+    `paths` self-declares which of the tool's *validated* inputs are filesystem
+    paths (§11, Phase 2.5). The permission gate runs confinement + the sensitive-path
+    denylist over them centrally, so the policy can't drift across tools. The default
+    is a pass-through (no paths) — only path-bearing tools override it.
+    """
 
     name: str
     description: str
@@ -42,6 +48,7 @@ class ToolDefinition:
     handler: ToolHandler
     phases: frozenset[str]  # phases in which this tool is active
     permission_tier: int = 0
+    paths: Callable[[Any], Sequence[str]] = field(default=lambda _args: ())
 
 
 class ToolRegistry:

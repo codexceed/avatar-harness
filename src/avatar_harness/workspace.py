@@ -9,12 +9,49 @@ delta is well-defined and the harness never needs to commit (§15).
 
 import shlex
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from fnmatch import fnmatch
+from pathlib import Path, PurePosixPath
+
+from avatar_harness.config import DEFAULT_SENSITIVE_PATH_GLOBS
+
+
+def path_is_sensitive(rel_path: str, globs: Sequence[str]) -> bool:
+    """Whether `rel_path` matches any denylist glob (§11, Phase 2.5).
+
+    A pattern *without* a slash matches any single path component (gitignore-style
+    "match anywhere" — so ``.env`` hits ``a/b/.env`` and ``.ssh`` hits ``.ssh/id_rsa``).
+    A pattern *with* a slash is matched against the whole relative path.
+
+    Args:
+        rel_path: The workspace-relative path to test.
+        globs: The denylist patterns.
+
+    Returns:
+        `True` if any pattern matches, else `False`.
+    """
+    parts = PurePosixPath(rel_path).parts
+    for glob in globs:
+        if "/" in glob:
+            if fnmatch(rel_path, glob):
+                return True
+        elif any(fnmatch(part, glob) for part in parts):
+            return True
+    return False
 
 
 class PathOutsideWorkspaceError(Exception):
     """Raised when a requested path resolves outside the workspace root."""
+
+
+class SensitivePathError(Exception):
+    """Raised when a *resolved* path matches the sensitive-path denylist (§11, Phase 2.5).
+
+    Enforced at the workspace chokepoint (not just the permission gate), so the
+    check sees the symlink-resolved target — an innocuously-named symlink cannot
+    launder a secret — and a non-gated caller still cannot read/patch it.
+    """
 
 
 class PatchError(Exception):
@@ -45,16 +82,43 @@ class Workspace:
     Args:
         root: The workspace root all paths are confined to.
         allow_dirty: When `True`, skip the clean-tree check at open (§15).
+        sensitive_path_globs: The denylist refused on read/patch (resolved-path check,
+            §11). Defaults to the built-in set (secure by default); the runner threads
+            `HarnessConfig.sensitive_path_globs` through to match the permission gate.
     """
 
-    def __init__(self, root: Path | str, *, allow_dirty: bool = False) -> None:
+    def __init__(
+        self,
+        root: Path | str,
+        *,
+        allow_dirty: bool = False,
+        sensitive_path_globs: Sequence[str] | None = None,
+    ) -> None:
         self.root = Path(root).resolve()
+        self._sensitive = list(
+            DEFAULT_SENSITIVE_PATH_GLOBS if sensitive_path_globs is None else sensitive_path_globs
+        )
         # The ledger of every command run through this handle, in order — the runner
         # reads it into `state.commands_run` so the artifact/log reflect what ran (§7).
         self.command_log: list[CommandOutput] = []
         if not allow_dirty:
             self._assert_clean()
         self._baseline = self._capture_baseline()
+
+    def _assert_not_sensitive(self, resolved: Path) -> None:
+        """Refuse a resolved in-root path that matches the denylist (§11, Phase 2.5).
+
+        Args:
+            resolved: An already-confined absolute path (under the root).
+
+        Raises:
+            SensitivePathError: When the resolved path matches a denylist glob.
+        """
+        if resolved == self.root:
+            return
+        rel = str(resolved.relative_to(self.root))
+        if path_is_sensitive(rel, self._sensitive):
+            raise SensitivePathError(rel)
 
     # --- path confinement ------------------------------------------------
 
@@ -105,7 +169,9 @@ class Workspace:
         Returns:
             The file text, sliced to `line_range` when given.
         """
-        text = self._resolve(path).read_text(encoding="utf-8")
+        resolved = self._resolve(path)
+        self._assert_not_sensitive(resolved)  # resolved-path check closes the symlink bypass
+        text = resolved.read_text(encoding="utf-8")
         if line_range is None:
             return text
         start, end = line_range  # 1-indexed, inclusive
@@ -114,13 +180,23 @@ class Workspace:
     def list_files(self, glob: str) -> list[str]:
         """Return workspace-relative paths of files matching `glob`, sorted.
 
+        A glob that matches a *directory* expands to the files under it (recursively),
+        so `list_files("pkg")` lists `pkg/`'s contents rather than silently returning
+        nothing — the dogfood gap where `rich*` matched a dir and was dropped.
+
         Args:
             glob: The glob pattern to match against the root.
 
         Returns:
-            Sorted workspace-relative paths of the matching files.
+            Sorted workspace-relative paths of the matching files (dir matches expanded).
         """
-        return sorted(str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file())
+        found: set[Path] = set()
+        for p in self.root.glob(glob):
+            if p.is_file():
+                found.add(p)
+            elif p.is_dir():
+                found.update(q for q in p.rglob("*") if q.is_file())
+        return sorted(str(p.relative_to(self.root)) for p in found)
 
     # --- patch application (tier 1, §10) ---------------------------------
 
@@ -145,7 +221,8 @@ class Workspace:
         if not targets:
             raise PatchError("no file targets found in diff")
         for path in targets:
-            self._resolve(path)  # raises PathOutsideWorkspaceError on escape
+            # raises PathOutsideWorkspaceError on escape, SensitivePathError on a denylist hit
+            self._assert_not_sensitive(self._resolve(path))
 
         # Apply to the index as well as the working tree (`--index`), so a *created*
         # file is tracked and therefore appears in `diff()` — otherwise new files are

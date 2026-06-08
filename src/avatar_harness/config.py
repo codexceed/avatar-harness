@@ -5,7 +5,33 @@ Loaded from defaults, then overridden by environment variables (prefix
 threaded through ``RunDeps`` (§8) — never read from globals.
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Sensitive-path denylist (§11, Phase 2.5). Patterns are matched per path component
+# (no slash) or against the whole relative path (with a slash, `**` allowed). Reading
+# or patching a matching path is refused at the permission gate — deterministic
+# prevention, never content-level secret detection. Overridable via AVATAR_SENSITIVE_PATH_GLOBS.
+DEFAULT_SENSITIVE_PATH_GLOBS: list[str] = [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "credentials*",
+    "secrets",
+]
 
 
 class HarnessConfig(BaseSettings):
@@ -33,6 +59,10 @@ class HarnessConfig(BaseSettings):
 
     # Workspace (§15).
     workspace_root: str = "."
+
+    # Sensitive-path denylist (§11, Phase 2.5) — globs the permission gate refuses to
+    # read or patch. Defaults cover common secret files; override via AVATAR_SENSITIVE_PATH_GLOBS.
+    sensitive_path_globs: list[str] = Field(default_factory=lambda: list(DEFAULT_SENSITIVE_PATH_GLOBS))
 
     # Model endpoint (OpenAI-compatible). Defaults to OpenRouter so we can test
     # many models by overriding AVATAR_MODEL; override AVATAR_BASE_URL for others.

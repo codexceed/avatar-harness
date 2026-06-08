@@ -22,12 +22,17 @@ class Evidence(BaseModel):
 
 
 class DecisionRecord(BaseModel):
-    """Why the agent chose what it chose (§7)."""
+    """Why the agent chose what it chose, and how it turned out (§7).
+
+    `outcome` is filled in after the action runs (tool summary/error, verifier
+    verdict, block reason) so the action ledger can show `chosen → outcome`.
+    """
 
     step: int
     rationale: str
     chosen: str
     rejected: list[str] = Field(default_factory=list)
+    outcome: str = ""
 
 
 class CommandRecord(BaseModel):

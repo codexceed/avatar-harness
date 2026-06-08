@@ -85,7 +85,11 @@ def run_agent(
         The terminal `TaskState` after the loop settles.
     """
     deps = RunDeps(
-        workspace=Workspace(config.workspace_root, allow_dirty=allow_dirty),
+        workspace=Workspace(
+            config.workspace_root,
+            allow_dirty=allow_dirty,
+            sensitive_path_globs=config.sensitive_path_globs,
+        ),
         config=config,
         cancellation=CancellationToken(),
     )

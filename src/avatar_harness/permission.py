@@ -10,11 +10,14 @@ resolves inside the workspace) · 2 commands (allow) · 3+ destructive / externa
 (blocked by default in the non-interactive MVP; `ask` lands with the Phase 3 REPL).
 """
 
-from pydantic import BaseModel
+from collections.abc import Sequence
 
+from pydantic import BaseModel, ValidationError
+
+from avatar_harness.config import DEFAULT_SENSITIVE_PATH_GLOBS
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition
-from avatar_harness.workspace import Workspace, _parse_patch_targets
+from avatar_harness.workspace import Workspace, path_is_sensitive
 
 _ASK_TIER = 3  # tier at and above which an action is gated (ask/block).
 _EDIT_TIER = 1  # the mutation tier (apply_patch) — blocked for read-only investigate tasks.
@@ -29,7 +32,18 @@ class ToolPermission(BaseModel):
 
 
 class PermissionPolicy:
-    """Evaluates a tool call against the §11 tier table before it runs."""
+    """Evaluates a tool call against the §11 tier table before it runs.
+
+    Args:
+        sensitive_path_globs: The denylist enforced over every tool's declared paths.
+            Defaults to the built-in set (secure by default); the runner threads the
+            configured `HarnessConfig.sensitive_path_globs` through.
+    """
+
+    def __init__(self, sensitive_path_globs: Sequence[str] | None = None) -> None:
+        self._sensitive = list(
+            DEFAULT_SENSITIVE_PATH_GLOBS if sensitive_path_globs is None else sensitive_path_globs
+        )
 
     def check(
         self,
@@ -41,7 +55,7 @@ class PermissionPolicy:
         """Return the control decision for `tool` with `raw_input` (allow / block / ask).
 
         Args:
-            tool: The tool definition, carrying its `permission_tier`.
+            tool: The tool definition, carrying its `permission_tier` and declared paths.
             raw_input: The proposed tool arguments.
             state: The current task state; its `task_kind` gates mutation.
             ws: The run-scoped workspace, used for path confinement.
@@ -64,16 +78,37 @@ class PermissionPolicy:
                 blocked=True,
                 reason=f"investigate tasks cannot modify files; {tool.name!r} is not permitted",
             )
-        if tool.name == "apply_patch":
-            return self._check_patch_paths(raw_input, ws)
-        # Tiers 0 and 2 are allowed (commands carry their own timeout, §11).
-        return ToolPermission(blocked=False)
+        # Path policy over the tool's *declared* paths — one place for confinement AND the
+        # sensitive-path denylist, so neither can drift per tool (subsumes apply_patch's
+        # old special-case: its targets are now just declared paths).
+        return self._check_paths(self._declared_paths(tool, raw_input), ws)
 
-    def _check_patch_paths(self, raw_input: dict, ws: Workspace) -> ToolPermission:
-        diff = raw_input.get("diff", "") if isinstance(raw_input, dict) else ""
-        outside = sorted(p for p in _parse_patch_targets(diff) if not ws.contains(p))
+    def _declared_paths(self, tool: ToolDefinition, raw_input: dict) -> list[str]:
+        """The tool's self-declared filesystem paths for `raw_input`, or `[]` if invalid.
+
+        Validation failures need no path verdict — the runtime rejects the call next.
+
+        Args:
+            tool: The tool whose `paths` extractor is consulted.
+            raw_input: The unvalidated call arguments.
+
+        Returns:
+            The declared workspace paths, or `[]` when the input does not validate.
+        """
+        try:
+            args = tool.input_model.model_validate(raw_input)
+        except ValidationError:
+            return []
+        return list(tool.paths(args))
+
+    def _check_paths(self, paths: list[str], ws: Workspace) -> ToolPermission:
+        outside = sorted(p for p in paths if not ws.contains(p))
         if outside:
+            return ToolPermission(blocked=True, reason=f"path(s) resolve outside the workspace: {outside}")
+        sensitive = sorted(p for p in paths if path_is_sensitive(p, self._sensitive))
+        if sensitive:
+            # Treated like a tier-3 gate: blocked now, an `ask` once the REPL lands (Phase 3).
             return ToolPermission(
-                blocked=True, reason=f"patch targets resolve outside the workspace: {outside}"
+                blocked=True, ask=True, reason=f"sensitive path(s) refused by the denylist: {sensitive}"
             )
         return ToolPermission(blocked=False)

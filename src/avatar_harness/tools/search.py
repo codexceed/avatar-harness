@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
+from avatar_harness.workspace import path_is_sensitive
 
 _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 
@@ -35,13 +36,16 @@ def _search_repo(args: SearchRepoInput, deps: RunDeps) -> ToolResult:
             tool_name="search_repo", success=False, error=proc.stderr.strip() or "ripgrep error"
         )
 
-    matches = proc.stdout
-    count = len(matches.splitlines())
+    # Drop hits in denylisted files so search can't exfiltrate a secret — using the SAME
+    # `path_is_sensitive` matcher as the gate/workspace, so "what counts as sensitive" is
+    # one source of truth everywhere (not ripgrep's divergent glob engine; §11, Phase 2.5).
+    globs = deps.config.sensitive_path_globs
+    kept = [line for line in proc.stdout.splitlines() if not path_is_sensitive(line.split(":", 1)[0], globs)]
     return ToolResult(
         tool_name="search_repo",
         success=True,
-        content=matches,
-        summary=f"{count} match(es) for {args.query!r}",
+        content="\n".join(kept),
+        summary=f"{len(kept)} match(es) for {args.query!r}",
     )
 
 

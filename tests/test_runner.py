@@ -133,6 +133,34 @@ def test_malformed_decisions_yield_incomplete(tmp_path, read_registry):
     assert result.consecutive_failures == config.max_consecutive_failures
 
 
+# --- Phase 2.5: action ledger -------------------------------------------
+
+
+def test_runner_records_decision_each_turn(tmp_path, read_registry):
+    (tmp_path / "app.py").write_text("def handler():\n    return 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(thought_summary="peek", action=ToolCall(name="read_file", input={"path": "app.py"})),
+        ModelDecision(action=FinalAnswer(answer="handler lives in app.py")),
+    ]
+    state = _runner(tmp_path, read_registry, decisions).run(TaskState(goal="where?", task_kind="investigate"))
+    assert len(state.decisions) >= 2  # one record per turn (previously never written)
+    assert any("read_file" in d.chosen for d in state.decisions)
+    assert any(d.outcome for d in state.decisions)  # each call's outcome is recorded
+
+
+def test_repeated_identical_tool_call_is_flagged(tmp_path, read_registry):
+    # An identical re-issued call is flagged back to the model (anti-loop nudge).
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    same = ToolCall(name="read_file", input={"path": "app.py"})
+    decisions = [
+        ModelDecision(action=same),
+        ModelDecision(action=same),
+        ModelDecision(action=FinalAnswer(answer="read app.py, x is set")),
+    ]
+    state = _runner(tmp_path, read_registry, decisions).run(TaskState(goal="x", task_kind="investigate"))
+    assert any(e.kind == "repeat" for e in state.evidence)
+
+
 # --- Phase 2: permission gate + edit loop -------------------------------
 
 _FIX = (

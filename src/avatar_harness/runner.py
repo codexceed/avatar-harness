@@ -20,7 +20,7 @@ from avatar_harness.model_client import (
     ToolCall,
 )
 from avatar_harness.permission import PermissionPolicy
-from avatar_harness.state import CommandRecord, TaskState
+from avatar_harness.state import CommandRecord, DecisionRecord, TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
@@ -78,8 +78,9 @@ class AgentRunner:
         self.verifier = verifier
         self.emitter = emitter
         self.config = config
-        # The before-tool-call control gate (§11); defaults to the standard tier policy.
-        self.policy = policy or PermissionPolicy()
+        # The before-tool-call control gate (§11); defaults to the standard tier policy,
+        # threaded with the configured sensitive-path denylist (§11, Phase 2.5).
+        self.policy = policy or PermissionPolicy(config.sensitive_path_globs)
 
     def run(self, state: TaskState) -> TaskState:
         """Drive the loop to a terminal outcome and return the final state (§5).
@@ -110,41 +111,29 @@ class AgentRunner:
                 continue
 
             action = decision.action
+            brief = _action_brief(action)
             self.emitter.emit(
                 "model_decision",
                 thought=decision.thought_summary,
                 action_type=action.type,
-                action=_action_brief(action),
+                action=brief,
             )
+            # Record every turn's decision so the context can show the agent its own
+            # action history (§7/§9, Phase 2.5); `outcome` is filled in once known.
+            record = DecisionRecord(step=state.iterations, rationale=decision.thought_summary, chosen=brief)
+            state.decisions.append(record)
 
             if isinstance(action, ToolCall):
-                tool = self.registry.get(action.name)
-                # Consult the control gate before execution (§11). A block redirects the
-                # loop — the action never runs — and the reason is fed back as evidence.
-                permission = self.policy.check(tool, action.input, state, ws) if tool is not None else None
-                if permission is not None and permission.blocked:
-                    state.latest_error = permission.reason
-                    state.add_feedback(permission.reason, kind="permission_blocked")
-                    self.emitter.emit("permission_blocked", tool=action.name, reason=permission.reason)
-                    self.emitter.emit("turn_end", task_id=state.task_id)
-                    continue
-                result = runtime.execute(action.name, action.input)
-                self._apply_tool_result(state, result)
-                self.emitter.emit(
-                    "tool_execution_end",
-                    tool=action.name,
-                    input=action.input,
-                    success=result.success,
-                    summary=result.summary,
-                    content=result.content if result.success else (result.error or ""),
-                )
+                self._run_tool_call(state, runtime, ws, action, record)
             elif isinstance(action, FinalAnswer):
                 state.final_answer = action.answer
                 self._verify(state, ws)
+                record.outcome = "verified" if state.outcome == "success" else "verification rejected"
             elif isinstance(action, AskUser):
                 # Interactive answering is Phase 3; for now any ask blocks the run.
                 state.open_questions.append(action.question)
                 state.block(reason=f"needs input: {action.question}")
+                record.outcome = "blocked (needs input)"
 
             self.emitter.emit("turn_end", task_id=state.task_id)
 
@@ -173,6 +162,52 @@ class AgentRunner:
             )
             for i, out in enumerate(ws.command_log, start=1)
         ]
+
+    def _run_tool_call(
+        self,
+        state: TaskState,
+        runtime: ToolRuntime,
+        ws: Workspace,
+        action: ToolCall,
+        record: DecisionRecord,
+    ) -> None:
+        """Gate, execute, and record one tool call; mutate `state`/`record` in place (§5, §11).
+
+        Args:
+            state: The task state to mutate (evidence, files, failure counters).
+            runtime: The tool runtime that validates and dispatches the call.
+            ws: The run-scoped workspace, for the permission gate's path checks.
+            action: The model's tool-call action.
+            record: This turn's decision record, whose `outcome` is filled in.
+        """
+        # Anti-loop nudge: an identical earlier call is flagged back as evidence so the
+        # model stops re-issuing it (the dogfood replayed turns 1-5 at turn 9; §9).
+        if any(d.chosen == record.chosen for d in state.decisions[:-1]):
+            state.add_feedback(
+                f"'{record.chosen}' repeats an earlier call — try a different approach or finalize.",
+                kind="repeat",
+            )
+        tool = self.registry.get(action.name)
+        # Consult the control gate before execution (§11). A block redirects the loop —
+        # the action never runs — and the reason is fed back as evidence.
+        permission = self.policy.check(tool, action.input, state, ws) if tool is not None else None
+        if permission is not None and permission.blocked:
+            record.outcome = f"blocked: {permission.reason}"
+            state.latest_error = permission.reason
+            state.add_feedback(permission.reason, kind="permission_blocked")
+            self.emitter.emit("permission_blocked", tool=action.name, reason=permission.reason)
+            return
+        result = runtime.execute(action.name, action.input)
+        self._apply_tool_result(state, result)
+        record.outcome = result.summary if result.success else (result.error or "failed")
+        self.emitter.emit(
+            "tool_execution_end",
+            tool=action.name,
+            input=action.input,
+            success=result.success,
+            summary=result.summary,
+            content=result.content if result.success else (result.error or ""),
+        )
 
     # --- state mutation (runner-owned) -----------------------------------
 

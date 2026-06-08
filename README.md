@@ -68,9 +68,11 @@ AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); change fo
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 ```
 
-Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`. See `src/avatar_harness/config.py` for the full list.
+Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`. See `src/avatar_harness/config.py` for the full list.
 
 > **Point at OpenAI instead of OpenRouter:** `AVATAR_BASE_URL=https://api.openai.com/v1`, `AVATAR_API_KEY=sk-...`, `AVATAR_MODEL=gpt-4o-mini`.
+
+**Secret safety.** Files matching a sensitive-path denylist (`.env`, `*.pem`, SSH/AWS/GnuPG dirs, `.netrc`, …) are refused for read and patch, and excluded from `search_repo` results, so a task can't read your secrets into the model context or the event log. Enforcement is two-layer: the permission gate blocks the call up front, and the workspace re-checks the **resolved** path (so an innocuously-named symlink can't launder a secret, and the refusal holds even for a non-gated caller). Override the patterns with `AVATAR_SENSITIVE_PATH_GLOBS` (a JSON list, e.g. `'["*.secret", ".env"]'`); the value *replaces* the default set. This is prevention by path-matching, not content secret-detection — a secret reachable through some other channel (e.g. a command's stdout) is not scrubbed.
 
 ## Usage
 

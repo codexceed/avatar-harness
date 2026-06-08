@@ -1,5 +1,6 @@
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.tools import filesystem
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolRuntime
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import apply_patch
@@ -45,6 +46,34 @@ def test_list_files_matches_glob(tmp_path):
     result = _runtime(tmp_path).execute("list_files", {"glob": "*.py"})
     assert result.success
     assert result.content == "a.py"
+
+
+def test_list_files_dir_pattern_lists_contained_files(tmp_path):
+    # A glob matching a directory expands to the files under it (the dogfood gap:
+    # `rich*` matched a dir and was silently dropped, returning 0).
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "m.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "sub").mkdir()
+    (tmp_path / "pkg" / "sub" / "n.py").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": "pkg"})
+    assert result.success
+    assert "pkg/m.py" in result.content
+    assert "pkg/sub/n.py" in result.content
+
+
+def test_list_files_result_is_capped_with_overflow_note(tmp_path, monkeypatch):
+    # A directory match must not dump thousands of paths into context.
+    monkeypatch.setattr(filesystem, "_LIST_CAP", 2)
+    d = tmp_path / "many"
+    d.mkdir()
+    for i in range(5):
+        (d / f"f{i}.py").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": "many"})
+    assert result.success
+    lines = result.content.splitlines()
+    assert len([line for line in lines if line.endswith(".py")]) == 2  # capped
+    assert any("more" in line for line in lines)  # overflow noted
+    assert "5 file" in result.summary  # full count preserved
 
 
 def test_read_missing_file_is_model_correctable(tmp_path):
