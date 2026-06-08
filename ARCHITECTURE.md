@@ -84,7 +84,7 @@ flowchart TD
 | `ToolRuntime` | Executes typed, phase-gated tools against the workspace. | [Implemented] |
 | `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4). | [Implemented] (synchronous; async with the REPL) |
 | `Verifier` | Proves completion via external evidence. | [Implemented] (`investigate`/`edit`/`test_only`) |
-| `Emitter` + `EventLog` | Observation-only events; durable JSONL. | [Implemented] |
+| `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id` (per-session log file). | [Implemented] |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
 | `Workspace` | Path confinement, diff/rollback, command execution. | [Implemented] |
 | `Session` | REPL above the runner (`§23`). | [Designed] (Phase 3) |
@@ -327,7 +327,7 @@ What exists in `src/avatar_harness/` today (through Phase 2):
 | --- | --- | --- |
 | `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command`) | `§8` config |
 | `state.py` | `TaskState` + `Evidence` / `DecisionRecord` / `CommandRecord` / `CheckResult` / `VerifierResult`; `terminal`, `add_feedback`, `block` | `§7`, `§12` data shapes |
-| `events.py` · `eventlog.py` | `Emitter` (observation-only) + `EventLog` (JSONL subscriber) | `§13` |
+| `events.py` · `eventlog.py` | `Emitter` (observation-only, stamps `ts` + `session_id`) + `EventLog` (JSONL subscriber; CLI defaults to a per-session `events/<session_id>.jsonl` + `latest.jsonl` pointer) | `§13`, `§23` |
 | `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log`, clean-start assertion | `§8`, `§10`, `§15` |
 | `deps.py` | `RunDeps`, `CancellationToken` — run-scoped, no globals | `§8` |
 | `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime`), `filesystem`, `search`, `edit` (`apply_patch`), `commands` (`run_tests`/`run_linter`) | `§10` |

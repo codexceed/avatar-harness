@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from avatar_harness.cli import main, run_agent, run_echo
@@ -93,6 +95,56 @@ def test_main_friendly_error_on_dirty_workspace(git_repo, capsys, monkeypatch):
     captured = capsys.readouterr()  # drain once — a second call returns empty
     assert code != 0
     assert "--allow-dirty" in captured.out + captured.err
+
+
+def _edit_model() -> "_ScriptedModel":
+    return _ScriptedModel(
+        [
+            ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+            ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
+        ]
+    )
+
+
+def test_main_default_log_is_per_session(git_repo, tmp_path, monkeypatch):
+    # With no --log, the run writes to events/<session_id>.jsonl (not a shared static
+    # file), every line carries that session_id, and the filename stem IS the id —
+    # so grouping is intentional and the log is self-identifying.
+    monkeypatch.chdir(tmp_path)
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    config = HarnessConfig(workspace_root=str(git_repo), test_command=test_cmd, lint_command="")
+    code = main(["fix add()"], config=config, model_client=_edit_model(), task_kind="edit")
+    assert code == 0
+
+    events_dir = tmp_path / "events"
+    session_logs = [p for p in events_dir.glob("*.jsonl") if p.name != "latest.jsonl"]
+    assert len(session_logs) == 1  # one per-session file, not appended to a god-log
+    log = session_logs[0]
+    events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    session_ids = {e["session_id"] for e in events}
+    assert session_ids == {log.stem}  # filename stem == the stamped session_id
+
+    latest = events_dir / "latest.jsonl"
+    assert latest.is_symlink()  # newest session is always reachable via a stable pointer
+    assert latest.resolve() == log.resolve()
+
+
+def test_main_respects_explicit_log_path(git_repo, tmp_path, monkeypatch):
+    # An explicit --log opts out of the managed per-session layout: events land in the
+    # given file and no latest.jsonl pointer is synthesized.
+    monkeypatch.chdir(tmp_path)
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    config = HarnessConfig(workspace_root=str(git_repo), test_command=test_cmd, lint_command="")
+    log_path = tmp_path / "custom" / "run.jsonl"
+    code = main(
+        ["fix add()", "--log", str(log_path)],
+        config=config,
+        model_client=_edit_model(),
+        task_kind="edit",
+    )
+    assert code == 0
+    assert log_path.exists()
+    assert not (log_path.parent / "latest.jsonl").exists()
 
 
 def test_run_emits_start_and_end():
