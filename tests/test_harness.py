@@ -24,7 +24,7 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
-from avatar_harness.permission import ToolPermission
+from avatar_harness.permission import PermissionPolicy, ToolPermission
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.verifier import Verifier
@@ -101,7 +101,7 @@ def test_harness_overrides_each_seam(git_repo):
             used["verifier"] = True
             return super().verify(state, ws)
 
-    class _BlockingPolicy:
+    class _BlockingPolicy(PermissionPolicy):
         def check(self, tool: ToolDefinition, raw_input: dict, state: TaskState, ws: Workspace) -> Any:
             used["policy"] = True
             return ToolPermission(blocked=True, reason="blocked by injected policy")
