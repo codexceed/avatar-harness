@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. Next: Phase 3 (interactive cockpit).
+> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. Next: **Phase 2.6** (pre-Phase-3 hardening — 4 parallelizable lanes), then **Phase 3** (async engine · durable execution · TUI cockpit — ADR-0001).
 
 ## How to use this file
 
@@ -217,13 +217,78 @@ Replace `ContextBuilder`'s fixed `evidence[-5:]` slice with a char/token budget 
 - [x] aged-out evidence degrades to summaries (model still sees what it found); latest verifier output stays verbatim
 - [x] all Phase 2.5 tests green · `make check` clean
 
-## Phase 3 — Interactive cockpit
+## Phase 2.6 — Pre-Phase-3 hardening (extensibility + enforcement)
 
-Interaction layer (§23): REPL, streaming render, allow-once/deny approval, Ctrl-C cancel, `/quit` + `/diff`.
+The high/medium-impact items from the core-library assessment (`docs/core-assessment.html`, cross-validated by Codex gpt-5.4/xhigh). Two motivations: (1) **enforcement** — turn declared-but-dead control axes into real ones (assessment thesis: *abstractions ahead of enforcement*); (2) these are **prerequisites** the ADR-0001 async/durable migration needs anyway (tool-failure isolation, real phase advancement, consumed budgets/cancellation). The facade + model boundary close the "extensible importable core" gaps.
 
-- [ ] Tests proposed & approved
-- [ ] Tests red → green
-- [ ] Exit: multi-turn REPL streams tool activity, prompts approval before `apply_patch`, cancels in-flight command and refeeds as feedback, `/diff` runs without a model call, batch (`--auto`) shares the code path
+**Parallelizable into 4 disjoint-file lanes** (clean for a worktree-isolated agents team). The enabling design choice: **phase enforcement lives in the runner** — consult `tool.phases` vs `state.phase` before `execute`, mirroring the permission-gate consult — so it stays out of `tools/base.py` and frees the tool-isolation lane. With that, the four lanes touch **disjoint files** and merge without conflict.
+
+**Two design clarifications (2026-06-09):** (1) **Phase is capability-exposure, not security.** The security boundary for tool execution is the permission tier + path confinement/denylist + the `Workspace` chokepoint + the `task_kind` gate — none of which trust a tool's self-declared `phases` (or `permission_tier`). So phase-in-runner adds no security hole even for a lying tool. *Untrusted third-party* tools are a separate future concern (then `phases`/tier must be harness-assigned, not self-asserted, and `search_repo`'s direct-subprocess bypass of `Workspace` must close) — out of MVP scope (tools are first-party). (2) **Phase advances on first edit *intent*, not a `≥1 read` counter** — a `≥1 read` trigger deadlocks/forbids pure-creation tasks on a bare workspace (nothing to read). Inspect-before-edit is already guaranteed by the clean-apply invariant (`git apply --check`): modifying unseen content fails as stale (model-correctable), while a new-file hunk applies with zero reads. Delete the proxy; keep the load-bearing mechanism (Principle C).
+
+| Lane | Files (disjoint) | Items |
+| --- | --- | --- |
+| **A — engine loop** | `runner.py` · `state.py` · `deps.py` · `test_runner.py` | phase advance + enforce + event · wall-clock/context budgets · cancellation |
+| **B — tool runtime** | `tools/base.py` · `test_tools.py` | tool-failure isolation |
+| **C — public API + facade** | `__init__.py` · `harness.py` (new) · `cli.py` · `test_harness.py` (new) | curated `__all__` · `Harness` facade · CLI delegates to it |
+| **D — model boundary** | `model_client.py` · `pyproject.toml` · `config.py` · `test_model_client.py` | kind-aware default prompt · prompt behind the adapter · `openai` an optional extra |
+
+**Lane A — engine loop** [tests proposed · pending sign-off]
+- [ ] `test_phase_advances_to_editing_on_first_edit_intent` (advance on the model's first `apply_patch`; edit tools reachable on `edit`/`test_only` kinds — non-circular)
+- [ ] `test_pure_creation_from_bare_workspace_succeeds` (new-file hunk, **zero reads** — the creation case that kills a `≥1 read` trigger)
+- [ ] `test_modify_without_read_fails_stale_then_recovers` (inspect-before-edit **emerges from clean-apply** `git apply --check`; no read-counter needed)
+- [ ] `test_phase_changed_emitted_on_transition`
+- [ ] `test_out_of_phase_tool_call_is_model_correctable` (**workflow feedback, NOT a security control** — security = permission tier + Workspace chokepoint + `task_kind` gate)
+- [ ] `test_repair_falls_back_to_editing` (verifying → editing on failed verification)
+- [ ] `test_wall_clock_budget_yields_incomplete`
+- [ ] `test_context_budget_yields_incomplete`
+- [ ] `test_cancellation_observed_yields_incomplete`
+- [ ] `test_cancellation_records_feedback`
+
+**Lane B — tool-failure isolation** [pending sign-off]
+- [ ] `test_tool_handler_exception_becomes_failed_result` (a raising tool → `ToolResult(success=False)`; loop continues)
+- [ ] `test_runtime_never_raises_into_loop`
+- [ ] `test_system_failure_is_surfaced_not_retried` (system error distinct from model-correctable)
+
+**Lane C — public API + Harness facade** [pending sign-off]
+- [ ] `test_public_api_exports_stable_surface` (`from avatar_harness import Harness, TaskState, ToolDefinition, ToolResult, RunDeps, ModelClient, Workspace, HarnessConfig`)
+- [ ] `test_harness_from_env_runs_investigate_end_to_end`
+- [ ] `test_harness_overrides_each_seam` (inject model / tools / verifier / policy)
+- [ ] `test_cli_delegates_to_harness_facade` (CLI wires through the facade, not bespoke construction)
+
+**Lane D — model boundary** [pending sign-off]
+- [ ] `test_default_prompt_is_kind_aware` (an `edit` task is not framed "READ-ONLY investigation")
+- [ ] `test_core_imports_without_openai` (`import avatar_harness` works with `openai` uninstalled — lazy/guarded provider import)
+- [ ] `test_custom_model_client_runs_end_to_end` (provider fully swappable; prompt contract behind the adapter)
+
+**Exit criteria**
+- [ ] a third-party tool that raises can't crash a run (returns a failed `ToolResult`)
+- [ ] `state.phase` advances `investigating → editing → verifying`, emits `phase_changed`, and an out-of-phase tool call is refused at execution
+- [ ] wall-clock/context budgets and the cancellation token are honored by the loop (→ `incomplete`)
+- [ ] `from avatar_harness import Harness` runs a task in ≤3 lines; the CLI delegates to the same facade
+- [ ] the default model adapter is provider- and kind-neutral; `openai` is an optional extra
+- [ ] all lanes green · `make check` clean
+
+## Phase 3 — Interactive cockpit (async engine · durable execution · TUI)
+
+Design locked in **ADR-0001** (`docs/adr/0001-async-event-bus-and-durable-execution.md`), refined with Codex (gpt-5.4/xhigh). The interaction layer (§23) rides on three structural upgrades, sequenced **sync-first** per the ADR migration plan (Phase 2.6 lands first).
+
+**3a — Async engine.** `AgentRunner.arun()` becomes the loop; sync `run()` wraps it via `asyncio.run()`. Legacy sync model/tool/verifier bodies offloaded with `asyncio.to_thread()` behind async adapters. The one costly-to-retrofit decision; it pays for the TUI *and* web/server cockpits.
+
+**3b — Typed async event bus** (replaces the sync raw-dict `Emitter`). A versioned discriminated-union `HarnessEvent` (pydantic) with `*_start`/`*_update`/`*_end` granularity for model + tools, plus `phase_changed`, approval, checkpoint, cancellation events. An `AsyncEventBus` fans out **non-blocking** to bounded per-subscriber queues (per-subscriber drop policy); a slow/broken subscriber can never stall the loop. The **journal is privileged** — a lossless, awaited, write-ahead sink on the commit path, not just another subscriber.
+
+**3c — Two-plane UX integration.** Observation flows out via `session.events()` (cannot block/redirect); control flows in via explicit awaited methods — `session.resolve_approval()`, `session.cancel()` — and the async `before_tool_call` hook. An event *announces* an approval need; the decision returns through the control method, never the event. (No `drive()` generator — it blurs the planes.) Model output streams as `model_update(channel="display")`; the action dispatches once, after a validated `ModelDecision`; private chain-of-thought is never streamed.
+
+**3d — Durable execution** (the SOTA frontier; scope ends here). Checkpoint at turn end + write-ahead intent before any side effect; `resume()` replays the journal into `TaskState` with **semantics-aware** rules — reuse logged reads, never re-apply a patch (validate the workspace diff hash), resume into a pending approval (same `approval_id`). Pause/resume survives a process restart. *Deferred past this line:* MCP, middleware pipeline, graph topology.
+
+**TUI surface (§23):** REPL over `async with harness.session(...)`; streaming render subscribes to `events()`; allow-once/deny approval via `resolve_approval`; Ctrl-C → `session.cancel()` → `add_feedback`; `/diff`, `/quit` hit no model; batch (`--auto`) shares the path.
+
+- [ ] Tests proposed & approved (per ADR-0001; depends on Phase 2.6 landing first)
+- [ ] 3a async engine: red → green
+- [ ] 3b typed event bus + privileged journal: red → green
+- [ ] 3c two-plane session API: red → green
+- [ ] 3d durable checkpoint + resume (semantics-aware): red → green
+- [ ] TUI cockpit: red → green
+- [ ] Exit: multi-turn REPL streams model+tool activity by phase, prompts approval before `apply_patch`, cancels in-flight work and refeeds, **resumes a killed run from the journal without re-applying side effects**, `/diff` runs model-free, `--auto` shares the code path
 
 ## Phase 4+ — Earned extensions
 
@@ -244,6 +309,8 @@ From §21, one at a time, each justified by friction actually hit.
 - **C — Conservative complexity ceiling.** Build the shape, keep implementations thin. No abstraction until a second concrete case exists (rule of three). One mechanism per concern. Minimal, boring dependencies. The §2 non-goals and §21 defer-list are written permission to say no.
 
 ## Decision log
+
+- **2026-06-09** — Phase 3 design locked in **ADR-0001** (`docs/adr/`): async engine (`arun()` + sync wrapper), typed async event bus (non-blocking fan-out; the **journal is a privileged lossless write-ahead sink**, not just a subscriber), **two-plane** UX (`events()` out · `resolve_approval()`/`cancel()` in — no `drive()`), and **durable execution** via semantics-aware journal replay (reuse reads, never re-apply patches, resume into pending approvals). Refined with Codex (gpt-5.4/xhigh); corrections folded in: async over thread-bridge, "async publish ≠ await subscribers", rename streamed "thought" → `model_update(channel="display")`. Carved out **Phase 2.6 — pre-Phase-3 hardening** (high/medium items from `docs/core-assessment.html`): tool-failure isolation, real phase advance/enforce, consumed budgets+cancellation, public `Harness` facade, neutral model boundary. Structured into **4 disjoint-file lanes** for a worktree-isolated agents team; enabling choice = **phase enforcement in the runner** (`tool.phases` vs `state.phase` consult), which frees the tool-runtime lane. Scope ends at durable execution — MCP/middleware/graph deferred. Tests proposed; **pending sign-off** before code (standing TDD rule).
 
 - **2026-06-08** — Sensitive-path matching **normalized to one matcher**. Review found two engines interpreting the same `sensitive_path_globs`: `path_is_sensitive` (component `fnmatch`) at the gate + workspace, vs ripgrep's gitignore `-g` globs in `search_repo` — divergent on slash patterns (`fnmatch`'s `*` crosses `/`, gitignore's doesn't). Fix: `search_repo` dropped the `-g` excludes and now post-filters rg output through `path_is_sensitive`, so all three sites (gate, workspace, search) share one matcher and one semantics. Trade-off accepted: rg now *reads* a denylisted file and we discard its matching lines before they reach the model/log (vs `-g` never opening it) — momentary in-process only, consistent with the existing non-path residual-risk stance, and the price of a single source of truth. 115/115 green.
 - **2026-06-08** — Phase 2.5 denylist hardened to **two layers** after review spotted that gate-only enforcement was (a) single-layer — a non-gated `runtime.execute`/`ws.read` caller bypassed it — and (b) **symlink-bypassable**: the gate checks the *requested* path string, so `read_file("notes.txt")` where `notes.txt → .env` was allowed and leaked the secret (confirmed empirically). Fix: `Workspace.read`/`apply_patch` now re-check the **resolved** path (`SensitivePathError`), the FS chokepoint every tool funnels through — closing both holes. The shared matcher moved to `workspace.py` (`path_is_sensitive`); `Workspace` takes the configured globs (secure-by-default), wired from `cli`. The gate stays as the primary policy point (pre-execution, clean feedback); the workspace is the backstop. 114/114 green. Residual still accepted: non-path channels (e.g. command stdout) are not scrubbed (redaction stays out).
