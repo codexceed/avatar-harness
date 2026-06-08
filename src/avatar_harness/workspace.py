@@ -190,10 +190,14 @@ class Workspace:
     def _assert_clean(self) -> None:
         """Refuse to open on a dirty git tree unless explicitly acknowledged (§15).
 
+        Only **tracked** modifications count: untracked files never enter
+        `git diff HEAD`, so they cannot pollute the diff baseline and must not
+        block the run (`--untracked-files=no`).
+
         Raises:
-            DirtyWorkspaceError: When the tree has uncommitted changes.
+            DirtyWorkspaceError: When the tree has uncommitted *tracked* changes.
         """
-        status = self._git("status", "--porcelain")
+        status = self._git("status", "--porcelain", "--untracked-files=no")
         if status is not None and status.returncode == 0 and status.stdout.strip():
             raise DirtyWorkspaceError(self.root)
 

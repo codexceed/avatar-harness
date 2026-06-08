@@ -63,6 +63,7 @@ def run_agent(
     config: HarnessConfig,
     emitter: Emitter,
     model_client: ModelClient | None = None,
+    allow_dirty: bool = False,
 ) -> TaskState:
     """Run the read-only investigate loop over `task` (Phase 1).
 
@@ -71,12 +72,13 @@ def run_agent(
         config: Harness config wiring the loop.
         emitter: Sink for observation events.
         model_client: Model client; a default `OpenAIModelClient` if omitted.
+        allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
 
     Returns:
         The terminal `TaskState` after the loop settles.
     """
     deps = RunDeps(
-        workspace=Workspace(config.workspace_root),
+        workspace=Workspace(config.workspace_root, allow_dirty=allow_dirty),
         config=config,
         cancellation=CancellationToken(),
     )
@@ -144,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("task", help="The natural-language task to run.")
     parser.add_argument("--log", default="events/session.jsonl", help="Path to the JSONL event log.")
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Run despite uncommitted tracked changes in the workspace (§15).",
+    )
     args = parser.parse_args(argv)
 
     config = HarnessConfig()
@@ -151,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     emitter.subscribe(EventLog(Path(args.log)))
     emitter.subscribe(_print_event)
 
-    state = run_agent(args.task, config=config, emitter=emitter)
+    state = run_agent(args.task, config=config, emitter=emitter, allow_dirty=args.allow_dirty)
     _render_result(state)
     return 0 if state.outcome == "success" else 1
 

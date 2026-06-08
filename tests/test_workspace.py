@@ -145,3 +145,11 @@ def test_workspace_open_rejects_dirty_unless_allowed(git_repo):
     # ...but an explicit acknowledgement is allowed.
     ws = Workspace(git_repo, allow_dirty=True)
     assert ws.diff() != ""
+
+
+def test_workspace_open_ignores_untracked_files(git_repo):
+    # Untracked files never enter `git diff HEAD`, so they can't pollute the diff
+    # baseline (§15) — the clean-start guard must not trip on them.
+    (git_repo / "scratch.txt").write_text("not tracked\n", encoding="utf-8")
+    ws = Workspace(git_repo)  # must not raise
+    assert ws.diff() == ""
