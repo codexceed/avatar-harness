@@ -130,6 +130,19 @@ def test_workspace_run_times_out(tmp_path):
     assert out.exit_code is None
 
 
+def test_workspace_records_command_log(tmp_path):
+    # Every command run through the workspace is recorded at the single chokepoint,
+    # so the runner can surface the full command ledger (§7 commands_run, §14 artifact).
+    ws = Workspace(tmp_path)
+    ws.run('python -c "pass"')
+    ws.run('python -c "import sys; sys.exit(2)"')
+    assert [c.command for c in ws.command_log] == [
+        'python -c "pass"',
+        'python -c "import sys; sys.exit(2)"',
+    ]
+    assert ws.command_log[1].exit_code == 2
+
+
 # --- clean-start assertion (§15) ----------------------------------------
 
 

@@ -32,6 +32,7 @@ class DirtyWorkspaceError(Exception):
 class CommandOutput:
     """The captured result of one command run through the workspace."""
 
+    command: str
     stdout: str
     stderr: str
     exit_code: int | None  # None when the command timed out
@@ -48,6 +49,9 @@ class Workspace:
 
     def __init__(self, root: Path | str, *, allow_dirty: bool = False) -> None:
         self.root = Path(root).resolve()
+        # The ledger of every command run through this handle, in order — the runner
+        # reads it into `state.commands_run` so the artifact/log reflect what ran (§7).
+        self.command_log: list[CommandOutput] = []
         if not allow_dirty:
             self._assert_clean()
         self._baseline = self._capture_baseline()
@@ -177,13 +181,19 @@ class Workspace:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            return CommandOutput(
+            out = CommandOutput(
+                command=command,
                 stdout=exc.stdout or "" if isinstance(exc.stdout, str) else "",
                 stderr=exc.stderr or "" if isinstance(exc.stderr, str) else "",
                 exit_code=None,
                 timed_out=True,
             )
-        return CommandOutput(stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode)
+        else:
+            out = CommandOutput(
+                command=command, stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode
+            )
+        self.command_log.append(out)
+        return out
 
     # --- diff against the pinned baseline (§15) --------------------------
 

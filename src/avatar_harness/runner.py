@@ -20,7 +20,7 @@ from avatar_harness.model_client import (
     ToolCall,
 )
 from avatar_harness.permission import PermissionPolicy
-from avatar_harness.state import TaskState
+from avatar_harness.state import CommandRecord, TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
@@ -148,10 +148,31 @@ class AgentRunner:
 
             self.emitter.emit("turn_end", task_id=state.task_id)
 
+        self._record_commands(state, ws)
         if not state.terminal:
             state.outcome = self._exit_reason(state)
         self.emitter.emit("agent_end", outcome=state.outcome, task_id=state.task_id)
         return state
+
+    def _record_commands(self, state: TaskState, ws: Workspace) -> None:
+        """Mirror the workspace command log into `state.commands_run` (§7).
+
+        Every command — the model's `run_tests`/`run_linter` and the verifier's own
+        runs — flows through `ws.run`, so this single sync captures them all.
+
+        Args:
+            state: The task state whose `commands_run` ledger is rebuilt.
+            ws: The workspace whose command log is the source of truth.
+        """
+        state.commands_run = [
+            CommandRecord(
+                step=i,
+                command=out.command,
+                exit_code=out.exit_code,
+                summary="timed out" if out.timed_out else f"exit={out.exit_code}",
+            )
+            for i, out in enumerate(ws.command_log, start=1)
+        ]
 
     # --- state mutation (runner-owned) -----------------------------------
 

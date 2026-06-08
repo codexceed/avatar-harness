@@ -66,5 +66,7 @@ class ArtifactManager:
             lines.append("Commands:")
             lines.extend(f"  - {cmd}" for cmd in artifact.commands_run)
         if artifact.summary:
-            lines.append(f"Notes:\n  - {artifact.summary}")
+            # The summary is the answer/change note — print it in full as a trailing
+            # block (an investigate answer can be long markdown), not a list item.
+            lines.append(f"\n{artifact.summary}")
         return "\n".join(lines)

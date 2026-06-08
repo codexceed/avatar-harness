@@ -6,11 +6,14 @@ shell over the loop — wiring components and event subscribers, nothing more.
 """
 
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 
+from avatar_harness.artifact import ArtifactManager
 from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import CancellationToken, RunDeps
@@ -21,7 +24,7 @@ from avatar_harness.runner import AgentRunner
 from avatar_harness.state import TaskState
 from avatar_harness.tools import default_registry
 from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar_harness.workspace import DirtyWorkspaceError, Workspace
 
 # Truncation width for event values rendered to the terminal.
 _EVENT_VALUE_WIDTH = 160
@@ -64,8 +67,9 @@ def run_agent(
     emitter: Emitter,
     model_client: ModelClient | None = None,
     allow_dirty: bool = False,
+    task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
 ) -> TaskState:
-    """Run the read-only investigate loop over `task` (Phase 1).
+    """Run the agent loop over `task`.
 
     Args:
         task: The natural-language task to run.
@@ -73,6 +77,7 @@ def run_agent(
         emitter: Sink for observation events.
         model_client: Model client; a default `OpenAIModelClient` if omitted.
         allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+        task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
 
     Returns:
         The terminal `TaskState` after the loop settles.
@@ -91,7 +96,7 @@ def run_agent(
         emitter=emitter,
         config=config,
     )
-    return runner.run(TaskState(goal=task, task_kind="investigate"))
+    return runner.run(TaskState(goal=task, task_kind=task_kind))
 
 
 def _print_event(event: Event) -> None:
@@ -123,22 +128,41 @@ def _clock(ts: object) -> str:
         return ""
 
 
-def _render_result(state: TaskState) -> None:
-    print(f"\nStatus: {state.outcome}")
-    if state.final_answer:
-        print(f"\n{state.final_answer}")
-    if state.files_read:
-        print("\nInspected: " + ", ".join(sorted(state.files_read)))
+def _report(state: TaskState, config: HarnessConfig) -> str:
+    """Render the terminal artifact (§14) — the single reporting contract.
+
+    Re-opens the workspace read-only (the agent may have edited it) solely to read
+    the deliverable diff; status, files, and commands come from `state`.
+
+    Args:
+        state: The terminal task state to report from.
+        config: Harness config, for the workspace root.
+
+    Returns:
+        The rendered plain-text artifact block.
+    """
+    ws = Workspace(config.workspace_root, allow_dirty=True)
+    manager = ArtifactManager()
+    return manager.render(manager.build(state, ws))
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: parse args, wire the loop, run the task, render the result.
+def main(
+    argv: list[str] | None = None,
+    *,
+    config: HarnessConfig | None = None,
+    model_client: ModelClient | None = None,
+    task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
+) -> int:
+    """CLI entry point: parse args, wire the loop, run the task, render the artifact.
 
     Args:
         argv: Argument vector; falls back to `sys.argv` when omitted.
+        config: Harness config; constructed from the environment when omitted.
+        model_client: Model client; a default `OpenAIModelClient` if omitted (injectable for tests).
+        task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
 
     Returns:
-        Process exit code: `0` on `success`, `1` otherwise.
+        Process exit code: `0` on `success`, `2` on a dirty workspace, `1` otherwise.
     """
     parser = argparse.ArgumentParser(
         prog="avatar-harness",
@@ -153,13 +177,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    config = HarnessConfig()
+    config = config or HarnessConfig()
     emitter = Emitter()
     emitter.subscribe(EventLog(Path(args.log)))
     emitter.subscribe(_print_event)
 
-    state = run_agent(args.task, config=config, emitter=emitter, allow_dirty=args.allow_dirty)
-    _render_result(state)
+    try:
+        state = run_agent(
+            args.task,
+            config=config,
+            emitter=emitter,
+            model_client=model_client,
+            allow_dirty=args.allow_dirty,
+            task_kind=task_kind,
+        )
+    except DirtyWorkspaceError as exc:
+        print(
+            f"\nworkspace has uncommitted tracked changes ({exc}).\n"
+            "Commit or stash them, pass --allow-dirty to run anyway, or set "
+            "AVATAR_WORKSPACE_ROOT to a clean checkout.",
+            file=sys.stderr,
+        )
+        return 2
+
+    print("\n" + _report(state, config))
     return 0 if state.outcome == "success" else 1
 
 

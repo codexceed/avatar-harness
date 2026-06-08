@@ -1,5 +1,3 @@
-from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import apply_patch
 from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
@@ -16,6 +14,8 @@ from avatar_harness.model_client import (
 from avatar_harness.runner import AgentRunner
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar_harness.tools.commands import run_linter, run_tests
+from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
@@ -188,6 +188,20 @@ def test_edit_task_runs_to_verified_success(git_repo):
     result = _runner(git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="").run(state)
     assert result.outcome == "success"  # verifier ran the command, not self-certified
     assert "calc.py" in result.files_modified
+
+
+def test_runner_records_commands_run(git_repo):
+    # The verifier runs its own command (§5); the runner must record it in the
+    # commands_run ledger so the artifact and logs reflect what actually ran (§7/§14).
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="fixed")),
+    ]
+    state = TaskState(goal="fix add()", task_kind="edit")
+    result = _runner(git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="").run(state)
+    assert result.outcome == "success"
+    assert any(test_cmd in c.command for c in result.commands_run)
 
 
 def test_bad_patch_leaves_workspace_unchanged_and_loops(git_repo):

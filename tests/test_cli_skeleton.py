@@ -1,10 +1,14 @@
 import pytest
 
-from avatar_harness.cli import run_agent, run_echo
+from avatar_harness.cli import main, run_agent, run_echo
 from avatar_harness.config import HarnessConfig
 from avatar_harness.events import Emitter
-from avatar_harness.model_client import FinalAnswer, ModelDecision
+from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.workspace import DirtyWorkspaceError
+
+_FIX = (
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+)
 
 
 class _OneShotModel:
@@ -12,6 +16,19 @@ class _OneShotModel:
 
     def decide(self, context: object) -> ModelDecision:
         return ModelDecision(action=FinalAnswer(answer="done"))
+
+
+class _ScriptedModel:
+    """Replays a fixed decision sequence; repeats the last when exhausted."""
+
+    def __init__(self, decisions: list[ModelDecision]) -> None:
+        self._decisions = decisions
+        self._i = 0
+
+    def decide(self, context: object) -> ModelDecision:
+        decision = self._decisions[min(self._i, len(self._decisions) - 1)]
+        self._i += 1
+        return decision
 
 
 def test_run_agent_rejects_dirty_workspace_by_default(git_repo):
@@ -30,6 +47,52 @@ def test_run_agent_allow_dirty_opens_dirty_workspace(git_repo):
         "anything", config=config, emitter=Emitter(), model_client=_OneShotModel(), allow_dirty=True
     )
     assert state.iterations >= 1  # the loop ran instead of raising at open
+
+
+def test_run_agent_edit_task_end_to_end(git_repo):
+    # The whole product path for an edit task: patch -> verifier runs its command ->
+    # success, with the command recorded. This is the integration the scripted unit
+    # tests didn't exercise as one flow.
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    config = HarnessConfig(workspace_root=str(git_repo), test_command=test_cmd, lint_command="")
+    model = _ScriptedModel(
+        [
+            ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+            ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
+        ]
+    )
+    state = run_agent("fix add()", config=config, emitter=Emitter(), model_client=model, task_kind="edit")
+    assert state.outcome == "success"
+    assert "calc.py" in state.files_modified
+    assert any(test_cmd in c.command for c in state.commands_run)
+
+
+def test_main_reports_via_artifact(git_repo, capsys):
+    # main() renders its terminal output through ArtifactManager — one reporting
+    # contract (status + files + verification), not a hand-rolled print.
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    model = _ScriptedModel(
+        [
+            ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+            ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
+        ]
+    )
+    config = HarnessConfig(workspace_root=str(git_repo), test_command=test_cmd, lint_command="")
+    code = main(["fix add()"], config=config, model_client=model, task_kind="edit")
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Status: success" in out
+    assert "calc.py" in out
+
+
+def test_main_friendly_error_on_dirty_workspace(git_repo, capsys, monkeypatch):
+    # A dirty tree must produce a clear message + hint, not a raw traceback.
+    (git_repo / "calc.py").write_text("def add(a, b):\n    return 0\n", encoding="utf-8")
+    monkeypatch.setenv("AVATAR_WORKSPACE_ROOT", str(git_repo))
+    code = main(["explain something"])
+    captured = capsys.readouterr()  # drain once — a second call returns empty
+    assert code != 0
+    assert "--allow-dirty" in captured.out + captured.err
 
 
 def test_run_emits_start_and_end():
