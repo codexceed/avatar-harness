@@ -12,15 +12,19 @@ from unittest.mock import patch
 
 from pydantic import BaseModel
 
+import avatar_harness
+from avatar_harness import cli
 from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextPacket
 from avatar_harness.events import Emitter
+from avatar_harness.harness import Harness
 from avatar_harness.model_client import (
     FinalAnswer,
     ModelClient,
     ModelDecision,
     ToolCall,
 )
+from avatar_harness.permission import ToolPermission
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.verifier import Verifier
@@ -45,54 +49,40 @@ def _read_then_answer() -> ModelClient:
             self._calls += 1
             if self._calls == 1:
                 return ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"}))
-            return ModelDecision(action=FinalAnswer(answer="add subtracts"))
+            return ModelDecision(action=FinalAnswer(answer="calc.py defines add(), which subtracts"))
 
     return _Scripted()
 
 
+_STABLE_SURFACE = (
+    "Harness",
+    "HarnessConfig",
+    "TaskState",
+    "ToolDefinition",
+    "ToolResult",
+    "ToolRegistry",
+    "RunDeps",
+    "ModelClient",
+    "Workspace",
+    "ModelDecision",
+    "ToolCall",
+    "FinalAnswer",
+    "AskUser",
+)
+
+
 def test_public_api_exports_stable_surface():
     # The curated surface a downstream user imports — pinning it guards against
-    # accidental churn of the public contract.
-    from avatar_harness import (  # noqa: F401
-        AskUser,
-        FinalAnswer,
-        Harness,
-        HarnessConfig,
-        ModelClient,
-        ModelDecision,
-        RunDeps,
-        TaskState,
-        ToolCall,
-        ToolDefinition,
-        ToolRegistry,
-        ToolResult,
-        Workspace,
-    )
-    import avatar_harness
-
-    for name in (
-        "Harness",
-        "HarnessConfig",
-        "TaskState",
-        "ToolDefinition",
-        "ToolResult",
-        "ToolRegistry",
-        "RunDeps",
-        "ModelClient",
-        "Workspace",
-        "ModelDecision",
-        "ToolCall",
-        "FinalAnswer",
-        "AskUser",
-    ):
+    # accidental churn of the public contract: every name is both importable from
+    # the top-level package and listed in `__all__`.
+    for name in _STABLE_SURFACE:
         assert name in avatar_harness.__all__
+        assert getattr(avatar_harness, name, None) is not None
 
 
 def test_harness_from_env_runs_investigate_end_to_end(git_repo, monkeypatch):
     # `Harness.from_env()` builds HarnessConfig from the environment + defaults and
     # runs a real investigate loop end-to-end (fake model so no network).
-    from avatar_harness import Harness
-
     monkeypatch.setenv("AVATAR_WORKSPACE_ROOT", str(git_repo))
     harness = Harness.from_env(model=_read_then_answer())
     state = harness.run("explain add()", task_kind="investigate")
@@ -104,8 +94,6 @@ def test_harness_from_env_runs_investigate_end_to_end(git_repo, monkeypatch):
 def test_harness_overrides_each_seam(git_repo):
     # Each injected collaborator is actually used by the run: a custom registry,
     # verifier, and policy all leave an observable mark.
-    from avatar_harness import Harness
-
     used = {"verifier": False, "policy": False}
 
     class _RecordingVerifier(Verifier):
@@ -114,11 +102,7 @@ def test_harness_overrides_each_seam(git_repo):
             return super().verify(state, ws)
 
     class _BlockingPolicy:
-        def check(
-            self, tool: ToolDefinition, raw_input: dict, state: TaskState, ws: Workspace
-        ) -> Any:
-            from avatar_harness.permission import ToolPermission
-
+        def check(self, tool: ToolDefinition, raw_input: dict, state: TaskState, ws: Workspace) -> Any:
             used["policy"] = True
             return ToolPermission(blocked=True, reason="blocked by injected policy")
 
@@ -169,14 +153,9 @@ def test_harness_overrides_each_seam(git_repo):
 def test_cli_delegates_to_harness_facade(git_repo):
     # The CLI is a thin caller of the facade — `run_agent` constructs a `Harness`
     # and calls `.run()`, rather than re-deriving the wiring inline.
-    from avatar_harness import cli
-    from avatar_harness.harness import Harness
-
     with patch.object(Harness, "run", autospec=True) as mock_run:
         mock_run.return_value = TaskState(goal="x")
         config = HarnessConfig(workspace_root=str(git_repo))
-        cli.run_agent(
-            "explain add()", config=config, emitter=Emitter(), model_client=_OneShotModel()
-        )
+        cli.run_agent("explain add()", config=config, emitter=Emitter(), model_client=_OneShotModel())
 
     assert mock_run.called

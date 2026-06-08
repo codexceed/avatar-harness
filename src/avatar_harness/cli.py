@@ -17,15 +17,11 @@ from pydantic import BaseModel
 
 from avatar_harness.artifact import ArtifactManager
 from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.eventlog import EventLog
 from avatar_harness.events import Emitter, Event
-from avatar_harness.model_client import ModelClient, OpenAIModelClient
-from avatar_harness.runner import AgentRunner
+from avatar_harness.harness import Harness
+from avatar_harness.model_client import ModelClient
 from avatar_harness.state import TaskState
-from avatar_harness.tools import default_registry
-from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import DirtyWorkspaceError, Workspace
 
 # Truncation width for event values rendered to the terminal.
@@ -84,25 +80,8 @@ def run_agent(
     Returns:
         The terminal `TaskState` after the loop settles.
     """
-    deps = RunDeps(
-        workspace=Workspace(
-            config.workspace_root,
-            allow_dirty=allow_dirty,
-            sensitive_path_globs=config.sensitive_path_globs,
-        ),
-        config=config,
-        cancellation=CancellationToken(),
-    )
-    runner = AgentRunner(
-        model_client=model_client or OpenAIModelClient(config),
-        registry=default_registry(),
-        deps=deps,
-        context_builder=ContextBuilder(),
-        verifier=Verifier(config),
-        emitter=emitter,
-        config=config,
-    )
-    return runner.run(TaskState(goal=task, task_kind=task_kind))
+    harness = Harness(config=config, model=model_client, emitter=emitter)
+    return harness.run(task, task_kind=task_kind, allow_dirty=allow_dirty)
 
 
 def _print_event(event: Event) -> None:
