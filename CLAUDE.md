@@ -20,6 +20,8 @@ Three docs, deepest to most operational. Pick by the *breadth* of the task:
 
 **Keep `ARCHITECTURE.md` current:** when a change alters the architecture (new component, changed control flow, a built milestone), update it — including its diagrams and the implementation-status markers — as part of that change.
 
+**Keep `README.md` current:** when a change is **user-facing**, update `README.md` as part of that same change. User-facing means anything that alters how someone installs, configures, or runs the tool — new/changed CLI commands or flags, env vars / config keys, requirements or supported platforms, the set of task kinds the CLI exposes, installation steps, or the project's status as advertised there. Internal refactors, test-only changes, and design-doc edits are not user-facing and need no README update.
+
 ## Commands
 
 This project uses `uv`; `uv.lock` is committed. Dev tools live in `[dependency-groups].dev`, which `uv` syncs automatically — `make`/`uv run` need no extra flags. A `Makefile` wraps the common targets.
