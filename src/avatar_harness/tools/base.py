@@ -108,7 +108,8 @@ class ToolRuntime:
             raw_input: The unvalidated call arguments, validated against the tool's input model.
 
         Returns:
-            The handler's `ToolResult`, or a failed one for an unknown name or invalid input.
+            The handler's `ToolResult`, or a failed one for an unknown name, invalid input,
+            or a handler that raised (isolated so a buggy tool never crashes the run).
         """
         tool = self.registry.get(name)
         if tool is None:
@@ -121,4 +122,14 @@ class ToolRuntime:
                 success=False,
                 error=f"invalid input for {name!r}: {exc.errors(include_url=False)}",
             )
-        return tool.handler(args, self.deps)
+        try:
+            return tool.handler(args, self.deps)
+        except Exception as exc:  # isolate any tool crash; never raise into the loop
+            # A buggy/third-party handler must not crash the run: surface it as a failed
+            # result. Naming the exception type marks it as a systemic failure to be
+            # surfaced (not a model-correctable error to auto-retry — §10 retry semantics).
+            return ToolResult(
+                tool_name=name,
+                success=False,
+                error=f"tool {name!r} raised {type(exc).__name__}: {exc}",
+            )
