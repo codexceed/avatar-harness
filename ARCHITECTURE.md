@@ -79,10 +79,10 @@ flowchart TD
 | --- | --- | --- |
 | `AgentRunner` | Owns the loop, budgets, phase transitions, cancellation. | [Implemented] (loop + budgets + gate; auto phase transitions [Designed]) |
 | `TaskState` | Explicit per-task progress — the source of truth. | [Implemented] |
-| `ContextBuilder` | Builds the compact per-turn packet; compaction hook. | [Implemented] (compaction hook [Designed]) |
+| `ContextBuilder` | Builds the compact per-turn packet; budgeted compaction + action ledger. | [Implemented] |
 | `ModelClient` | Constrained decision protocol; streaming/delta assembly. | [Implemented] |
 | `ToolRuntime` | Executes typed, phase-gated tools against the workspace. | [Implemented] |
-| `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4). | [Implemented] (synchronous; async with the REPL) |
+| `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4 + sensitive-path denylist over declared paths). | [Implemented] (synchronous; async with the REPL) |
 | `Verifier` | Proves completion via external evidence. | [Implemented] (`investigate`/`edit`/`test_only`) |
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id` (per-session log file). | [Implemented] |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
@@ -339,4 +339,4 @@ What exists in `src/avatar_harness/` today (through Phase 2):
 | `runner.py` | `AgentRunner` — the §5 loop; runner-owned mutation; gate consult; bounding; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
 | `cli.py` | `run_agent` (real loop, takes `task_kind`) + `main()` reporting through `ArtifactManager` (+ `run_echo` Phase 0 skeleton) | `§5`/`§23` shell |
 
-Remaining **[Designed]**: the interactive `Session`/REPL (`§17`/`§23`, Phase 3), the `ContextBuilder` compaction hook, automated `phase` transitions, and §21 extensions.
+Remaining **[Designed]**: the interactive `Session`/REPL (`§17`/`§23`, Phase 3), automated `phase` transitions, and §21 extensions.
