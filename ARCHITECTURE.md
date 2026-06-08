@@ -86,7 +86,7 @@ flowchart TD
 | `Verifier` | Proves completion via external evidence. | [Implemented] (`investigate`/`edit`/`test_only`) |
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id` (per-session log file). | [Implemented] |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
-| `Workspace` | Path confinement, diff/rollback, command execution. | [Implemented] |
+| `Workspace` | Path confinement + sensitive-path denylist (resolved-path backstop), diff/rollback, command execution. | [Implemented] |
 | `Session` | REPL above the runner (`§23`). | [Designed] (Phase 3) |
 
 ### The two control planes (don't conflate them — `§13`)

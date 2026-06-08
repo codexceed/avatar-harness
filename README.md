@@ -72,7 +72,7 @@ Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, 
 
 > **Point at OpenAI instead of OpenRouter:** `AVATAR_BASE_URL=https://api.openai.com/v1`, `AVATAR_API_KEY=sk-...`, `AVATAR_MODEL=gpt-4o-mini`.
 
-**Secret safety.** The permission gate refuses to read or patch files matching a sensitive-path denylist (`.env`, `*.pem`, SSH/AWS/GnuPG dirs, `.netrc`, …) and excludes them from `search_repo` results, so a task can't read your secrets into the model context or the event log. Override the patterns with `AVATAR_SENSITIVE_PATH_GLOBS` (a JSON list, e.g. `'["*.secret", ".env"]'`); the value *replaces* the default set. This is prevention by path-matching, not content secret-detection — a secret reachable through some other channel (e.g. a command's stdout) is not scrubbed.
+**Secret safety.** Files matching a sensitive-path denylist (`.env`, `*.pem`, SSH/AWS/GnuPG dirs, `.netrc`, …) are refused for read and patch, and excluded from `search_repo` results, so a task can't read your secrets into the model context or the event log. Enforcement is two-layer: the permission gate blocks the call up front, and the workspace re-checks the **resolved** path (so an innocuously-named symlink can't launder a secret, and the refusal holds even for a non-gated caller). Override the patterns with `AVATAR_SENSITIVE_PATH_GLOBS` (a JSON list, e.g. `'["*.secret", ".env"]'`); the value *replaces* the default set. This is prevention by path-matching, not content secret-detection — a secret reachable through some other channel (e.g. a command's stdout) is not scrubbed.
 
 ## Usage
 
