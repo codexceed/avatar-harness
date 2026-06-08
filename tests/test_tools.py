@@ -1,7 +1,9 @@
+from pydantic import BaseModel
+
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.tools import filesystem
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolRuntime
+from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import list_files, read_file
@@ -164,3 +166,58 @@ def test_run_linter_runs_configured_command(git_repo):
     result = rt.execute("run_linter", {})
     assert result.success
     assert "All checks passed" in result.content
+
+
+# --- Phase 2.6 Lane B: tool-failure isolation (the runtime never raises into the loop). ---
+
+
+class _BoomInput(BaseModel):
+    """Empty input for a tool whose handler unconditionally raises."""
+
+
+def _boom_handler(_args: _BoomInput, _deps: RunDeps) -> ToolResult:
+    raise RuntimeError("handler exploded")
+
+
+_boom = ToolDefinition(
+    name="boom",
+    description="A third-party-style tool whose handler raises.",
+    input_model=_BoomInput,
+    handler=_boom_handler,
+    phases=frozenset({"investigating"}),
+)
+
+
+def _boom_runtime(tmp_path) -> ToolRuntime:
+    reg = _registry()
+    reg.register(_boom)
+    deps = RunDeps(workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken())
+    return ToolRuntime(reg, deps)
+
+
+def test_tool_handler_exception_becomes_failed_result(tmp_path):
+    # A handler that raises must come back as a failed ToolResult, not a propagated exception.
+    result = _boom_runtime(tmp_path).execute("boom", {})
+    assert result.tool_name == "boom"
+    assert result.success is False
+    assert result.error
+    assert "handler exploded" in result.error
+
+
+def test_runtime_never_raises_into_loop(tmp_path):
+    # The whole point of the runtime: dispatching a crashing tool returns, never raises.
+    rt = _boom_runtime(tmp_path)
+    try:
+        result = rt.execute("boom", {})
+    except Exception as exc:  # pragma: no cover - a raise here is the failure under test
+        raise AssertionError(f"runtime raised into the loop: {exc!r}") from exc
+    assert result.success is False
+
+
+def test_system_failure_is_surfaced_not_retried(tmp_path):
+    # A systemic handler crash is surfaced as a failed result carrying the exception type —
+    # distinct from a silent retry (which would yield a success once the cause cleared).
+    result = _boom_runtime(tmp_path).execute("boom", {})
+    assert result.success is False
+    assert result.error is not None
+    assert "RuntimeError" in result.error
