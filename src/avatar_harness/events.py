@@ -9,8 +9,9 @@ hooks elsewhere, not subscribers here.
 
 import contextlib
 from collections.abc import Callable
+from datetime import UTC, datetime
 
-Event = dict[str, object]  # {"type": str, ...payload}
+Event = dict[str, object]  # {"type": str, "ts": str, ...payload}
 Subscriber = Callable[[Event], None]
 
 
@@ -26,7 +27,10 @@ class Emitter:
 
     def emit(self, event_type: str, **payload: object) -> None:
         """Build the event and deliver it to every subscriber, isolating failures."""
-        event: Event = {"type": event_type, **payload}
+        # Stamp the event once, at emission, so every subscriber (console + log) sees
+        # the same wall-clock time the thing actually happened — not a per-sink re-stamp.
+        # `type` and `ts` lead each event.
+        event: Event = {"type": event_type, "ts": datetime.now(UTC).isoformat(), **payload}
         for subscriber in self._subscribers:
             # A faulty subscriber must never break emission to others or the loop.
             with contextlib.suppress(Exception):

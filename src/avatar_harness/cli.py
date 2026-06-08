@@ -6,6 +6,7 @@ shell over the loop — wiring components and event subscribers, nothing more.
 """
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -75,13 +76,23 @@ def run_agent(
 def _print_event(event: Event) -> None:
     parts = []
     for key, value in event.items():
-        if key == "type":
+        if key in ("type", "ts"):  # rendered as the line prefix, not inline
             continue
         text = str(value).replace("\n", " ")
         if len(text) > _EVENT_VALUE_WIDTH:
             text = text[:_EVENT_VALUE_WIDTH] + "…"
         parts.append(f"{key}={text}")
-    print(f"[{event['type']}] " + ", ".join(parts))
+    print(f"{_clock(event.get('ts'))}[{event['type']}] " + ", ".join(parts))
+
+
+def _clock(ts: object) -> str:
+    """Render an ISO timestamp as a compact `HH:MM:SS ` prefix; empty if unparseable."""
+    if not isinstance(ts, str):
+        return ""
+    try:
+        return datetime.fromisoformat(ts).strftime("%H:%M:%S ")
+    except ValueError:
+        return ""
 
 
 def _render_result(state: TaskState) -> None:
