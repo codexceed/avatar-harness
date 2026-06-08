@@ -93,17 +93,29 @@ class ModelClient(ABC):
         ...
 
 
-# Kind-NEUTRAL default prompt. It must fit any `task_kind` (edit / investigate /
-# test_only), so it never asserts a READ-ONLY framing — an edit task needs to mutate,
-# and read-only framing would forbid the very `apply_patch` it must call. Tool exposure
-# (not prose) is what actually gates capability per phase (§10/§21), so the prompt only
-# has to describe the decision protocol and let the advertised tools speak for themselves.
-#
-# Follow-up: kind-AWARE framing (e.g. "make a working change" vs. "answer without
-# editing") is the ideal, but `task_kind` is not carried on `ContextPacket` today.
-# Add it to the packet (in context.py/state.py) and branch the framing here once it is.
+# Kind-AWARE framing: one mission line per `task_kind`, injected into the template.
+# Capability is still gated by tool *exposure* per phase (§10/§21) — the mission only
+# orients the model. An edit task is never framed READ-ONLY (that would forbid the very
+# `apply_patch` it must call); an investigate task is explicitly told not to edit.
+_KIND_FRAMING = {
+    "investigate": (
+        "Your mission: ANSWER the question WITHOUT editing the repo. Inspect with read "
+        "tools and cite the concrete evidence (paths/lines) you actually read."
+    ),
+    "edit": (
+        "Your mission: make a WORKING code change. Inspect what you will modify, then "
+        "apply a patch; an external verifier will run real tests/lint on your diff."
+    ),
+    "test_only": (
+        "Your mission: ADD or change tests that capture the intended behavior. The new "
+        "tests must run and pass."
+    ),
+}
+
 _SYSTEM_TEMPLATE = """You are the reasoning core of a coding-agent harness. Return EXACTLY \
 ONE JSON object per turn and nothing else.
+
+{mission}
 
 Decision schema:
   {{"thought_summary": "<brief reasoning>", "action": <action>}}
@@ -153,8 +165,10 @@ def build_messages(context: ContextPacket) -> list[dict[str, str]]:
     if context.latest_error:
         parts.append(f"Latest error: {context.latest_error}")
     parts.append("Respond with your next action as a single JSON object.")
+    mission = _KIND_FRAMING.get(context.task_kind, _KIND_FRAMING["investigate"])
+    system = _SYSTEM_TEMPLATE.format(mission=mission, tools=_format_tools(context.allowed_tools))
     return [
-        {"role": "system", "content": _SYSTEM_TEMPLATE.format(tools=_format_tools(context.allowed_tools))},
+        {"role": "system", "content": system},
         {"role": "user", "content": "\n".join(parts)},
     ]
 

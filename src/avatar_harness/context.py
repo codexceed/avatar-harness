@@ -27,6 +27,7 @@ class ContextPacket(BaseModel):
     goal: str
     constraints: list[str] = Field(default_factory=list)
     phase: str
+    task_kind: str = "investigate"  # lets the model adapter frame the prompt per kind (§7)
     plan: list[str] = Field(default_factory=list)
     files_read: list[str] = Field(default_factory=list)
     files_modified: list[str] = Field(default_factory=list)
@@ -129,6 +130,7 @@ class ContextBuilder:
             goal=state.goal,
             constraints=list(state.constraints),
             phase=state.phase,
+            task_kind=state.task_kind,
             plan=list(state.current_plan),
             files_read=sorted(state.files_read),
             files_modified=sorted(state.files_modified),
