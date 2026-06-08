@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. Live model dogfood still pending a configured endpoint/key (carried from Phase 1). Next: Phase 3 (interactive cockpit).
+> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). Next: Phase 3 (interactive cockpit).
 
 ## How to use this file
 
@@ -112,7 +112,7 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 - [x] `final_answer` routes through the verifier (evidence cited + no unintended diff) — never self-certified
 - [x] all Phase 1 tests green (35/35) · `ruff` + `pyright` clean
 - [x] CLI runs the real loop end-to-end (scripted-model smoke: read → verify → success)
-- [ ] **live**: answers a real repo question via a configured model (`OPENAI_API_KEY` [+ `AVATAR_BASE_URL`/`AVATAR_MODEL`]) — user dogfood
+- [x] **live**: answers a real repo question via a configured model (`AVATAR_API_KEY`, OpenRouter) — dogfooded 2026-06-08 ("explain how apply_patch stays atomic" → read `workspace.py` → grounded answer → verifier passed → `outcome=success`)
 
 ## Phase 2 — Closing the loop (MVP)
 
