@@ -97,6 +97,27 @@ def test_main_friendly_error_on_dirty_workspace(git_repo, capsys, monkeypatch):
     assert "--allow-dirty" in captured.out + captured.err
 
 
+def test_main_dirty_workspace_preserves_existing_latest_pointer(git_repo, tmp_path, monkeypatch):
+    # A run that aborts before the first event (dirty workspace) must not swing the
+    # latest.jsonl pointer: doing so eagerly would unlink the last usable pointer and
+    # replace it with a symlink to a per-session log that is never created — a dangle.
+    monkeypatch.chdir(tmp_path)
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    prior_log = events_dir / "deadbeef.jsonl"
+    prior_log.write_text('{"type": "agent_start", "session_id": "deadbeef"}\n', encoding="utf-8")
+    latest = events_dir / "latest.jsonl"
+    latest.symlink_to(prior_log.name)
+
+    (git_repo / "calc.py").write_text("def add(a, b):\n    return 0\n", encoding="utf-8")
+    monkeypatch.setenv("AVATAR_WORKSPACE_ROOT", str(git_repo))
+    code = main(["explain something"])
+
+    assert code == 2  # dirty-workspace exit
+    assert latest.is_symlink()
+    assert latest.resolve() == prior_log.resolve()  # pointer still points at the last usable log
+
+
 def _edit_model() -> "_ScriptedModel":
     return _ScriptedModel(
         [

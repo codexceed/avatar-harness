@@ -223,8 +223,6 @@ def main(
     log_path = _resolve_log_path(args.log, session_id)
     emitter = Emitter(session_id=session_id)
     emitter.subscribe(EventLog(log_path))
-    if args.log is None:  # only the managed per-session layout maintains the pointer
-        _update_latest_pointer(log_path)
     emitter.subscribe(_print_event)
 
     try:
@@ -244,6 +242,13 @@ def main(
             file=sys.stderr,
         )
         return 2
+
+    # Swing the pointer only after the run has actually produced the per-session log:
+    # a run that aborts before the first event (e.g. the dirty-workspace path) never
+    # creates the file, so updating the pointer eagerly would leave latest.jsonl
+    # dangling and lose the pointer to the last usable session log.
+    if args.log is None:  # only the managed per-session layout maintains the pointer
+        _update_latest_pointer(log_path)
 
     print("\n" + _report(state, config))
     return 0 if state.outcome == "success" else 1
