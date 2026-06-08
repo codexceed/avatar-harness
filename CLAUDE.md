@@ -41,6 +41,7 @@ External runtime requirement: `ripgrep` (`rg`) must be on `PATH` — the `search
 ## Contributing: branches, commits, PRs
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>)>: <subject>`, e.g. `feat(events): stamp ts at emit time`.
+- **Commit authorship** is always the local git user — never Claude or any agent. Do **not** add `Co-Authored-By: Claude` (or similar) trailers, and do not override the author/committer; commits must be attributed to the configured local user only.
 - **Branch names** use `<type>/<issue-id>-<description>`, e.g. `fix/42-stale-patch-context`. When the work tracks a GitHub issue, put the issue number in the branch name. If a new branch isn't being created (or the issue number isn't in the name), tag the issue in the PR body instead.
 - **PR descriptions** must contain these sections, in this order:
   1. **Description** — brief on what the changes are about.
