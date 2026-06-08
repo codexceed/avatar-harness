@@ -36,7 +36,16 @@ class EchoResult(BaseModel):
 
 
 def run_echo(task: str, *, emitter: Emitter, config: HarnessConfig | None = None) -> EchoResult:
-    """Phase 0 skeleton: echo the task, bracketed by lifecycle events."""
+    """Phase 0 skeleton: echo the task, bracketed by lifecycle events.
+
+    Args:
+        task: The natural-language task to echo back.
+        emitter: Sink for the lifecycle events.
+        config: Harness config; a default `HarnessConfig` if omitted.
+
+    Returns:
+        The task id, echoed answer, and `success` outcome.
+    """
     config = config or HarnessConfig()
     state = TaskState(goal=task)
     emitter.emit("agent_start", goal=task, task_id=state.task_id)
@@ -55,7 +64,17 @@ def run_agent(
     emitter: Emitter,
     model_client: ModelClient | None = None,
 ) -> TaskState:
-    """Run the read-only investigate loop over `task` (Phase 1)."""
+    """Run the read-only investigate loop over `task` (Phase 1).
+
+    Args:
+        task: The natural-language task to run.
+        config: Harness config wiring the loop.
+        emitter: Sink for observation events.
+        model_client: Model client; a default `OpenAIModelClient` if omitted.
+
+    Returns:
+        The terminal `TaskState` after the loop settles.
+    """
     deps = RunDeps(
         workspace=Workspace(config.workspace_root),
         config=config,
@@ -86,7 +105,14 @@ def _print_event(event: Event) -> None:
 
 
 def _clock(ts: object) -> str:
-    """Render an ISO timestamp as a compact `HH:MM:SS ` prefix; empty if unparseable."""
+    """Render an ISO timestamp as a compact `HH:MM:SS ` prefix; empty if unparseable.
+
+    Args:
+        ts: The candidate ISO timestamp.
+
+    Returns:
+        The `HH:MM:SS ` prefix, or `""` if `ts` is not a parseable string.
+    """
     if not isinstance(ts, str):
         return ""
     try:
@@ -104,7 +130,14 @@ def _render_result(state: TaskState) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: parse args, wire the loop, run the task, render the result."""
+    """CLI entry point: parse args, wire the loop, run the task, render the result.
+
+    Args:
+        argv: Argument vector; falls back to `sys.argv` when omitted.
+
+    Returns:
+        Process exit code: `0` on `success`, `1` otherwise.
+    """
     parser = argparse.ArgumentParser(
         prog="avatar-harness",
         description="A bounded, verifiable coding-agent harness.",

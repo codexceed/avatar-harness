@@ -39,7 +39,12 @@ class CommandOutput:
 
 
 class Workspace:
-    """A tracked, path-confined handle to the repo; tools reach the FS only here (§8, §15)."""
+    """A tracked, path-confined handle to the repo; tools reach the FS only here (§8, §15).
+
+    Args:
+        root: The workspace root all paths are confined to.
+        allow_dirty: When `True`, skip the clean-tree check at open (§15).
+    """
 
     def __init__(self, root: Path | str, *, allow_dirty: bool = False) -> None:
         self.root = Path(root).resolve()
@@ -54,6 +59,15 @@ class Workspace:
 
         `.resolve()` follows symlinks, so a symlink pointing outside the root
         resolves to an outside path and is rejected — there is no traversal hole.
+
+        Args:
+            rel_path: The path to resolve against the root.
+
+        Returns:
+            The resolved absolute path inside the root.
+
+        Raises:
+            PathOutsideWorkspaceError: When `rel_path` escapes the root.
         """
         candidate = (self.root / rel_path).resolve()
         if candidate != self.root and not candidate.is_relative_to(self.root):
@@ -61,7 +75,14 @@ class Workspace:
         return candidate
 
     def contains(self, rel_path: str) -> bool:
-        """Whether `rel_path` resolves inside the root, without raising (for the gate)."""
+        """Whether `rel_path` resolves inside the root, without raising (for the gate).
+
+        Args:
+            rel_path: The path to test.
+
+        Returns:
+            `True` if `rel_path` resolves inside the root, else `False`.
+        """
         try:
             self._resolve(rel_path)
         except PathOutsideWorkspaceError:
@@ -71,7 +92,15 @@ class Workspace:
     # --- reads (tier 0) --------------------------------------------------
 
     def read(self, path: str, line_range: tuple[int, int] | None = None) -> str:
-        """Read a workspace file, optionally a 1-indexed inclusive line range."""
+        """Read a workspace file, optionally a 1-indexed inclusive line range.
+
+        Args:
+            path: The file to read.
+            line_range: A 1-indexed inclusive `(start, end)` range, or `None` for all.
+
+        Returns:
+            The file text, sliced to `line_range` when given.
+        """
         text = self._resolve(path).read_text(encoding="utf-8")
         if line_range is None:
             return text
@@ -79,7 +108,14 @@ class Workspace:
         return "".join(text.splitlines(keepends=True)[start - 1 : end])
 
     def list_files(self, glob: str) -> list[str]:
-        """Return workspace-relative paths of files matching `glob`, sorted."""
+        """Return workspace-relative paths of files matching `glob`, sorted.
+
+        Args:
+            glob: The glob pattern to match against the root.
+
+        Returns:
+            Sorted workspace-relative paths of the matching files.
+        """
         return sorted(str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file())
 
     # --- patch application (tier 1, §10) ---------------------------------
@@ -91,6 +127,15 @@ class Workspace:
         `PathOutsideWorkspaceError` (nothing written). Then a `git apply --check`
         dry run gates the real apply, so a stale diff raises `PatchError` and the
         workspace is left byte-for-byte unchanged — all-or-nothing (§10).
+
+        Args:
+            diff: The unified diff to apply.
+
+        Returns:
+            Sorted workspace-relative paths the diff changed.
+
+        Raises:
+            PatchError: When the diff names no targets or fails to apply cleanly.
         """
         targets = _parse_patch_targets(diff)
         if not targets:
@@ -113,7 +158,15 @@ class Workspace:
     # --- command execution (§15) -----------------------------------------
 
     def run(self, command: str, timeout: int | None = None) -> CommandOutput:
-        """Run `command` confined to the root, capturing output; bounded by `timeout`."""
+        """Run `command` confined to the root, capturing output; bounded by `timeout`.
+
+        Args:
+            command: The shell-style command to run.
+            timeout: Seconds before the command is killed, or `None` for no bound.
+
+        Returns:
+            The captured stdout, stderr, exit code, and timeout flag.
+        """
         try:
             proc = subprocess.run(
                 shlex.split(command),
@@ -135,18 +188,30 @@ class Workspace:
     # --- diff against the pinned baseline (§15) --------------------------
 
     def _assert_clean(self) -> None:
-        """Refuse to open on a dirty git tree unless explicitly acknowledged (§15)."""
+        """Refuse to open on a dirty git tree unless explicitly acknowledged (§15).
+
+        Raises:
+            DirtyWorkspaceError: When the tree has uncommitted changes.
+        """
         status = self._git("status", "--porcelain")
         if status is not None and status.returncode == 0 and status.stdout.strip():
             raise DirtyWorkspaceError(self.root)
 
     def _capture_baseline(self) -> str | None:
-        """Pin the current git HEAD, or None when not a git repo."""
+        """Pin the current git HEAD, or None when not a git repo.
+
+        Returns:
+            The HEAD commit sha, or `None` when not a git repo.
+        """
         result = self._git("rev-parse", "HEAD")
         return result.stdout.strip() if result and result.returncode == 0 else None
 
     def diff(self) -> str:
-        """Working-tree delta vs. the pinned baseline (empty when no baseline)."""
+        """Working-tree delta vs. the pinned baseline (empty when no baseline).
+
+        Returns:
+            The unified diff against the pinned baseline, empty when none.
+        """
         if self._baseline is None:
             return ""
         result = self._git("diff", self._baseline)
@@ -171,6 +236,12 @@ def _parse_patch_targets(diff: str) -> set[str]:
 
     Reads the `--- a/<path>` / `+++ b/<path>` headers, strips the `a/`/`b/`
     prefix, and ignores `/dev/null` (the new-file / delete sentinel).
+
+    Args:
+        diff: The unified diff to scan.
+
+    Returns:
+        The workspace-relative paths the diff touches.
     """
     targets: set[str] = set()
     for line in diff.splitlines():

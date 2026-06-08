@@ -37,7 +37,12 @@ class ContextPacket(BaseModel):
 
 
 class ContextBuilder:
-    """Builds the per-turn `ContextPacket` from `TaskState` under a fixed budget (§9)."""
+    """Builds the per-turn `ContextPacket` from `TaskState` under a fixed budget (§9).
+
+    Args:
+        max_evidence: Max recent evidence items to include.
+        max_detail_chars: Per-item detail truncation budget.
+    """
 
     def __init__(self, max_evidence: int = 5, max_detail_chars: int = 1500) -> None:
         self.max_evidence = max_evidence
@@ -48,13 +53,28 @@ class ContextBuilder:
 
         Includes the item's detail (the tool's content) so the model can see what
         a tool actually found, truncated to the per-item detail budget.
+
+        Args:
+            evidence: The evidence item to render.
+
+        Returns:
+            The rendered summary, with truncated detail appended when present.
         """
         if evidence.detail:
             return f"{evidence.summary}\n{evidence.detail[: self.max_detail_chars]}"
         return evidence.summary
 
     def build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket:
-        """Assemble the working packet for the current turn from `state` (§9)."""
+        """Assemble the working packet for the current turn from `state` (§9).
+
+        Args:
+            state: The task state, source of truth for the packet.
+            ws: The run-scoped `Workspace` handle.
+            registry: The `ToolRegistry`, for phase-active tools.
+
+        Returns:
+            The `ContextPacket` for this turn.
+        """
         return ContextPacket(
             goal=state.goal,
             constraints=list(state.constraints),

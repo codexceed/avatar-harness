@@ -101,10 +101,20 @@ class TaskState(BaseModel):
         return self.outcome is not None
 
     def add_feedback(self, summary: str, *, detail: str | None = None, kind: str = "feedback") -> None:
-        """Append evidence the next context build will surface (§5 repair loop)."""
+        """Append evidence the next context build will surface (§5 repair loop).
+
+        Args:
+            summary: One-line evidence the next context build surfaces.
+            detail: Optional verbatim detail kept out of the model's summary view.
+            kind: Evidence category, e.g. `feedback` or `blocker`.
+        """
         self.evidence.append(Evidence(step=self.iterations, kind=kind, summary=summary, detail=detail))
 
     def block(self, reason: str) -> None:
-        """Terminal: the task needs human input (§5 ask_user in a non-interactive run)."""
+        """Terminal: the task needs human input (§5 ask_user in a non-interactive run).
+
+        Args:
+            reason: Why the task is blocked.
+        """
         self.add_feedback(reason, kind="blocker")
         self.outcome = "blocked"

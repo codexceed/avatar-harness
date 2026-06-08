@@ -27,13 +27,28 @@ _NO_TESTS_EXIT = 5  # pytest convention: no tests were collected.
 
 
 class Verifier:
-    """Disposes of a completion proposal via external evidence, never a model (§12)."""
+    """Disposes of a completion proposal via external evidence, never a model (§12).
+
+    Args:
+        config: The harness config supplying the `test`/`lint` commands; `None` leaves both empty.
+    """
 
     def __init__(self, config: HarnessConfig | None = None) -> None:
         self.config = config
 
     def verify(self, state: TaskState, ws: Workspace) -> VerifierResult:
-        """Run the verification contract for the task's `task_kind` (§12)."""
+        """Run the verification contract for the task's `task_kind` (§12).
+
+        Args:
+            state: The task state.
+            ws: The run-scoped workspace.
+
+        Returns:
+            The disposition over the contract's checks.
+
+        Raises:
+            NotImplementedError: For an unrecognized `task_kind`.
+        """
         if state.task_kind == "investigate":
             return self._verify_investigate(state, ws)
         if state.task_kind == "edit":
@@ -126,6 +141,15 @@ class Verifier:
 
         The verifier runs this ITSELF (§5): the command's exit code is the external
         signal. An empty command is a skip — allowed for lint, disallowed for tests.
+
+        Args:
+            name: The check name (`tests` or `lint`).
+            command: The command to run; empty means skip.
+            ws: The run-scoped workspace.
+            no_target_allowed: Whether a `_NO_TESTS_EXIT` exit is a tolerated skip.
+
+        Returns:
+            The classified `CheckResult`.
         """
         if not command:
             reason = "no lint command configured" if name == "lint" else "no test command configured"
@@ -192,7 +216,14 @@ def _is_test_path(path: str) -> bool:
 
 
 def _scan_secrets(diff: str) -> list[str]:
-    """Return the secret/placeholder markers found on added (`+`) diff lines."""
+    """Return the secret/placeholder markers found on added (`+`) diff lines.
+
+    Args:
+        diff: The unified diff to scan.
+
+    Returns:
+        The sorted markers found on added lines.
+    """
     found: set[str] = set()
     for line in diff.splitlines():
         if not line.startswith("+") or line.startswith("+++"):

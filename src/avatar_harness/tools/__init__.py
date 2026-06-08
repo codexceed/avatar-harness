@@ -13,6 +13,9 @@ def default_registry() -> ToolRegistry:
     Read tools are active in every phase; `apply_patch` only in `editing`; the
     command tools in `editing`/`verifying` (§10/§21 capability groups). The
     `ContextBuilder` exposes only the phase-active subset to the model.
+
+    Returns:
+        A `ToolRegistry` with the MVP tools registered.
     """
     registry = ToolRegistry()
     for tool in (read_file, list_files, search_repo, apply_patch, run_tests, run_linter):

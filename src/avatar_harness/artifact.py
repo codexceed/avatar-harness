@@ -28,7 +28,15 @@ class ArtifactManager:
     """Builds and renders the terminal artifact from `TaskState` (§14)."""
 
     def build(self, state: TaskState, ws: Workspace) -> Artifact:
-        """Assemble the artifact for a terminal `state`; `status` mirrors `outcome`."""
+        """Assemble the artifact for a terminal `state`; `status` mirrors `outcome`.
+
+        Args:
+            state: The terminal task state to report from.
+            ws: The workspace, queried for the deliverable diff.
+
+        Returns:
+            The assembled `Artifact`.
+        """
         return Artifact(
             status=str(state.outcome),
             summary=state.final_answer or state.goal,
@@ -39,7 +47,14 @@ class ArtifactManager:
         )
 
     def render(self, artifact: Artifact) -> str:
-        """Render the artifact as the plain-text summary block (§14)."""
+        """Render the artifact as the plain-text summary block (§14).
+
+        Args:
+            artifact: The artifact to render.
+
+        Returns:
+            The plain-text summary block.
+        """
         lines = [f"Status: {artifact.status}"]
         if artifact.files_changed:
             lines.append("Changed files:")

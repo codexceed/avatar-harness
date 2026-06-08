@@ -51,27 +51,58 @@ class ToolRegistry:
         self._tools: dict[str, ToolDefinition] = {}
 
     def register(self, tool: ToolDefinition) -> None:
-        """Add (or replace) a tool definition by name."""
+        """Add (or replace) a tool definition by name.
+
+        Args:
+            tool: The tool definition to register, keyed by its `name`.
+        """
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> ToolDefinition | None:
-        """Return the tool registered under `name`, or None if unknown."""
+        """Return the tool registered under `name`, or None if unknown.
+
+        Args:
+            name: The tool name to look up.
+
+        Returns:
+            The matching `ToolDefinition`, or None if no tool is registered under `name`.
+        """
         return self._tools.get(name)
 
     def active_for_phase(self, phase: str) -> list[ToolDefinition]:
-        """Return the tools enabled in the given phase (§10/§21 capability groups)."""
+        """Return the tools enabled in the given phase (§10/§21 capability groups).
+
+        Args:
+            phase: The phase to filter active tools by.
+
+        Returns:
+            The tool definitions whose `phases` include `phase`.
+        """
         return [tool for tool in self._tools.values() if phase in tool.phases]
 
 
 class ToolRuntime:
-    """Validates and dispatches tool calls; never raises into the loop (§10)."""
+    """Validates and dispatches tool calls; never raises into the loop (§10).
+
+    Args:
+        registry: The registry to resolve tool calls against.
+        deps: The run-scoped `RunDeps` passed to every handler.
+    """
 
     def __init__(self, registry: ToolRegistry, deps: RunDeps) -> None:
         self.registry = registry
         self.deps = deps
 
     def execute(self, name: str, raw_input: dict) -> ToolResult:
-        """Resolve, validate, and run a tool call; errors return as a failed `ToolResult`."""
+        """Resolve, validate, and run a tool call; errors return as a failed `ToolResult`.
+
+        Args:
+            name: The registered name of the tool to invoke.
+            raw_input: The unvalidated call arguments, validated against the tool's input model.
+
+        Returns:
+            The handler's `ToolResult`, or a failed one for an unknown name or invalid input.
+        """
         tool = self.registry.get(name)
         if tool is None:
             return ToolResult(tool_name=name, success=False, error=f"unknown tool: {name!r}")

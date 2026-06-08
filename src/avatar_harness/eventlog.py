@@ -11,14 +11,22 @@ from avatar_harness.events import Event
 
 
 class EventLog:
-    """An append-only JSONL subscriber: one timestamped record per event (§13)."""
+    """An append-only JSONL subscriber: one timestamped record per event (§13).
+
+    Args:
+        path: JSONL file the events are appended to.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def __call__(self, event: Event) -> None:
-        """Append `event` to the log as one JSON line, preserving its emitted `ts`."""
+        """Append `event` to the log as one JSON line, preserving its emitted `ts`.
+
+        Args:
+            event: The event to persist verbatim.
+        """
         # The Emitter already stamped `ts` at emission; persist the event verbatim so
         # the log reflects when the event happened, not when it was flushed to disk.
         with self.path.open("a", encoding="utf-8") as f:

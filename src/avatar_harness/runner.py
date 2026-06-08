@@ -27,7 +27,14 @@ from avatar_harness.workspace import Workspace
 
 
 def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
-    """A one-line description of an action, for the trajectory log."""
+    """A one-line description of an action, for the trajectory log.
+
+    Args:
+        action: The model's chosen action.
+
+    Returns:
+        A one-line brief of `action`.
+    """
     if isinstance(action, ToolCall):
         return f"{action.name}({action.input})"
     if isinstance(action, FinalAnswer):
@@ -40,6 +47,16 @@ class AgentRunner:
 
     Collaborators are injected explicitly so a run is self-contained and replayable;
     the runner orchestrates them but mutates `TaskState` itself.
+
+    Args:
+        model_client: Proposes each turn's `ModelDecision`.
+        registry: The active `ToolRegistry`.
+        deps: Run-scoped `RunDeps` (workspace, etc.).
+        context_builder: Assembles the per-iteration context packet (§9).
+        verifier: Disposes of "done" on external evidence (§12).
+        emitter: Observation-only event emitter (§13).
+        config: Budgets and harness settings.
+        policy: The before-tool-call control gate (§11); defaults to the standard tier policy.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only dependency injection of the run's collaborators
@@ -65,7 +82,14 @@ class AgentRunner:
         self.policy = policy or PermissionPolicy()
 
     def run(self, state: TaskState) -> TaskState:
-        """Drive the loop to a terminal outcome and return the final state (§5)."""
+        """Drive the loop to a terminal outcome and return the final state (§5).
+
+        Args:
+            state: The task state to drive; mutated in place.
+
+        Returns:
+            The final `TaskState` with a terminal `outcome`.
+        """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)

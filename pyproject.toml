@@ -99,6 +99,14 @@ arg-type-hints-in-docstring = false
 check-return-types = false
 check-yield-types = false
 require-return-section-when-returning-nothing = false
+# Enforce strictly: a one-line docstring on a function with params/returns is NOT a
+# pass — it must still document Args/Returns. (Default skips short docstrings, which
+# silently let undocumented args/returns through.)
+skip-checking-short-docstrings = false
+# Don't require re-documenting class attributes in docstrings: types live in the
+# signature/field definitions (Pyrefly checks them) and duplicating every pydantic
+# field in the docstring is exactly the verbosity this project avoids.
+check-class-attributes = false
 
 # --- Pyrefly: sole hard type gate (#1). Pinned to 1.0.x; bump deliberately. ---
 [tool.pyrefly]

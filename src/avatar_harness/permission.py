@@ -37,7 +37,17 @@ class PermissionPolicy:
         state: TaskState,  # noqa: ARG002 — part of the §11 hook contract; future policies consult it
         ws: Workspace,
     ) -> ToolPermission:
-        """Return the control decision for `tool` with `raw_input` (allow / block / ask)."""
+        """Return the control decision for `tool` with `raw_input` (allow / block / ask).
+
+        Args:
+            tool: The tool definition, carrying its `permission_tier`.
+            raw_input: The proposed tool arguments.
+            state: The current task state; part of the §11 hook contract.
+            ws: The run-scoped workspace, used for path confinement.
+
+        Returns:
+            The `ToolPermission` the runner acts on.
+        """
         tier = tool.permission_tier
         if tier >= _ASK_TIER:
             # Destructive / external actions are gated; no auto-approval path in the MVP.

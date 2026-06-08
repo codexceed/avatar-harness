@@ -51,7 +51,17 @@ class DecisionParseError(Exception):
 
 
 def parse_decision(raw: str) -> ModelDecision:
-    """Validate raw model output into a `ModelDecision`, or raise a recoverable error."""
+    """Validate raw model output into a `ModelDecision`, or raise a recoverable error.
+
+    Args:
+        raw: The raw model output to validate.
+
+    Returns:
+        The validated `ModelDecision`.
+
+    Raises:
+        DecisionParseError: If `raw` is not valid JSON or not a valid decision.
+    """
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -70,7 +80,14 @@ class ModelClient(Protocol):
     """
 
     def decide(self, context: ContextPacket) -> ModelDecision:
-        """Turn a context packet into a validated decision for the current turn."""
+        """Turn a context packet into a validated decision for the current turn.
+
+        Args:
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
         ...
 
 
@@ -102,7 +119,14 @@ def _format_tools(tools: list[ToolSummary]) -> str:
 
 
 def build_messages(context: ContextPacket) -> list[dict[str, str]]:
-    """Assemble the system + user messages for one decision (§9 packet → prompt)."""
+    """Assemble the system + user messages for one decision (§9 packet → prompt).
+
+    Args:
+        context: The assembled context packet.
+
+    Returns:
+        The system + user messages for one decision.
+    """
     parts = [f"Goal: {context.goal}"]
     if context.constraints:
         parts.append("Constraints: " + "; ".join(context.constraints))
@@ -126,6 +150,11 @@ class OpenAIModelClient:
     A malformed reply is fed back to the model for a bounded number of retries
     before surfacing as a `DecisionParseError` (which the runner treats as a
     recoverable, model-correctable error).
+
+    Args:
+        config: The harness configuration.
+        client: An injected OpenAI-compatible client, or `None` to construct one.
+        max_parse_retries: Number of retries on malformed model output.
     """
 
     def __init__(self, config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None:
@@ -139,7 +168,17 @@ class OpenAIModelClient:
         self.client = client
 
     def decide(self, context: ContextPacket) -> ModelDecision:
-        """Call the endpoint and validate the reply, retrying on malformed output (§6)."""
+        """Call the endpoint and validate the reply, retrying on malformed output (§6).
+
+        Args:
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+
+        Raises:
+            DecisionParseError: If every attempt yields malformed output.
+        """
         messages = build_messages(context)
         last_error: DecisionParseError | None = None
         for _ in range(self.max_parse_retries + 1):
@@ -162,4 +201,5 @@ class OpenAIModelClient:
                 ]
         # The loop only exits without returning via the except branch, which always
         # sets last_error; the fallback keeps this total without an (O-stripped) assert.
-        raise last_error or DecisionParseError("model returned no valid decision")
+        message = str(last_error) if last_error else "model returned no valid decision"
+        raise DecisionParseError(message) from last_error

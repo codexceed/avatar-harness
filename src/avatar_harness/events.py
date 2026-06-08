@@ -22,11 +22,20 @@ class Emitter:
         self._subscribers: list[Subscriber] = []
 
     def subscribe(self, subscriber: Subscriber) -> None:
-        """Register a subscriber to receive every subsequent event."""
+        """Register a subscriber to receive every subsequent event.
+
+        Args:
+            subscriber: Callable invoked with each emitted event.
+        """
         self._subscribers.append(subscriber)
 
     def emit(self, event_type: str, **payload: object) -> None:
-        """Build the event and deliver it to every subscriber, isolating failures."""
+        """Build the event and deliver it to every subscriber, isolating failures.
+
+        Args:
+            event_type: The event's `type` tag.
+            **payload: Extra event fields merged after `type` and `ts`.
+        """
         # Stamp the event once, at emission, so every subscriber (console + log) sees
         # the same wall-clock time the thing actually happened — not a per-sink re-stamp.
         # `type` and `ts` lead each event.
