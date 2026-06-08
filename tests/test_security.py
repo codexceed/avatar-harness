@@ -8,6 +8,8 @@ paths, so it can't drift or be forgotten by a tool author.
 
 from typing import Literal
 
+import pytest
+
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.permission import PermissionPolicy
@@ -16,7 +18,7 @@ from avatar_harness.tools.base import ToolRegistry, ToolRuntime
 from avatar_harness.tools.edit import ApplyPatchInput, apply_patch
 from avatar_harness.tools.filesystem import ListFilesInput, ReadFileInput, list_files, read_file
 from avatar_harness.tools.search import search_repo
-from avatar_harness.workspace import Workspace
+from avatar_harness.workspace import SensitivePathError, Workspace
 
 
 def _state(kind: Literal["edit", "investigate", "test_only"] = "edit") -> TaskState:
@@ -103,3 +105,41 @@ def test_search_repo_excludes_sensitive_files(git_repo):
     assert result.success
     assert "app.py" in result.content  # an ordinary file is still searchable
     assert "server.pem" not in result.content  # the secret file is excluded
+
+
+# --- defense in depth: the workspace refuses sensitive RESOLVED paths ----------
+# The gate alone is single-layer (bypassed by a non-gated caller) and checks the
+# *requested* path, not the resolved one — so a symlink launders the secret. The
+# Workspace chokepoint enforces on the resolved path, closing both holes.
+
+
+def test_workspace_read_refuses_sensitive_file(tmp_path):
+    (tmp_path / ".env").write_text("API_KEY=sk-SECRET\n", encoding="utf-8")
+    with pytest.raises(SensitivePathError):
+        Workspace(tmp_path).read(".env")
+
+
+def test_workspace_read_refuses_symlink_to_sensitive(tmp_path):
+    # The bypass: an innocuously-named symlink pointing at a denylisted file. The
+    # check is on the RESOLVED path, so the symlink can't launder the secret.
+    (tmp_path / ".env").write_text("API_KEY=sk-SECRET\n", encoding="utf-8")
+    (tmp_path / "notes.txt").symlink_to(tmp_path / ".env")
+    with pytest.raises(SensitivePathError):
+        Workspace(tmp_path).read("notes.txt")
+
+
+def test_read_file_tool_refuses_sensitive_without_gate(tmp_path):
+    # Even a direct tool call (no permission gate) cannot read a secret.
+    (tmp_path / ".env").write_text("API_KEY=sk-SECRET\n", encoding="utf-8")
+    deps = RunDeps(workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken())
+    reg = ToolRegistry()
+    reg.register(read_file)
+    result = ToolRuntime(reg, deps).execute("read_file", {"path": ".env"})
+    assert result.success is False
+    assert "sk-SECRET" not in result.content
+
+
+def test_workspace_apply_patch_refuses_sensitive_target(git_repo):
+    diff = "--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+LEAK=1\n"
+    with pytest.raises(SensitivePathError):
+        Workspace(git_repo).apply_patch(diff)
