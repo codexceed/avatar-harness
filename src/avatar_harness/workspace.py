@@ -147,12 +147,15 @@ class Workspace:
         for path in targets:
             self._resolve(path)  # raises PathOutsideWorkspaceError on escape
 
-        check = self._git("apply", "--check", "-", stdin=diff)
+        # Apply to the index as well as the working tree (`--index`), so a *created*
+        # file is tracked and therefore appears in `diff()` — otherwise new files are
+        # untracked and invisible to the secret scan and the artifact (§14/§15).
+        check = self._git("apply", "--index", "--check", "-", stdin=diff)
         if check is None or check.returncode != 0:
             raise PatchError(
                 (check.stderr.strip() if check else "git apply unavailable") or "patch did not apply"
             )
-        applied = self._git("apply", "-", stdin=diff)
+        applied = self._git("apply", "--index", "-", stdin=diff)
         if applied is None or applied.returncode != 0:
             raise PatchError(
                 (applied.stderr.strip() if applied else "git apply unavailable") or "patch did not apply"

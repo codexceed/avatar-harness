@@ -102,6 +102,17 @@ def test_workspace_patch_creates_and_deletes_only_when_explicit(git_repo):
     assert ws.read("new.py") == "created = True\n"
 
 
+def test_workspace_diff_includes_created_files(git_repo):
+    # A created file is part of the task's deliverable — it must appear in the diff,
+    # or the secret scan and artifact are blind to brand-new files (apply via
+    # `git apply --index` so the new file is tracked, not left untracked).
+    ws = Workspace(git_repo)
+    ws.apply_patch('--- /dev/null\n+++ b/new.py\n@@ -0,0 +1 @@\n+TOKEN = "x"\n')
+    delta = ws.diff()
+    assert "new.py" in delta
+    assert "TOKEN" in delta
+
+
 def test_workspace_diff_reflects_applied_patch(git_repo):
     ws = Workspace(git_repo)
     assert ws.diff() == ""  # clean at open

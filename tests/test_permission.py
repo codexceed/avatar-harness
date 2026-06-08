@@ -1,10 +1,10 @@
-from avatar_harness.permission import PermissionPolicy, ToolPermission
-from avatar_harness.tools.commands import run_tests
-from avatar_harness.tools.edit import apply_patch
 from pydantic import BaseModel
 
+from avatar_harness.permission import PermissionPolicy, ToolPermission
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolResult
+from avatar_harness.tools.commands import run_tests
+from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.workspace import Workspace
 
@@ -49,6 +49,16 @@ def test_apply_patch_blocked_when_path_escapes(git_repo):
     perm = PermissionPolicy().check(apply_patch, {"diff": diff}, _state(), Workspace(git_repo))
     assert perm.blocked is True
     assert perm.reason  # explains the refusal
+
+
+def test_investigate_cannot_apply_patch(git_repo):
+    # An investigate task must not mutate: the gate blocks apply_patch (tier 1) up
+    # front — prevention, not just the verifier catching the diff after the fact.
+    diff = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x\n+y\n"
+    state = TaskState(goal="why is it slow?", task_kind="investigate")
+    perm = PermissionPolicy().check(apply_patch, {"diff": diff}, state, Workspace(git_repo))
+    assert perm.blocked is True
+    assert perm.reason
 
 
 def test_tier2_commands_allowed_with_timeout(git_repo):

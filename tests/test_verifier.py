@@ -110,6 +110,17 @@ def test_edit_gate_flags_placeholder_or_secret(git_repo):
     assert any(c.name == "no_secrets" and c.status == "fail" for c in report.checks)
 
 
+def test_edit_gate_flags_secret_in_created_file(git_repo):
+    # The secret guard must see brand-new files too, not just modified tracked ones.
+    ws = Workspace(git_repo)
+    leak = '--- /dev/null\n+++ b/cfg.py\n@@ -0,0 +1 @@\n+API = "AKIAIOSFODNN7EXAMPLE"\n'
+    changed = ws.apply_patch(leak)
+    state = TaskState(goal="add config", task_kind="edit", files_modified=set(changed))
+    report = Verifier(HarnessConfig(test_command=_PASS)).verify(state, ws)
+    assert report.passed is False
+    assert any(c.name == "no_secrets" and c.status == "fail" for c in report.checks)
+
+
 # --- test_only gate (§12) -----------------------------------------------
 
 _ADD_TEST = "--- /dev/null\n+++ b/tests/test_calc.py\n@@ -0,0 +1,2 @@\n+def test_add():\n+    assert True\n"
