@@ -79,6 +79,12 @@ ignore = [
 # Build tooling, not library code: relax annotation/print/complexity strictness.
 "scripts/**" = ["ANN", "T20", "C901", "PLR0912", "PLR0913", "PLR0915"]
 
+# Pin first-party detection so import sorting is identical everywhere. Auto-detection
+# varies by environment (editable install vs clean CI checkout), which can make a
+# mis-sorted import block pass locally but fail CI — pinning closes that blind spot.
+[tool.ruff.lint.isort]
+known-first-party = ["avatar_harness"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 

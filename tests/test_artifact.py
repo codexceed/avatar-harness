@@ -1,5 +1,4 @@
 from avatar_harness.artifact import ArtifactManager
-
 from avatar_harness.state import CheckResult, CommandRecord, TaskState, VerifierResult
 from avatar_harness.workspace import Workspace
 

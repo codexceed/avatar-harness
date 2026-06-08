@@ -1,9 +1,8 @@
-from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import apply_patch
-
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolRuntime
+from avatar_harness.tools.commands import run_linter, run_tests
+from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
