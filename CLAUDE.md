@@ -20,6 +20,8 @@ Three docs, deepest to most operational. Pick by the *breadth* of the task:
 
 **Keep `ARCHITECTURE.md` current:** when a change alters the architecture (new component, changed control flow, a built milestone), update it — including its diagrams and the implementation-status markers — as part of that change.
 
+**Keep `README.md` current:** when a change is **user-facing**, update `README.md` as part of that same change. User-facing means anything that alters how someone installs, configures, or runs the tool — new/changed CLI commands or flags, env vars / config keys, requirements or supported platforms, the set of task kinds the CLI exposes, installation steps, or the project's status as advertised there. Internal refactors, test-only changes, and design-doc edits are not user-facing and need no README update.
+
 ## Commands
 
 This project uses `uv`; `uv.lock` is committed. Dev tools live in `[dependency-groups].dev`, which `uv` syncs automatically — `make`/`uv run` need no extra flags. A `Makefile` wraps the common targets.
@@ -37,6 +39,17 @@ uv run pytest tests/test_x.py::test_name   # run a single test
 ```
 
 External runtime requirement: `ripgrep` (`rg`) must be on `PATH` — the `search_repo` tool shells out to it.
+
+## Contributing: branches, commits, PRs
+
+- **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>)>: <subject>`, e.g. `feat(events): stamp ts at emit time`.
+- **Commit authorship** is always the local git user — never Claude or any agent. Do **not** add `Co-Authored-By: Claude` (or similar) trailers, and do not override the author/committer; commits must be attributed to the configured local user only.
+- **Branch names** use `<type>/<issue-id>-<description>`, e.g. `fix/42-stale-patch-context`. When the work tracks a GitHub issue, put the issue number in the branch name. If a new branch isn't being created (or the issue number isn't in the name), tag the issue in the PR body instead.
+- **PR descriptions** must contain these sections, in this order:
+  1. **Description** — brief on what the changes are about.
+  2. **Motivation** — why we're doing this.
+  3. **Changes** — list of changes.
+  4. **Testing** — list of tests and validations.
 
 ## Architecture: what requires reading multiple files to understand
 

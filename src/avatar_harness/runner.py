@@ -19,14 +19,22 @@ from avatar_harness.model_client import (
     ModelClient,
     ToolCall,
 )
-from avatar_harness.state import TaskState
+from avatar_harness.permission import PermissionPolicy
+from avatar_harness.state import CommandRecord, TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
 
 def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
-    """A one-line description of an action, for the trajectory log."""
+    """A one-line description of an action, for the trajectory log.
+
+    Args:
+        action: The model's chosen action.
+
+    Returns:
+        A one-line brief of `action`.
+    """
     if isinstance(action, ToolCall):
         return f"{action.name}({action.input})"
     if isinstance(action, FinalAnswer):
@@ -39,6 +47,16 @@ class AgentRunner:
 
     Collaborators are injected explicitly so a run is self-contained and replayable;
     the runner orchestrates them but mutates `TaskState` itself.
+
+    Args:
+        model_client: Proposes each turn's `ModelDecision`.
+        registry: The active `ToolRegistry`.
+        deps: Run-scoped `RunDeps` (workspace, etc.).
+        context_builder: Assembles the per-iteration context packet (§9).
+        verifier: Disposes of "done" on external evidence (§12).
+        emitter: Observation-only event emitter (§13).
+        config: Budgets and harness settings.
+        policy: The before-tool-call control gate (§11); defaults to the standard tier policy.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only dependency injection of the run's collaborators
@@ -51,6 +69,7 @@ class AgentRunner:
         verifier: Verifier,
         emitter: Emitter,
         config: HarnessConfig,
+        policy: PermissionPolicy | None = None,
     ) -> None:
         self.model_client = model_client
         self.registry = registry
@@ -59,9 +78,18 @@ class AgentRunner:
         self.verifier = verifier
         self.emitter = emitter
         self.config = config
+        # The before-tool-call control gate (§11); defaults to the standard tier policy.
+        self.policy = policy or PermissionPolicy()
 
     def run(self, state: TaskState) -> TaskState:
-        """Drive the loop to a terminal outcome and return the final state (§5)."""
+        """Drive the loop to a terminal outcome and return the final state (§5).
+
+        Args:
+            state: The task state to drive; mutated in place.
+
+        Returns:
+            The final `TaskState` with a terminal `outcome`.
+        """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
@@ -90,6 +118,16 @@ class AgentRunner:
             )
 
             if isinstance(action, ToolCall):
+                tool = self.registry.get(action.name)
+                # Consult the control gate before execution (§11). A block redirects the
+                # loop — the action never runs — and the reason is fed back as evidence.
+                permission = self.policy.check(tool, action.input, state, ws) if tool is not None else None
+                if permission is not None and permission.blocked:
+                    state.latest_error = permission.reason
+                    state.add_feedback(permission.reason, kind="permission_blocked")
+                    self.emitter.emit("permission_blocked", tool=action.name, reason=permission.reason)
+                    self.emitter.emit("turn_end", task_id=state.task_id)
+                    continue
                 result = runtime.execute(action.name, action.input)
                 self._apply_tool_result(state, result)
                 self.emitter.emit(
@@ -110,10 +148,31 @@ class AgentRunner:
 
             self.emitter.emit("turn_end", task_id=state.task_id)
 
+        self._record_commands(state, ws)
         if not state.terminal:
             state.outcome = self._exit_reason(state)
         self.emitter.emit("agent_end", outcome=state.outcome, task_id=state.task_id)
         return state
+
+    def _record_commands(self, state: TaskState, ws: Workspace) -> None:
+        """Mirror the workspace command log into `state.commands_run` (§7).
+
+        Every command — the model's `run_tests`/`run_linter` and the verifier's own
+        runs — flows through `ws.run`, so this single sync captures them all.
+
+        Args:
+            state: The task state whose `commands_run` ledger is rebuilt.
+            ws: The workspace whose command log is the source of truth.
+        """
+        state.commands_run = [
+            CommandRecord(
+                step=i,
+                command=out.command,
+                exit_code=out.exit_code,
+                summary="timed out" if out.timed_out else f"exit={out.exit_code}",
+            )
+            for i, out in enumerate(ws.command_log, start=1)
+        ]
 
     # --- state mutation (runner-owned) -----------------------------------
 

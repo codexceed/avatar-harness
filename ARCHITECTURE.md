@@ -22,15 +22,6 @@ Everything below serves five invariants (`§3`): explicit structured state · pr
 A central **`AgentRunner`** owns the loop and the `TaskState`. Everything else is a stateless worker or a passive store. In interactive use, a **`Session`** (`§23`) wraps the runner in a REPL; batch mode is the degenerate one-task session.
 
 ```mermaid
----
-config:
-  flowchart:
-    rankSpacing: 70
-    nodeSpacing: 40
-    padding: 18
-  themeVariables:
-    fontSize: 18px
----
 flowchart TD
     subgraph intake["Intake"]
         CLI["CLI intake: goal + constraints"]
@@ -82,21 +73,21 @@ flowchart TD
     class SESS,CLI,R,CB,MC,TR,PP,V,AM,UI,WS todo;
 ```
 
-> Status note: as of Phase 0, the green nodes (`TaskState` data model, `Emitter`, `EventLog`) plus `HarnessConfig` and a placeholder CLI echo are **[Implemented]**; the rest is **[Designed]**. `CLI` exists today only as the echo skeleton, not the real intake into a runner.
+> Status note: as of **Phase 2**, the whole non-interactive engine is **[Implemented]** and wired end-to-end through `cli.main` — the read-only loop *and* the closing edit path (`apply_patch` under the permission gate, the external-evidence `Verifier`, the `ArtifactManager`), dogfooded live (an investigate task answered a real repo question and verified `success`). What remains **[Designed]** is the interactive `Session`/REPL (`§23`, Phase 3) and §21 extensions. Two live boundaries: the runner does not yet *advance* `phase` — tool *availability* is enforced by `task_kind` instead (an investigate task is blocked from `apply_patch` at the gate), with automated `investigating → editing → verifying` transitions deferred to Phase 3; and intake does not yet classify a free-text goal into a `task_kind` (the CLI runs `investigate` by default or takes an explicit kind).
 
 | Component | Role | Status |
 | --- | --- | --- |
-| `AgentRunner` | Owns the loop, budgets, phase transitions, cancellation. | [Designed] |
-| `TaskState` | Explicit per-task progress — the source of truth. | [Implemented] (data model) |
-| `ContextBuilder` | Builds the compact per-turn packet; compaction hook. | [Designed] |
-| `ModelClient` | Constrained decision protocol; streaming/delta assembly. | [Designed] |
-| `ToolRuntime` | Executes typed, phase-gated tools against the workspace. | [Designed] |
-| `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4). | [Designed] |
-| `Verifier` | Proves completion via external evidence. | [Designed] |
+| `AgentRunner` | Owns the loop, budgets, phase transitions, cancellation. | [Implemented] (loop + budgets + gate; auto phase transitions [Designed]) |
+| `TaskState` | Explicit per-task progress — the source of truth. | [Implemented] |
+| `ContextBuilder` | Builds the compact per-turn packet; compaction hook. | [Implemented] (compaction hook [Designed]) |
+| `ModelClient` | Constrained decision protocol; streaming/delta assembly. | [Implemented] |
+| `ToolRuntime` | Executes typed, phase-gated tools against the workspace. | [Implemented] |
+| `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4). | [Implemented] (synchronous; async with the REPL) |
+| `Verifier` | Proves completion via external evidence. | [Implemented] (`investigate`/`edit`/`test_only`) |
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL. | [Implemented] |
-| `ArtifactManager` | Final status + change summary + evidence. | [Designed] |
-| `Workspace` | Path confinement, diff/rollback, command execution. | [Designed] |
-| `Session` | REPL above the runner (`§23`). | [Designed] |
+| `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
+| `Workspace` | Path confinement, diff/rollback, command execution. | [Implemented] |
+| `Session` | REPL above the runner (`§23`). | [Designed] (Phase 3) |
 
 ### The two control planes (don't conflate them — `§13`)
 
@@ -275,7 +266,7 @@ Verification always *runs and reports*. **Who decides on the result** shifts: in
 
 ## 5. Dry run — one task, end to end
 
-**Goal:** "Fix the failing auth test." `task_kind = edit`. This traces both the task lifecycle (§3) and verification (§4). *(Illustrative of the [Designed] loop; the engine is not built yet.)*
+**Goal:** "Fix the failing auth test." `task_kind = edit`. This traces both the task lifecycle (§3) and verification (§4). *(The engine that runs this is now built (Phase 2); a live-model dogfood is still pending an endpoint.)*
 
 ```mermaid
 sequenceDiagram
@@ -330,14 +321,22 @@ If the patch were wrong, the verifier returns `passed=false`, `recommended_next_
 
 ## 6. Current implementation footprint
 
-What exists in `src/avatar_harness/` today (Phase 0):
+What exists in `src/avatar_harness/` today (through Phase 2):
 
 | Module | Contents | Maps to |
 | --- | --- | --- |
-| `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets) | `§8` config |
+| `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command`) | `§8` config |
 | `state.py` | `TaskState` + `Evidence` / `DecisionRecord` / `CommandRecord` / `CheckResult` / `VerifierResult`; `terminal`, `add_feedback`, `block` | `§7`, `§12` data shapes |
-| `events.py` | `Emitter` — observation-only, fire-and-forget | `§13` |
-| `eventlog.py` | `EventLog` — JSONL subscriber | `§13` |
-| `cli.py` | `run_echo` placeholder loop + `main()` | `§5`/`§23` shell (echo only) |
+| `events.py` · `eventlog.py` | `Emitter` (observation-only) + `EventLog` (JSONL subscriber) | `§13` |
+| `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log`, clean-start assertion | `§8`, `§10`, `§15` |
+| `deps.py` | `RunDeps`, `CancellationToken` — run-scoped, no globals | `§8` |
+| `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime`), `filesystem`, `search`, `edit` (`apply_patch`), `commands` (`run_tests`/`run_linter`) | `§10` |
+| `permission.py` | `PermissionPolicy` + `ToolPermission` — the synchronous `before_tool_call` gate | `§11` |
+| `model_client.py` | Constrained decision union + `OpenAIModelClient` (decision parsing) | `§6` |
+| `context.py` | `ContextBuilder` + `ContextPacket` — compact, phase-gated per-turn packet | `§9` |
+| `verifier.py` | `Verifier` — `investigate`/`edit`/`test_only` gates; runs its own verification command | `§12` |
+| `artifact.py` | `ArtifactManager` + `Artifact` — `status = state.outcome`, files/commands/verification/diff | `§14` |
+| `runner.py` | `AgentRunner` — the §5 loop; runner-owned mutation; gate consult; bounding; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
+| `cli.py` | `run_agent` (real loop, takes `task_kind`) + `main()` reporting through `ArtifactManager` (+ `run_echo` Phase 0 skeleton) | `§5`/`§23` shell |
 
-Everything else in `§17`'s layout (`runner`, `context`, `model_client`, `permissions`, `verifier`, `tools/`, `workspace`, `artifacts`, `deps`) is **[Designed]**, scheduled across Phases 1–3 in `PROGRESS.md`.
+Remaining **[Designed]**: the interactive `Session`/REPL (`§17`/`§23`, Phase 3), the `ContextBuilder` compaction hook, automated `phase` transitions, and §21 extensions.

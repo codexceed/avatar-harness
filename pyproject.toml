@@ -79,6 +79,12 @@ ignore = [
 # Build tooling, not library code: relax annotation/print/complexity strictness.
 "scripts/**" = ["ANN", "T20", "C901", "PLR0912", "PLR0913", "PLR0915"]
 
+# Pin first-party detection so import sorting is identical everywhere. Auto-detection
+# varies by environment (editable install vs clean CI checkout), which can make a
+# mis-sorted import block pass locally but fail CI — pinning closes that blind spot.
+[tool.ruff.lint.isort]
+known-first-party = ["avatar_harness"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
@@ -99,6 +105,14 @@ arg-type-hints-in-docstring = false
 check-return-types = false
 check-yield-types = false
 require-return-section-when-returning-nothing = false
+# Enforce strictly: a one-line docstring on a function with params/returns is NOT a
+# pass — it must still document Args/Returns. (Default skips short docstrings, which
+# silently let undocumented args/returns through.)
+skip-checking-short-docstrings = false
+# Don't require re-documenting class attributes in docstrings: types live in the
+# signature/field definitions (Pyrefly checks them) and duplicating every pydantic
+# field in the docstring is exactly the verbosity this project avoids.
+check-class-attributes = false
 
 # --- Pyrefly: sole hard type gate (#1). Pinned to 1.0.x; bump deliberately. ---
 [tool.pyrefly]

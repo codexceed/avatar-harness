@@ -1,9 +1,15 @@
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolRuntime
+from avatar_harness.tools.commands import run_linter, run_tests
+from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
+
+_FIX = (
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+)
 
 
 def _registry() -> ToolRegistry:
@@ -73,3 +79,59 @@ def test_invalid_tool_input_fed_back(tmp_path):
     result = _runtime(tmp_path).execute("read_file", {})  # missing required 'path'
     assert result.success is False
     assert "invalid input" in (result.error or "")
+
+
+# --- side-effecting tools (Phase 2) -------------------------------------
+
+
+def _edit_runtime(root, **config_kw) -> ToolRuntime:
+    reg = ToolRegistry()
+    for tool in (read_file, apply_patch, run_tests, run_linter):
+        reg.register(tool)
+    config = HarnessConfig(**config_kw)
+    deps = RunDeps(workspace=Workspace(root), config=config, cancellation=CancellationToken())
+    return ToolRuntime(reg, deps)
+
+
+def test_apply_patch_tool_reports_changed_files(git_repo):
+    result = _edit_runtime(git_repo).execute("apply_patch", {"diff": _FIX})
+    assert result.success
+    assert result.files_changed == ["calc.py"]
+
+
+def test_apply_patch_tool_stale_context_is_model_correctable(git_repo):
+    stale = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-return a * b\n+return a + b\n"
+    result = _edit_runtime(git_repo).execute("apply_patch", {"diff": stale})
+    assert result.success is False  # returned, never raised into the loop
+    assert result.error
+    assert "a + b" not in (Workspace(git_repo).read("calc.py"))  # nothing written
+
+
+def test_run_tests_passing_surfaces_evidence(git_repo):
+    rt = _edit_runtime(git_repo, test_command="python -c \"print('5 passed')\"")
+    result = rt.execute("run_tests", {})
+    assert result.success
+    assert "5 passed" in result.content
+
+
+def test_run_tests_failure_is_not_a_tool_error(git_repo):
+    # The command ran and reported failing tests — that is DATA, not a tool failure.
+    rt = _edit_runtime(git_repo, test_command="python -c \"import sys; print('1 failed'); sys.exit(1)\"")
+    result = rt.execute("run_tests", {})
+    assert result.success is True
+    assert "1 failed" in result.content
+
+
+def test_run_tests_target_not_found_is_model_correctable(git_repo):
+    # Usage error / target not found (pytest exit 4) is model-correctable, not a hard run.
+    rt = _edit_runtime(git_repo, test_command='python -c "import sys; sys.exit(4)"')
+    result = rt.execute("run_tests", {})
+    assert result.success is False
+    assert result.error
+
+
+def test_run_linter_runs_configured_command(git_repo):
+    rt = _edit_runtime(git_repo, lint_command="python -c \"print('All checks passed')\"")
+    result = rt.execute("run_linter", {})
+    assert result.success
+    assert "All checks passed" in result.content
