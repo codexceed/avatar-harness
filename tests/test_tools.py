@@ -1,5 +1,6 @@
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.tools import filesystem
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolRuntime
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import apply_patch
@@ -62,8 +63,6 @@ def test_list_files_dir_pattern_lists_contained_files(tmp_path):
 
 def test_list_files_result_is_capped_with_overflow_note(tmp_path, monkeypatch):
     # A directory match must not dump thousands of paths into context.
-    from avatar_harness.tools import filesystem
-
     monkeypatch.setattr(filesystem, "_LIST_CAP", 2)
     d = tmp_path / "many"
     d.mkdir()

@@ -45,7 +45,7 @@ def test_context_omits_out_of_phase_tools(tmp_path, read_registry):
 
 def test_context_includes_prior_actions(tmp_path, read_registry):
     # The loop fix: the model's own prior tool calls are surfaced so it stops
-    # re-issuing them (turns 9–13 replayed turns 1–5 in the dogfood).
+    # re-issuing them (turns 9-13 replayed turns 1-5 in the dogfood).
     state = TaskState(goal="x", task_kind="investigate")
     state.decisions.append(
         DecisionRecord(step=1, rationale="look", chosen="list_files({'glob': '**/*'})", outcome="5065 files")
@@ -85,8 +85,8 @@ def test_duplicate_evidence_collapsed(tmp_path, read_registry):
         state.add_feedback("list_files rich* → 0 files")
     packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
     joined = "\n".join(packet.recent_evidence)
-    assert joined.count("list_files rich*") == 1  # collapsed, not repeated 3×
-    assert "×3" in joined
+    assert joined.count("list_files rich*") == 1  # collapsed, not repeated 3x
+    assert "x3" in joined
 
 
 def test_context_respects_char_budget(tmp_path, read_registry):

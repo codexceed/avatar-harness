@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
-from avatar_harness.workspace import PatchError, PathOutsideWorkspaceError
+from avatar_harness.workspace import PatchError, PathOutsideWorkspaceError, _parse_patch_targets
 
 # Editing is active only once the agent has moved into the editing phase (§21).
 _EDIT_PHASES = frozenset({"editing"})
@@ -46,4 +46,6 @@ apply_patch = ToolDefinition(
     handler=_apply_patch,
     phases=_EDIT_PHASES,
     permission_tier=1,
+    # The diff's target files are the gate's path policy inputs (confinement + denylist, §11).
+    paths=lambda args: tuple(sorted(_parse_patch_targets(args.diff))),
 )

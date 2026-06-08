@@ -114,13 +114,23 @@ class Workspace:
     def list_files(self, glob: str) -> list[str]:
         """Return workspace-relative paths of files matching `glob`, sorted.
 
+        A glob that matches a *directory* expands to the files under it (recursively),
+        so `list_files("pkg")` lists `pkg/`'s contents rather than silently returning
+        nothing — the dogfood gap where `rich*` matched a dir and was dropped.
+
         Args:
             glob: The glob pattern to match against the root.
 
         Returns:
-            Sorted workspace-relative paths of the matching files.
+            Sorted workspace-relative paths of the matching files (dir matches expanded).
         """
-        return sorted(str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file())
+        found: set[Path] = set()
+        for p in self.root.glob(glob):
+            if p.is_file():
+                found.add(p)
+            elif p.is_dir():
+                found.update(q for q in p.rglob("*") if q.is_file())
+        return sorted(str(p.relative_to(self.root)) for p in found)
 
     # --- patch application (tier 1, §10) ---------------------------------
 

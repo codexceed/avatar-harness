@@ -6,6 +6,8 @@ Prevention only — deterministic path-pattern matching, no content detection
 paths, so it can't drift or be forgotten by a tool author.
 """
 
+from typing import Literal
+
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.permission import PermissionPolicy
@@ -17,7 +19,7 @@ from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
 
 
-def _state(kind: str = "edit") -> TaskState:
+def _state(kind: Literal["edit", "investigate", "test_only"] = "edit") -> TaskState:
     return TaskState(goal="x", task_kind=kind)
 
 

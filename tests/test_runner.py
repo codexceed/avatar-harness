@@ -142,9 +142,7 @@ def test_runner_records_decision_each_turn(tmp_path, read_registry):
         ModelDecision(thought_summary="peek", action=ToolCall(name="read_file", input={"path": "app.py"})),
         ModelDecision(action=FinalAnswer(answer="handler lives in app.py")),
     ]
-    state = _runner(tmp_path, read_registry, decisions).run(
-        TaskState(goal="where?", task_kind="investigate")
-    )
+    state = _runner(tmp_path, read_registry, decisions).run(TaskState(goal="where?", task_kind="investigate"))
     assert len(state.decisions) >= 2  # one record per turn (previously never written)
     assert any("read_file" in d.chosen for d in state.decisions)
     assert any(d.outcome for d in state.decisions)  # each call's outcome is recorded

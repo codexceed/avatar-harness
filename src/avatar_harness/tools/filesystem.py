@@ -9,6 +9,10 @@ from avatar_harness.workspace import PathOutsideWorkspaceError
 # Repo inspection is available in every phase ("always", §21 capability groups).
 _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 
+# Cap on the number of paths shown to the model; a directory match can expand to
+# thousands, which would blow the context (the full count is kept in the summary).
+_LIST_CAP = 1000
+
 
 class ReadFileInput(BaseModel):
     """Input for `read_file`: a workspace path and optional 1-indexed line range."""
@@ -39,6 +43,7 @@ read_file = ToolDefinition(
     input_model=ReadFileInput,
     handler=_read_file,
     phases=_READ_PHASES,
+    paths=lambda args: (args.path,),  # self-declared for the gate's path policy (§11)
 )
 
 
@@ -50,11 +55,14 @@ class ListFilesInput(BaseModel):
 
 def _list_files(args: ListFilesInput, deps: RunDeps) -> ToolResult:
     files = deps.workspace.list_files(args.glob)
+    content = "\n".join(files[:_LIST_CAP])
+    if len(files) > _LIST_CAP:
+        content += f"\n… (+{len(files) - _LIST_CAP} more)"
     return ToolResult(
         tool_name="list_files",
         success=True,
-        content="\n".join(files),
-        summary=f"{len(files)} file(s) matching {args.glob!r}",
+        content=content,
+        summary=f"{len(files)} file(s) matching {args.glob!r}",  # full count, even when capped
     )
 
 

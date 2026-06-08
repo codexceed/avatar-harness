@@ -135,6 +135,10 @@ def build_messages(context: ContextPacket) -> list[dict[str, str]]:
     parts.append(f"Phase: {context.phase}")
     if context.files_read:
         parts.append("Files read: " + ", ".join(context.files_read))
+    if context.prior_actions:
+        parts.append(
+            "Actions so far (do NOT repeat these):\n" + "\n".join(f"- {a}" for a in context.prior_actions)
+        )
     if context.recent_evidence:
         parts.append("Recent evidence:\n" + "\n".join(f"- {e}" for e in context.recent_evidence))
     if context.latest_error:

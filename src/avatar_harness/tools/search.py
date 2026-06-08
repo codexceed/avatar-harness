@@ -17,9 +17,12 @@ class SearchRepoInput(BaseModel):
 
 
 def _search_repo(args: SearchRepoInput, deps: RunDeps) -> ToolResult:
+    # Exclude denylisted files so search can't become a secret-exfiltration bypass
+    # (a path exclude — gitignore-style globs — never content detection; §11, Phase 2.5).
+    excludes = [arg for pat in deps.config.sensitive_path_globs for arg in ("-g", f"!{pat}")]
     try:
         proc = subprocess.run(
-            ["rg", "--line-number", "--no-heading", "--color=never", args.query],
+            ["rg", "--line-number", "--no-heading", "--color=never", *excludes, args.query],
             cwd=str(deps.workspace.root),
             capture_output=True,
             text=True,
