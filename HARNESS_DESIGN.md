@@ -1,8 +1,10 @@
 # Coding Agent Harness — Design
 
-> **Status:** Proposal / pre-implementation
+> **Status:** Living design spec. The non-interactive MVP engine is implemented through Phase 2; Phase 3 interactive session work and §21 extensions remain designed, not built.
 > **Scope:** A ground-up, minimally functional but correctly shaped coding agent harness — a new standalone Python project, not an extension of the current CLI chat app.
 > **Posture:** Build the *shape* completely (loop, structured state, permission gate, verification, event log, reversibility); keep each component's *implementation* thin. A shallow-but-complete harness beats a deep-but-partial one, because the shape is what's expensive to change later.
+
+This document is the canonical design/rationale spec. `PROGRESS.md` is the authoritative build ledger; `ARCHITECTURE.md` is the current system map with implementation-status markers; `README.md` is user-facing usage documentation. When the code and this document diverge, treat that as design drift to resolve explicitly, not as an implicit code change.
 
 ## 1. Purpose
 
@@ -65,7 +67,7 @@ graph TD
 
 | Component          | Responsibility                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------ |
-| `AgentRunner`      | Owns the main loop, iteration/time budgets, cancellation, and phase transitions.     |
+| `AgentRunner`      | Owns the main loop, iteration budgets, cancellation plumbing, and runner-owned mutation. |
 | `TaskState`        | Explicit task progress: phase, evidence, files touched, commands run, verifier results. |
 | `ContextBuilder`   | Builds a compact working packet from state, repo data, diffs, and recent evidence.   |
 | `ModelClient`      | Sends structured prompts; receives and validates constrained model decisions.        |
@@ -81,9 +83,8 @@ The defining departure from a chat app: the loop terminates on **verification**,
 
 ```python
 state = TaskState(goal=..., constraints=[...])
-ws    = workspace.open(task_id)            # asserts clean-or-acknowledged git state (§15)
-deps  = RunDeps(workspace=ws, config=config, state=state,    # the handle tools receive (§8)
-                event_log=event_log, cancellation=token)
+ws    = Workspace(root, allow_dirty=...)   # asserts clean-or-acknowledged tracked git state (§15)
+deps  = RunDeps(workspace=ws, config=config, cancellation=token)
 events.emit("agent_start", state=state)
 
 while not state.terminal and within_budget(state, config):
@@ -94,19 +95,20 @@ while not state.terminal and within_budget(state, config):
 
     match action.type:
         case "tool_call":
-            perm = await permissions.before_tool_call(action, state)   # awaited control hook (§11)
+            tool = registry.get(action.name)
+            perm = permissions.check(tool, action.input, state, ws)    # control hook (§11)
             if perm.blocked:
                 state.add_feedback(perm.reason)                 # model learns, loop continues
-                events.emit("tool_call_blocked", call=action, reason=perm.reason)
+                events.emit("permission_blocked", call=action, reason=perm.reason)
                 continue
-            result = await tool_runtime.execute(action, deps, on_update=events.emit)
-            result = await permissions.after_tool_call(action, result, state)
+            result = tool_runtime.execute(action.name, action.input)
             events.emit("tool_execution_end", call=action, result=result)
-            state.apply_tool_result(action, result)             # the RUNNER applies, not the tool (§8)
+            runner._apply_tool_result(state, result)            # the RUNNER applies, not the tool (§8)
             if result.terminate:
                 _verify(state, ws)                              # terminate proposes; verifier disposes
 
         case "final_answer":
+            state.final_answer = action.answer
             _verify(state, ws)
 
         case "ask_user":
@@ -128,10 +130,11 @@ def _verify(state, ws):
     events.emit("verification_start")
     report = verifier.verify(state, ws)                 # EXTERNAL signals only (§12)
     events.emit("verification_end", report=report)
-    state.apply_verification(report)                    # increments repair_failures on a fail
+    state.verifier_results.append(report)
     if report.passed:
         state.outcome = "success"                       # terminal; loop exits next check
     else:
+        state.repair_failures += 1
         state.add_feedback(report.summary)              # repair: evidence feeds the next context
 ```
 
@@ -148,6 +151,8 @@ Two *different kinds* of bound exist, and they map to different outcomes — thi
 - Per-tool timeout (a single tool, not the run).
 - Maximum context size.
 - Maximum *consecutive failed actions* — tool/action errors in a row (catches thrashing).
+
+Current MVP enforcement is narrower than the full target: the runner enforces maximum iterations, maximum consecutive failed actions, and repair attempts; command execution enforces per-command timeout. Wall-clock and context-token budgets are configured but not yet enforced by the loop.
 
 **Repair budget → `failed`** (the run *did* converge on a completion claim, but it can't be verified):
 
@@ -175,11 +180,11 @@ sequenceDiagram
         R->>M: decide(context)
         alt tool_call
             M-->>R: tool_call
-            R->>P: before_tool_call (gate)
+            R->>P: check (before-tool-call gate)
             alt allowed
                 R->>T: execute(call, deps)
                 T-->>R: ToolResult
-                R->>R: apply_tool_result + log
+                R->>R: apply_tool_result + log (runner-owned mutation)
                 opt result.terminate
                     R->>V: verify(state, ws)
                     V-->>R: VerifierResult
@@ -224,11 +229,11 @@ The model returns a **constrained, validated decision** — not arbitrary prose.
 class ToolCall(BaseModel):
     type: Literal["tool_call"] = "tool_call"
     name: str                                  # must match a tool active for the current phase
-    input: dict                                # validated against that tool's input_schema
+    input: dict                                # validated against that tool's input_model
 
 class FinalAnswer(BaseModel):
     type: Literal["final_answer"] = "final_answer"
-    answer: str                                # cites changed files + evidence (§12)
+    answer: str                                # completion claim; verifier checks evidence (§12)
 
 class AskUser(BaseModel):
     type: Literal["ask_user"] = "ask_user"
@@ -249,7 +254,7 @@ The loop dispatches on `decision.action.type` and operates on `decision.action` 
 
 `ask_user` is first-class: it is how "low confidence → ask a human" becomes an action the model can take rather than a guess it's forced to make. In non-interactive runs it transitions the task to `blocked` (§14).
 
-The harness **validates** every decision (schema, known tool name, well-formed input) before acting. Invalid decisions are logged and fed back to the model as recoverable errors, never executed.
+The harness **validates** every decision before acting. `parse_decision` validates the JSON shape into `ModelDecision`; the tool runtime and registry then validate known tool names and tool input. Invalid decisions and invalid tool calls are logged and fed back to the model as recoverable errors, never executed.
 
 ## 7. Task state — the heart
 
@@ -280,16 +285,16 @@ class TaskState(BaseModel):
     iterations: int = 0
     consecutive_failures: int = 0       # tool/action errors in a row -> "incomplete" at cap (§5)
     repair_failures: int = 0            # verification rejections in a row -> "failed" at cap (§5)
-    files_read: set[str] = set()
-    files_modified: set[str] = set()
-    commands_run: list[CommandRecord] = []
+    files_read: set[str] = Field(default_factory=set)
+    files_modified: set[str] = Field(default_factory=set)
+    commands_run: list[CommandRecord] = Field(default_factory=list)
 
-    evidence: list[Evidence] = []
-    decisions: list[DecisionRecord] = []
-    verifier_results: list[VerifierResult] = []
+    evidence: list[Evidence] = Field(default_factory=list)
+    decisions: list[DecisionRecord] = Field(default_factory=list)
+    verifier_results: list[VerifierResult] = Field(default_factory=list)
 
-    current_plan: list[str] = []
-    open_questions: list[str] = []
+    current_plan: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
     latest_error: str | None = None
     final_answer: str | None = None
 
@@ -300,24 +305,23 @@ class TaskState(BaseModel):
 
 Good state answers: What is the goal? What kind of task is it? What constraints are active? What has been inspected? What has been changed? What evidence exists? What has failed? What still needs verification?
 
-**`phase` and `outcome` are deliberately separate.** `phase` is a *control* axis — it advances through `investigating → editing → verifying` and gates which tools are available (§10) and how context is assembled. `outcome` is the *terminal result* axis — `None` while the run is live, then exactly one of `success` / `incomplete` / `blocked` / `failed`, which is what `ArtifactManager.status` reports (§14). Conflating the two (e.g. a single `phase` that also holds `done`/`failed`) is what leaves budget-exhaustion and verification-failure underspecified, so we keep them apart.
+**`phase` and `outcome` are deliberately separate.** `phase` is a *control* axis — it gates which tools are available (§10) and how context is assembled. The target design advances it through `investigating → editing → verifying`; the current MVP stores the axis and uses it for tool exposure, but does not yet auto-advance phases. `outcome` is the *terminal result* axis — `None` while the run is live, then exactly one of `success` / `incomplete` / `blocked` / `failed`, which is what `ArtifactManager.status` reports (§14). Conflating the two (e.g. a single `phase` that also holds `done`/`failed`) is what leaves budget-exhaustion and verification-failure underspecified, so we keep them apart.
 
-**`task_kind` selects the verification contract** (§12). It is classified at intake (or inferred from the goal) and prevents edit-shaped verification ("a diff must exist") from being forced onto read-only tasks (investigation, explanation, or running a command to report its output). It is a taxonomy of *verification contracts*, not of user intents — which is why there are only three (§12).
+**`task_kind` selects the verification contract** (§12). It is classified at intake (or inferred from the goal) and prevents edit-shaped verification ("a diff must exist") from being forced onto read-only tasks (investigation, explanation, or, once narrow command tools exist for it, running a command to report its output). It is a taxonomy of *verification contracts*, not of user intents — which is why there are only three (§12).
 
 ## 8. Run dependencies
 
 Tools receive their dependencies through a small **run-scoped object**, never globals.
 
 ```python
-class RunDeps(BaseModel):
-    workspace: Workspace             # handle: path confinement, diff/rollback, command exec
+@dataclass
+class RunDeps:
+    workspace: Workspace             # handle: path confinement, diff, command exec
     config: HarnessConfig
-    state: TaskState                 # read-only to tools (see rules below)
-    event_log: EventLog
     cancellation: CancellationToken
 ```
 
-`workspace` is a `Workspace` *handle*, not a bare root path. It encapsulates path confinement, modified-file tracking, diff/rollback, and command execution — so a tool physically cannot reach outside the workspace or run an untracked, untimed command. Passing only a root path would push that discipline into every tool and let any one of them quietly break it.
+`workspace` is a `Workspace` *handle*, not a bare root path. It encapsulates path confinement, modified-file tracking, diffing, atomic patch application, and command execution — so a tool physically cannot reach outside the workspace or run an untracked, untimed command. Passing only a root path would push that discipline into every tool and let any one of them quietly break it.
 
 Rules — these keep the loop debuggable:
 
@@ -326,6 +330,8 @@ Rules — these keep the loop debuggable:
 - Tools do **not** mutate `TaskState`; they return a `ToolResult`.
 - The **runner** applies tool results to state *after* logging and permission checks.
 - Services (model client, shell runner, file reader) are passed explicitly or owned by `ToolRuntime`.
+
+MVP note: `RunDeps` is intentionally small today (`workspace`, `config`, `cancellation`). `TaskState` and `EventLog` stay outside tool dependencies: the runner mutates state, and the emitter/EventLog observes what the runner emits.
 
 The invariant "tools are pure-ish; the runner owns all mutation" is what makes a run replayable from the event log.
 
@@ -338,8 +344,8 @@ The component a chat app has zero of, and the one that most determines a coding 
 - Current phase + current plan
 - Relevant snippets (search/read results)
 - Files already read / modified
-- Recent tool results (summaries, not raw dumps)
-- Current git status + diff summary
+- Recent tool results (summaries plus bounded detail when needed)
+- Current diff summary when relevant
 - Latest test / lint output (verbatim when repairing)
 - Allowed next tools (for the current phase)
 ```
@@ -349,7 +355,7 @@ Selection prefers, in order: recent failing command output; files changed in thi
 Two rules:
 
 - **The model discovers context incrementally** through search/read tools — it does not receive the repository by default.
-- **A compaction hook** transforms state before it goes to the model: prune old evidence to summaries, keep recent verifier output verbatim, stay under the context budget. Recency + relevance over completeness.
+- **A future compaction hook** can transform state before it goes to the model: prune old evidence to summaries, keep recent verifier output verbatim, stay under the context budget. Recency + relevance over completeness.
 
 Retrieval, MVP vs. later:
 
@@ -357,32 +363,24 @@ Retrieval, MVP vs. later:
 | ---------------------------- | ------------------------------- |
 | `rg` text search             | AST / symbol indexing           |
 | `read_file` with line ranges | Dependency graph awareness      |
-| git status / diff            | Test-target inference           |
+| recent evidence + files read | Test-target inference           |
 
 ## 10. Tool runtime
 
 Tools are narrow, typed, observable, timeout-limited, and permissioned.
 
 ```python
-class ToolDefinition(BaseModel):
+@dataclass(frozen=True)
+class ToolDefinition:
     name: str
     description: str
-    input_schema: type[BaseModel]                # pydantic -> JSON schema for the LLM
+    input_model: type[BaseModel]                 # pydantic -> JSON schema for the LLM
+    handler: ToolHandler
+    phases: frozenset[str]                       # phase-gating
     permission_tier: int                         # 0..4 (§11)
-    side_effects: Literal["none", "local_edit", "local_command", "external"]
-    timeout_seconds: int
-    retries: int = 0
-    requires_approval: bool = False
-    defer_until_phase: str | None = None         # phase-gating
-    prompt_snippet: str | None = None            # one-line entry in the prompt's tool list
-    prompt_guidelines: list[str] = []            # tool-specific bullets, appended to guidelines
-    handler: Callable[                           # on_update streams progress; deps carries cancellation
-        ["ToolCallId", BaseModel, "RunDeps", "OnUpdate"],
-        Awaitable["ToolResult"],
-    ]
 ```
 
-The model sees only tools allowed for the current phase; the runner re-validates every call regardless. Tools self-describing their prompt contribution (`prompt_snippet` / `prompt_guidelines`) keeps the system prompt assembled from the active toolset rather than hardcoded.
+The model sees only tools allowed for the current phase; the runner re-validates every call regardless. The MVP keeps tool metadata thin (`name`, `description`, pydantic input model, handler, active phases, permission tier). Richer prompt snippets, side-effect declarations, streaming progress callbacks, and retry policy metadata are useful extensions, but not needed for the current implementation.
 
 ### MVP tools
 
@@ -392,12 +390,14 @@ The model sees only tools allowed for the current phase; the runner re-validates
 | `list_files(glob)`            | List files matching a pattern.       | None                    |
 | `read_file(path, range?)`     | Read a bounded file or snippet.      | None                    |
 | `apply_patch(diff)`           | Apply a unified diff to the workspace. | Local edits           |
-| `run_tests(target, timeout)`  | Run a test target.                   | Local command execution |
-| `run_linter(timeout)`         | Run configured lint / type checks.   | Local command execution |
+| `run_tests(target?)`          | Run the configured test command, optionally scoped to a target. | Local command execution |
+| `run_linter()`                | Run configured lint / type checks.   | Local command execution |
 | `git_status()`                | Report changed / untracked files.    | None                    |
 | `git_diff()`                  | Return the current diff or a summary. | None                    |
 
-Avoid a general `run_shell(command)` in v1. If included, restrict it by allowlist, timeout, working directory, and permission policy.
+Implemented MVP surface: `search_repo`, `list_files`, `read_file`, `apply_patch`, `run_tests`, and `run_linter`. `git_status` and `git_diff` remain part of the intended narrow tool surface, but the current engine gets diff/status evidence directly through `Workspace` and artifacts rather than exposing those as model-callable tools yet.
+
+Avoid a general `run_shell(command)` in v1. If included later, restrict it by allowlist, timeout, working directory, and permission policy.
 
 #### Patch application
 
@@ -415,18 +415,15 @@ Application is all-or-nothing: either the whole diff applies and the touched pat
 class ToolResult(BaseModel):
     tool_name: str
     success: bool
-    content: list[ContentPart]       # what the model MAY see
+    content: str = ""                # what the model MAY see
     summary: str                     # one-line; feeds context budgeting
-    details: dict = {}               # event log, UI rendering, state updates, artifacts
-    stdout: str | None = None
-    stderr: str | None = None
-    exit_code: int | None = None
+    error: str | None = None         # set when success is False
+    files_read: list[str] = []
     files_changed: list[str] = []
-    duration_ms: int = 0
     terminate: bool = False          # "ready for verification" (NOT "stop now")
 ```
 
-The `content` / `details` split matters: the model only ever sees `content` (or a summary the context builder chooses); `details`, `stdout`, etc. are retained in the event log and used for rendering, state, and artifacts — without polluting the model's context.
+The `content` boundary matters: the model only ever sees `content` (or a summary/detail excerpt the context builder chooses). Raw command output is captured by `Workspace.run` and surfaced through tool `content` or verifier evidence only when useful, rather than being blindly appended to every prompt.
 
 ### Retry semantics
 
@@ -459,12 +456,14 @@ Explicit numeric tiers, evaluated by a hook before every execution.
 
 Policy considers: workspace boundaries, command allowlist, timeout, network use, credential exposure, reversibility, and whether the action touches files outside the task.
 
-Implemented as an explicit **`before_tool_call` control hook** that the runner `await`s before every execution — *not* a lifecycle-emitter subscriber. The distinction matters (§13): the hook must be able to **block and redirect control flow**, so it returns a decision the runner acts on. Observation events, by contrast, are fire-and-forget and cannot. Keeping permission as a direct awaited call is the right model for the MVP.
+Current MVP: `run_tests` and `run_linter` are implemented at tier 2; `run_formatter` is a planned tier-2 tool, not currently registered.
+
+Implemented as an explicit **before-tool-call control hook** (`PermissionPolicy.check`) that the runner calls before every execution — *not* a lifecycle-emitter subscriber. The distinction matters (§13): the hook must be able to **block and redirect control flow**, so it returns a decision the runner acts on. Observation events, by contrast, are fire-and-forget and cannot. Keeping permission as a direct call is the right model for the MVP; async approval is reserved for the Phase 3 REPL.
 
 ```python
-async def before_tool_call(call: ToolCall, args: BaseModel, state: TaskState) -> ToolPermission:
-    if call.name == "run_shell" and "rm -rf" in getattr(args, "command", ""):
-        return ToolPermission(blocked=True, reason="Dangerous shell command")
+def check(tool: ToolDefinition, raw_input: dict, state: TaskState, ws: Workspace) -> ToolPermission:
+    if tool.permission_tier >= 3:
+        return ToolPermission(blocked=True, ask=True, reason="blocked pending approval")
     return ToolPermission(blocked=False)
 ```
 
@@ -505,9 +504,9 @@ class VerifierResult(BaseModel):
 
 Checks that don't apply to a kind run as `optional` (recorded, never gating). The always-on guards — no edits outside the workspace, no likely secrets — stay `required` for every kind.
 
-**`investigate` is the single read-only kind.** It subsumes pure *explanation* (read → describe) and pure *execution* (run a command → report its output), because all three share one verification contract: the answer must cite real evidence from the log and leave no unintended diff. There is deliberately no separate `explain` or `execute` kind — `task_kind` classifies *how completion is judged*, and these are judged identically. Running a command is therefore a tool *action* inside an `investigate` task, not a kind of its own.
+**`investigate` is the single read-only kind.** It subsumes pure *explanation* (read → describe) and, in the target design, narrow pure *execution* tasks (run an allowed command → report its output), because both share one verification contract: the answer must cite real evidence from the log and leave no unintended diff. Current MVP has read tools for `investigate`; `run_tests`/`run_linter` are registered for edit/verification phases and there is deliberately no general `run_shell`. There is no separate `explain` or `execute` kind — `task_kind` classifies *how completion is judged*, not which individual tool action was used.
 
-**Open edge — non-executable edits.** An `edit` to a file with no tests *and* no meaningful lint/types (docs, a static config, an asset) has no command-based positive signal: tests skip, lint skips, and the verifier may never pass on zero evidence. Such an edit must fall back to a weaker external signal — a diff that parses/validates for its file type, plus the always-on secret/placeholder guard — or, when even that is unavailable, route to human confirmation (`ask_user` → `blocked`). This edge is noted, not yet resolved in the MVP verifier.
+**Open edge — non-executable edits.** An `edit` to a file with no tests *and* no meaningful lint/types (docs, a static config, an asset) has no command-based positive signal: tests skip, lint skips, and the verifier may never pass on zero evidence. Such an edit must fall back to a weaker external signal — a diff that parses/validates for its file type, plus the always-on secret/placeholder guard — or, when even that is unavailable, route to human confirmation (`ask_user` → `blocked`). This edge is known and only partly addressed today: the verifier can use a clean lint command as positive signal when no test target exists, but truly non-executable/non-lintable edits still need a better contract.
 
 `recommended_next_action` turns a failed verification into a useful repair signal rather than a bare rejection. The distinction that separates serious harnesses from demos:
 
@@ -518,12 +517,12 @@ Checks that don't apply to a kind run as `optional` (recorded, never gating). Th
 One structured record per step, append-only JSONL — replay, debugging, audit, and eval data almost for free:
 
 ```json
-{"type":"task_started","goal":"Fix failing auth test"}
-{"type":"tool_call","tool":"search_repo","input":{"query":"test_auth"}}
-{"type":"tool_result","success":true,"summary":"Found tests/test_auth.py"}
-{"type":"patch_applied","files":["auth/session.py"]}
-{"type":"verification","passed":true,"commands":["pytest tests/test_auth.py"]}
-{"type":"task_finished","status":"success"}
+{"type":"agent_start","goal":"Fix failing auth test"}
+{"type":"turn_start","iteration":1}
+{"type":"model_decision","action_type":"tool_call","action":"search_repo({'query':'test_auth'})"}
+{"type":"tool_execution_end","tool":"search_repo","success":true,"summary":"found matches"}
+{"type":"verification_end","passed":true,"summary":"edit verified"}
+{"type":"agent_end","outcome":"success"}
 ```
 
 **A minimal lifecycle emitter handles observation.** The runner emits typed in-process events; subscribers react. Crucially, these are **observation-only**: subscribers are synchronous, fire-and-forget, and *cannot* block or redirect the loop. The **EventLog** is a subscriber; so is the CLI display, and a future UI.
@@ -533,10 +532,10 @@ This is a deliberate, narrow line — do **not** route control through the emitt
 | Concern | Mechanism | Why |
 | --- | --- | --- |
 | Logging, display | Observation event (sync, fire-and-forget) | Reacts to what happened; never alters it |
-| Permission gate (§11) | `before_tool_call` **control hook** (awaited) | Must block / redirect execution |
-| Context build + compaction (§9) | Explicit awaited runner step | Must transform the packet before the model call |
+| Permission gate (§11) | `PermissionPolicy.check` **control hook** | Must block / redirect execution |
+| Context build + compaction (§9) | Explicit runner step | Must transform the packet before the model call |
 
-Conflating the two — making the permission gate an "event subscriber" — is the trap: an observer that can silently veto execution is neither observable nor predictable. Control hooks are awaited function calls with return values; events are notifications.
+Conflating the two — making the permission gate an "event subscriber" — is the trap: an observer that can silently veto execution is neither observable nor predictable. Control hooks are function calls with return values; events are notifications.
 
 MVP event types:
 
@@ -544,17 +543,19 @@ MVP event types:
 | ---------------------------------------------- | ------------------------------------------------ |
 | `agent_start` / `agent_end`                    | A run began / ended (success/incomplete/blocked/failed). |
 | `turn_start` / `turn_end`                      | One model/tool iteration started / ended.        |
-| `context_built`                                | A context packet was assembled.                  |
-| `message_start` / `message_update` / `message_end` | Model response lifecycle (streaming deltas). |
-| `tool_call_blocked`                            | A proposed call was denied by the permission gate (carries the reason). |
-| `tool_execution_start` / `_update` / `_end`    | Tool execution lifecycle (with progress).        |
+| `model_decision`                               | The model's thought summary and selected action. |
+| `decision_error`                               | A malformed model decision was fed back for repair. |
+| `permission_blocked`                           | A proposed call was denied by the permission gate (carries the reason). |
+| `tool_execution_end`                           | Tool execution result, including input, summary, and bounded content/error. |
 | `verification_start` / `verification_end`      | Verifier checks ran.                             |
 
-Keep the emitter deliberately small: synchronous handlers, a fixed event list, no dynamic plugin loading. The goal is decoupling, not a general extension framework. A human-readable, file-only session log runs underneath for traces; the JSONL is the machine trace.
+Streaming lifecycle events (`message_start` / `message_update` / `message_end`) and progress updates (`tool_execution_start` / `_update`) are Phase 3 UI work, not current MVP behavior.
+
+Keep the emitter deliberately small: synchronous handlers, a fixed event list, no dynamic plugin loading. The goal is decoupling, not a general extension framework. The JSONL event log is the machine trace; a separate human-readable session log is optional later UI work.
 
 ## 14. Artifact output
 
-The final artifact includes: status (`success` / `incomplete` / `blocked` / `failed`), a short change summary, files changed, commands run, verification results, remaining risks or skipped checks, and a patch/diff reference.
+The final artifact includes: status (`success` / `incomplete` / `blocked` / `failed`), a short answer/change summary, files changed, commands run, verification summaries, and a patch/diff reference.
 
 ```text
 Status: success
@@ -577,7 +578,7 @@ The MVP runs inside a local workspace; the design leaves room for stronger isola
 MVP safeguards:
 
 - Operate only inside a configured workspace root; refuse edits outside it.
-- Require a clean (or explicitly acknowledged dirty) git state before starting, and **pin that HEAD as the diff baseline**. `Workspace.diff()` compares the working tree against this pinned baseline (not the git index), so the task's delta is well-defined and a stray `git add` cannot hide a change. The harness **never commits** — the uncommitted diff is the deliverable (verification reads it; a human applies it).
+- Require a clean (or explicitly acknowledged dirty) tracked git state before starting, and **pin that HEAD as the diff baseline**. Untracked files are ignored by the clean-start guard because they do not affect `git diff <baseline>`. `Workspace.diff()` compares the working tree against this pinned baseline (not the git index), so the task's delta is well-defined and a stray `git add` cannot hide a change. The harness **never commits** — the uncommitted diff is the deliverable (verification reads it; a human applies it).
 - Track all modified files via `state.files_modified` (a git-independent ledger the runner maintains as `apply_patch` runs); every edit is an inspectable diff (reversibility).
 - Command timeouts; capture stdout/stderr; avoid network by default.
 
@@ -603,7 +604,7 @@ Agents fail constantly; the harness expects it.
 | Model-correctable error | Feed the error back; model retries (§10)               |
 | System failure       | Surface it; do **not** auto-retry (§10)                   |
 | Verification fail    | Repair loop with `recommended_next_action` (§12)          |
-| Bad patch            | Revert the diff via the workspace                         |
+| Bad patch            | `git apply --check` fails before write; nothing is applied |
 | Looping              | Max-consecutive-failures + iteration budget → `incomplete` |
 | Missing context      | Context builder retrieves more next turn                  |
 | Low confidence       | Model emits `ask_user` → answered or `blocked`            |
@@ -616,25 +617,24 @@ src/avatar_harness/
   __init__.py
   cli.py
   config.py
-  runner.py          # AgentRunner: the loop, budgets, phase transitions
+  runner.py          # AgentRunner: the loop, budgets, gate consult
   state.py           # TaskState, Evidence, DecisionRecord
-  context.py         # ContextBuilder + compaction hook
-  model_client.py    # constrained decision protocol, streaming, delta assembly
-  permissions.py     # tiers + before_tool_call hook
+  context.py         # ContextBuilder compact per-turn packet
+  model_client.py    # constrained decision protocol, OpenAI-compatible client
+  permission.py      # tiers + before-tool-call hook
   verifier.py        # composite gate + checks
   events.py          # lifecycle emitter
   eventlog.py        # JSONL subscriber
-  artifacts.py       # ArtifactManager
+  artifact.py        # ArtifactManager
   deps.py            # RunDeps, CancellationToken
-  workspace.py       # tracked workspace, path confinement, diff/rollback
+  workspace.py       # tracked workspace, path confinement, diff, atomic patching
   tools/
     __init__.py
     base.py          # ToolDefinition, ToolResult, registry
     filesystem.py    # read_file, list_files
     search.py        # search_repo
-    patch.py         # apply_patch
-    shell.py         # run_tests, run_linter (cancellable subprocess)
-    git.py           # git_status, git_diff
+    edit.py          # apply_patch
+    commands.py      # run_tests, run_linter
 ```
 
 ## 18. Reusable plumbing to lift
@@ -644,10 +644,10 @@ src/avatar_harness/
 | Pattern (from `cli_chat/`)                                   | Reuse for                                              |
 | ------------------------------------------------------------ | ------------------------------------------------------ |
 | Cancellation race (`asyncio.wait(FIRST_COMPLETED)`)          | Per-tool timeouts and instant cancel of test/shell runs |
-| Streaming + tool-call delta reassembly                       | `model_client.py`                                      |
+| Streaming + tool-call delta reassembly                       | `model_client.py` (deferred until streaming support)   |
 | LLM-valid history construction (`tool_call_id` pairing)      | Deriving model messages from `TaskState`               |
 | Pydantic settings, vendor-agnostic OpenAI-compatible client  | `config.py`, `model_client.py`                         |
-| File-only session logging scaffold                           | The human-readable trace under the JSONL log           |
+| File-only session logging scaffold                           | The human-readable trace under the JSONL log (optional later) |
 
 These are the parts that are tedious to get right and already debugged — inheriting them is the one real advantage of building adjacent to the existing project.
 
@@ -655,7 +655,9 @@ These are the parts that are tedious to get right and already debugged — inher
 
 [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`) is a mature open-source terminal coding harness that independently arrived at much of this shape. We copy its low-level mechanics, not its product shape.
 
-**Adopt:** `content` vs `details` tool results · `AbortSignal`/cancellation into every tool · `on_update` progress callback · tools self-describing prompt contributions · the lifecycle event emitter (observation only) · `before_tool_call` / `after_tool_call` **control hooks** (awaited, distinct from the emitter — §13) · tool registry with phase/capability-based active selection.
+**Adopt:** model-visible `content` separated from event/artifact detail · cancellation tokens for commands and future interactive aborts · the lifecycle event emitter (observation only) · a before-tool-call control hook distinct from the emitter (§13) · tool registry with phase/capability-based active selection.
+
+**Still deferred from Pi's shape:** `after_tool_call` hooks, streaming `on_update` callbacks, richer per-tool prompt contributions, and an extension/plugin system.
 
 **Adapt (diverge deliberately):** Pi is message-centric (`state.messages` is truth) — we keep `TaskState` primary and derive messages. Pi's `terminate: true` ends the loop — we route it through the verifier. Pi compacts via a `compactionSummary` message — we compact `evidence` in structured state.
 
@@ -667,22 +669,22 @@ These are the parts that are tedious to get right and already debugged — inher
 
 Order chosen so each step plugs into the previous:
 
-1. CLI task intake + config loading.
-2. `TaskState`.
-3. JSONL `EventLog` + lifecycle emitter.
-4. `Workspace` (path confinement, modified-file tracking, diff/rollback, command exec) + `RunDeps`. *Tools depend on this — build it before any tool.*
-5. Read-only tools: `search_repo`, `list_files`, `read_file`, `git_status`, `git_diff`.
-6. `PermissionPolicy` (tiers + `before_tool_call` hook). *Build before any side-effecting tool.*
-7. `apply_patch` under the permission gate.
-8. Bounded `run_tests` and `run_linter`.
-9. `ModelClient` with the constrained decision protocol.
-10. `AgentRunner` loop with budgets.
-11. `Verifier`.
-12. `ArtifactManager` final summary.
+1. CLI task intake + config loading. **[Implemented]**
+2. `TaskState`. **[Implemented]**
+3. JSONL `EventLog` + lifecycle emitter. **[Implemented]**
+4. `Workspace` (path confinement, modified-file tracking, diff, atomic patching, command exec) + `RunDeps`. *Tools depend on this — build it before any tool.* **[Implemented]**
+5. Read-only tools: `search_repo`, `list_files`, `read_file`. **[Implemented]** (`git_status`/`git_diff` are still deferred as model-callable tools.)
+6. `PermissionPolicy` (tiers + before-tool-call hook). *Build before any side-effecting tool.* **[Implemented]**
+7. `apply_patch` under the permission gate. **[Implemented]**
+8. Bounded `run_tests` and `run_linter`. **[Implemented]**
+9. `ModelClient` with the constrained decision protocol. **[Implemented]**
+10. `AgentRunner` loop with budgets. **[Implemented]**
+11. `Verifier`. **[Implemented]**
+12. `ArtifactManager` final summary. **[Implemented]**
 
 ### MVP success criteria
 
-The first useful version can: accept a natural-language task; inspect relevant files; apply a small patch; run at least one verifier command; stop after bounded attempts; produce a clear summary with changed files and evidence; and leave an event log that explains what happened.
+The first useful version can: accept a natural-language task; inspect relevant files; apply a small patch; run at least one verifier command; stop after bounded attempts; produce a clear summary with changed files and evidence; and leave an event log that explains what happened. This engine is now implemented through Phase 2; CLI intake still defaults to `investigate` until interactive/edit classification work lands.
 
 > The 12 steps above order the *engine* components. The interactive terminal session that wraps them (§23) is built as a later phase. `PROGRESS.md` holds the authoritative phased build plan — grouped into demonstrable, test-gated milestones — and the live status; this section is the component-level decomposition it draws from.
 
@@ -754,7 +756,7 @@ while True:
     state.seed_from_history(session.history)     # conversational context becomes initial evidence
     artifact = runner.run(state, ws, deps)       # the §5 loop, verbatim — no changes
     session.tasks.append(state)
-    session.history.append(Turn(role="agent", text=artifact.answer, task_id=state.task_id))
+    session.history.append(Turn(role="agent", text=artifact.summary, task_id=state.task_id))
     ui.render(artifact)
 ```
 
