@@ -8,6 +8,7 @@ from avatar_harness.model_client import (
     AskUser,
     DecisionParseError,
     FinalAnswer,
+    ModelClient,
     ModelDecision,
     ToolCall,
 )
@@ -21,7 +22,7 @@ from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
 
-class ScriptedModel:
+class ScriptedModel(ModelClient):
     """A ModelClient that replays pre-built decisions; repeats the last when exhausted."""
 
     def __init__(self, decisions: list[ModelDecision]) -> None:
@@ -108,7 +109,7 @@ def test_runner_emits_model_decisions(tmp_path, read_registry):
     assert "read_file" in logged[0]["action"]
 
 
-class _RaisingModel:
+class _RaisingModel(ModelClient):
     """A ModelClient whose decisions never parse — exercises recovery (§6)."""
 
     def decide(self, context: object) -> ModelDecision:

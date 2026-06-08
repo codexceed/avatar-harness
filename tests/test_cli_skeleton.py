@@ -5,7 +5,7 @@ import pytest
 from avatar_harness.cli import main, run_agent, run_echo
 from avatar_harness.config import HarnessConfig
 from avatar_harness.events import Emitter
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
 from avatar_harness.workspace import DirtyWorkspaceError
 
 _FIX = (
@@ -13,14 +13,14 @@ _FIX = (
 )
 
 
-class _OneShotModel:
+class _OneShotModel(ModelClient):
     """A ModelClient that answers immediately — enough to exercise CLI wiring."""
 
     def decide(self, context: object) -> ModelDecision:
         return ModelDecision(action=FinalAnswer(answer="done"))
 
 
-class _ScriptedModel:
+class _ScriptedModel(ModelClient):
     """Replays a fixed decision sequence; repeats the last when exhausted."""
 
     def __init__(self, decisions: list[ModelDecision]) -> None:
