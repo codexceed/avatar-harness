@@ -11,42 +11,16 @@ resolves inside the workspace) · 2 commands (allow) · 3+ destructive / externa
 """
 
 from collections.abc import Sequence
-from fnmatch import fnmatch
-from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ValidationError
 
 from avatar_harness.config import DEFAULT_SENSITIVE_PATH_GLOBS
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition
-from avatar_harness.workspace import Workspace
+from avatar_harness.workspace import Workspace, path_is_sensitive
 
 _ASK_TIER = 3  # tier at and above which an action is gated (ask/block).
 _EDIT_TIER = 1  # the mutation tier (apply_patch) — blocked for read-only investigate tasks.
-
-
-def _path_is_sensitive(rel_path: str, globs: Sequence[str]) -> bool:
-    """Whether `rel_path` matches any denylist glob (§11, Phase 2.5).
-
-    A pattern *without* a slash matches any single path component (gitignore-style
-    "match anywhere" — so ``.env`` hits ``a/b/.env`` and ``.ssh`` hits ``.ssh/id_rsa``).
-    A pattern *with* a slash is matched against the whole relative path.
-
-    Args:
-        rel_path: The workspace-relative path to test.
-        globs: The denylist patterns.
-
-    Returns:
-        `True` if any pattern matches, else `False`.
-    """
-    parts = PurePosixPath(rel_path).parts
-    for glob in globs:
-        if "/" in glob:
-            if fnmatch(rel_path, glob):
-                return True
-        elif any(fnmatch(part, glob) for part in parts):
-            return True
-    return False
 
 
 class ToolPermission(BaseModel):
@@ -131,7 +105,7 @@ class PermissionPolicy:
         outside = sorted(p for p in paths if not ws.contains(p))
         if outside:
             return ToolPermission(blocked=True, reason=f"path(s) resolve outside the workspace: {outside}")
-        sensitive = sorted(p for p in paths if _path_is_sensitive(p, self._sensitive))
+        sensitive = sorted(p for p in paths if path_is_sensitive(p, self._sensitive))
         if sensitive:
             # Treated like a tier-3 gate: blocked now, an `ask` once the REPL lands (Phase 3).
             return ToolPermission(

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
-from avatar_harness.workspace import PathOutsideWorkspaceError
+from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathError
 
 # Repo inspection is available in every phase ("always", §21 capability groups).
 _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
@@ -28,6 +28,9 @@ def _read_file(args: ReadFileInput, deps: RunDeps) -> ToolResult:
         return ToolResult(tool_name="read_file", success=False, error=f"file not found: {args.path}")
     except PathOutsideWorkspaceError:
         return ToolResult(tool_name="read_file", success=False, error=f"path outside workspace: {args.path}")
+    except SensitivePathError as exc:
+        # Defense in depth: refused even without the gate (and on the symlink-resolved target).
+        return ToolResult(tool_name="read_file", success=False, error=f"sensitive path refused: {exc}")
     return ToolResult(
         tool_name="read_file",
         success=True,

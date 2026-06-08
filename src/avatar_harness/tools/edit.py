@@ -9,7 +9,12 @@ from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
-from avatar_harness.workspace import PatchError, PathOutsideWorkspaceError, _parse_patch_targets
+from avatar_harness.workspace import (
+    PatchError,
+    PathOutsideWorkspaceError,
+    SensitivePathError,
+    _parse_patch_targets,
+)
 
 # Editing is active only once the agent has moved into the editing phase (§21).
 _EDIT_PHASES = frozenset({"editing"})
@@ -27,6 +32,9 @@ def _apply_patch(args: ApplyPatchInput, deps: RunDeps) -> ToolResult:
     except PathOutsideWorkspaceError as exc:
         # A path escape is a system-level refusal, not a stale-context retry — surface it.
         return ToolResult(tool_name="apply_patch", success=False, error=f"path outside workspace: {exc}")
+    except SensitivePathError as exc:
+        # A patch targeting a denylisted file is refused at the workspace (defense in depth).
+        return ToolResult(tool_name="apply_patch", success=False, error=f"sensitive path refused: {exc}")
     except PatchError as exc:
         # Stale context is model-correctable: the model re-reads and retries (§10).
         return ToolResult(tool_name="apply_patch", success=False, error=f"patch did not apply: {exc}")
