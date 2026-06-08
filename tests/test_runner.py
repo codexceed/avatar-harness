@@ -260,9 +260,7 @@ def test_repair_budget_exhaustion_yields_failed(git_repo):
 # --- Phase 2.6 Lane A: phase advance/enforce + budgets + cancellation ----
 
 # A new-file hunk: creates `greeter.py` from nothing — no read precedes it (pure creation).
-_NEW_FILE = (
-    "--- /dev/null\n+++ b/greeter.py\n@@ -0,0 +1,2 @@\n+def greet():\n+    return \"hi\"\n"
-)
+_NEW_FILE = '--- /dev/null\n+++ b/greeter.py\n@@ -0,0 +1,2 @@\n+def greet():\n+    return "hi"\n'
 
 
 def _runner_with_token(
@@ -294,7 +292,7 @@ def test_phase_advances_to_editing_on_first_edit_intent(git_repo):
 
 def test_pure_creation_from_bare_workspace_succeeds(git_repo):
     # A new-file hunk applies with ZERO reads — the creation case a `>=1 read` trigger kills.
-    test_cmd = 'python -c "import greeter; assert greeter.greet() == \'hi\'"'
+    test_cmd = "python -c \"import greeter; assert greeter.greet() == 'hi'\""
     decisions = [
         ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _NEW_FILE})),
         ModelDecision(action=FinalAnswer(answer="created greeter.py with greet()")),
@@ -333,9 +331,9 @@ def test_phase_changed_emitted_on_transition(git_repo):
     emitter = Emitter()
     emitter.subscribe(events.append)
     state = TaskState(goal="fix add()", task_kind="edit")
-    _runner(git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="", emitter=emitter).run(
-        state
-    )
+    _runner(
+        git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="", emitter=emitter
+    ).run(state)
     changes = [e for e in events if e["type"] == "phase_changed"]
     assert changes  # at least one transition emitted
     assert {e["new"] for e in changes} >= {"editing"}  # advanced into editing
@@ -368,10 +366,17 @@ def test_repair_falls_back_to_editing(git_repo):
     emitter.subscribe(events.append)
     state = TaskState(goal="fix add()", task_kind="edit")
     _runner(
-        git_repo, _edit_registry(), decisions, test_command=failing, lint_command="",
-        max_repair_attempts=2, emitter=emitter,
+        git_repo,
+        _edit_registry(),
+        decisions,
+        test_command=failing,
+        lint_command="",
+        max_repair_attempts=2,
+        emitter=emitter,
     ).run(state)
-    assert any(e["old"] == "verifying" and e["new"] == "editing" for e in events if e["type"] == "phase_changed")
+    assert any(
+        e["old"] == "verifying" and e["new"] == "editing" for e in events if e["type"] == "phase_changed"
+    )
 
 
 def test_wall_clock_budget_yields_incomplete(git_repo):
