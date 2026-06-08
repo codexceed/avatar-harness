@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. Next: **Phase 2.6** (pre-Phase-3 hardening — 4 parallelizable lanes), then **Phase 3** (async engine · durable execution · TUI cockpit — ADR-0001).
+> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. **Phase 2.6 ✅ complete 2026-06-09** (135/135 green; `make check` clean) — built by a **4-lane worktree-isolated agents team**: tool-failure isolation, real phase advance/enforce, honored budgets + cancellation, public `Harness` facade, neutral model boundary (`openai` now an optional extra). Next: **Phase 3** (async engine · durable execution · TUI cockpit — ADR-0001).
 
 ## How to use this file
 
@@ -219,6 +219,8 @@ Replace `ContextBuilder`'s fixed `evidence[-5:]` slice with a char/token budget 
 
 ## Phase 2.6 — Pre-Phase-3 hardening (extensibility + enforcement)
 
+**Implemented 2026-06-09** on branch `feat/phase-2.6-hardening` — 4 worktree-isolated agents (one per lane), each TDD red→green in isolation; merged clean (disjoint files); combined `make check` **135/135** green. One merge-integration fix (a Harness seam test's injected policy had to subclass `PermissionPolicy` for the hard pyrefly gate). All lane test lists below landed green.
+
 The high/medium-impact items from the core-library assessment (`docs/core-assessment.html`, cross-validated by Codex gpt-5.4/xhigh). Two motivations: (1) **enforcement** — turn declared-but-dead control axes into real ones (assessment thesis: *abstractions ahead of enforcement*); (2) these are **prerequisites** the ADR-0001 async/durable migration needs anyway (tool-failure isolation, real phase advancement, consumed budgets/cancellation). The facade + model boundary close the "extensible importable core" gaps.
 
 **Parallelizable into 4 disjoint-file lanes** (clean for a worktree-isolated agents team). The enabling design choice: **phase enforcement lives in the runner** — consult `tool.phases` vs `state.phase` before `execute`, mirroring the permission-gate consult — so it stays out of `tools/base.py` and frees the tool-isolation lane. With that, the four lanes touch **disjoint files** and merge without conflict.
@@ -261,12 +263,12 @@ The high/medium-impact items from the core-library assessment (`docs/core-assess
 - [ ] `test_custom_model_client_runs_end_to_end` (provider fully swappable; prompt contract behind the adapter)
 
 **Exit criteria**
-- [ ] a third-party tool that raises can't crash a run (returns a failed `ToolResult`)
-- [ ] `state.phase` advances `investigating → editing → verifying`, emits `phase_changed`, and an out-of-phase tool call is refused at execution
-- [ ] wall-clock/context budgets and the cancellation token are honored by the loop (→ `incomplete`)
-- [ ] `from avatar_harness import Harness` runs a task in ≤3 lines; the CLI delegates to the same facade
-- [ ] the default model adapter is provider- and kind-neutral; `openai` is an optional extra
-- [ ] all lanes green · `make check` clean
+- [x] a third-party tool that raises can't crash a run (returns a failed `ToolResult`)
+- [x] `state.phase` advances `investigating → editing → verifying`, emits `phase_changed`, and an out-of-phase tool call is refused at execution
+- [x] wall-clock/context budgets and the cancellation token are honored by the loop (→ `incomplete`)
+- [x] `from avatar_harness import Harness` runs a task in ≤3 lines; the CLI delegates to the same facade
+- [x] the default model adapter is provider- and kind-neutral; `openai` is an optional extra
+- [x] all lanes green · `make check` clean
 
 ## Phase 3 — Interactive cockpit (async engine · durable execution · TUI)
 
