@@ -107,6 +107,28 @@ def test_search_repo_excludes_sensitive_files(git_repo):
     assert "server.pem" not in result.content  # the secret file is excluded
 
 
+def test_search_exclusion_uses_canonical_matcher(git_repo):
+    # ripgrep's `-g` globs and `path_is_sensitive` diverge on slash patterns (fnmatch's
+    # `*` crosses `/`, gitignore's does not). search_repo must defer to the canonical
+    # matcher so its exclusions agree with the gate/workspace for the same config list.
+    nested = git_repo / "a" / "b"
+    nested.mkdir(parents=True)
+    (nested / "x.pem").write_text("S=sk-zzz\n", encoding="utf-8")
+    (git_repo / "ok.py").write_text("S = 'sk-zzz'\n", encoding="utf-8")
+    cfg = HarnessConfig(sensitive_path_globs=["a/*.pem"])
+    deps = RunDeps(
+        workspace=Workspace(git_repo, sensitive_path_globs=cfg.sensitive_path_globs),
+        config=cfg,
+        cancellation=CancellationToken(),
+    )
+    reg = ToolRegistry()
+    reg.register(search_repo)
+    result = ToolRuntime(reg, deps).execute("search_repo", {"query": "sk-zzz"})
+    assert result.success
+    assert "ok.py" in result.content
+    assert "a/b/x.pem" not in result.content  # canonical matcher excludes it; rg's -g would not
+
+
 # --- defense in depth: the workspace refuses sensitive RESOLVED paths ----------
 # The gate alone is single-layer (bypassed by a non-gated caller) and checks the
 # *requested* path, not the resolved one — so a symlink launders the secret. The
