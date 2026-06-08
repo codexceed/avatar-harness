@@ -38,6 +38,16 @@ uv run pytest tests/test_x.py::test_name   # run a single test
 
 External runtime requirement: `ripgrep` (`rg`) must be on `PATH` — the `search_repo` tool shells out to it.
 
+## Contributing: branches, commits, PRs
+
+- **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>)>: <subject>`, e.g. `feat(events): stamp ts at emit time`.
+- **Branch names** use `<type>/<issue-id>-<description>`, e.g. `fix/42-stale-patch-context`. When the work tracks a GitHub issue, put the issue number in the branch name. If a new branch isn't being created (or the issue number isn't in the name), tag the issue in the PR body instead.
+- **PR descriptions** must contain these sections, in this order:
+  1. **Description** — brief on what the changes are about.
+  2. **Motivation** — why we're doing this.
+  3. **Changes** — list of changes.
+  4. **Testing** — list of tests and validations.
+
 ## Architecture: what requires reading multiple files to understand
 
 This is a **coding-agent harness**, not a chat app. The defining inversion: *the model proposes actions; the harness owns execution, state, permissions, logging, and verification.* The loop terminates on **external verification**, not on a text reply from the model.
