@@ -73,7 +73,7 @@ flowchart TD
     class SESS,CLI,R,CB,MC,TR,PP,V,AM,UI,WS todo;
 ```
 
-> Status note: as of **Phase 2**, the whole non-interactive engine is **[Implemented]** — the read-only loop *and* the closing edit path (`apply_patch` under the permission gate, the external-evidence `Verifier`, the `ArtifactManager`). What remains **[Designed]** is the interactive `Session`/REPL (`§23`, Phase 3) and §21 extensions. Two engine refinements are still open: the runner does not yet *advance* `phase` (tools are registered phase-gated but exposure isn't gated by progress), and a live-model dogfood is pending a configured endpoint.
+> Status note: as of **Phase 2**, the whole non-interactive engine is **[Implemented]** and wired end-to-end through `cli.main` — the read-only loop *and* the closing edit path (`apply_patch` under the permission gate, the external-evidence `Verifier`, the `ArtifactManager`), dogfooded live (an investigate task answered a real repo question and verified `success`). What remains **[Designed]** is the interactive `Session`/REPL (`§23`, Phase 3) and §21 extensions. Two live boundaries: the runner does not yet *advance* `phase` — tool *availability* is enforced by `task_kind` instead (an investigate task is blocked from `apply_patch` at the gate), with automated `investigating → editing → verifying` transitions deferred to Phase 3; and intake does not yet classify a free-text goal into a `task_kind` (the CLI runs `investigate` by default or takes an explicit kind).
 
 | Component | Role | Status |
 | --- | --- | --- |
@@ -328,7 +328,7 @@ What exists in `src/avatar_harness/` today (through Phase 2):
 | `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command`) | `§8` config |
 | `state.py` | `TaskState` + `Evidence` / `DecisionRecord` / `CommandRecord` / `CheckResult` / `VerifierResult`; `terminal`, `add_feedback`, `block` | `§7`, `§12` data shapes |
 | `events.py` · `eventlog.py` | `Emitter` (observation-only) + `EventLog` (JSONL subscriber) | `§13` |
-| `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --check`), bounded `run`, clean-start assertion | `§8`, `§10`, `§15` |
+| `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log`, clean-start assertion | `§8`, `§10`, `§15` |
 | `deps.py` | `RunDeps`, `CancellationToken` — run-scoped, no globals | `§8` |
 | `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime`), `filesystem`, `search`, `edit` (`apply_patch`), `commands` (`run_tests`/`run_linter`) | `§10` |
 | `permission.py` | `PermissionPolicy` + `ToolPermission` — the synchronous `before_tool_call` gate | `§11` |
@@ -336,7 +336,7 @@ What exists in `src/avatar_harness/` today (through Phase 2):
 | `context.py` | `ContextBuilder` + `ContextPacket` — compact, phase-gated per-turn packet | `§9` |
 | `verifier.py` | `Verifier` — `investigate`/`edit`/`test_only` gates; runs its own verification command | `§12` |
 | `artifact.py` | `ArtifactManager` + `Artifact` — `status = state.outcome`, files/commands/verification/diff | `§14` |
-| `runner.py` | `AgentRunner` — the §5 loop; runner-owned mutation; gate consult; bounding | `§5`, `§8` |
-| `cli.py` | `run_agent` (real loop) + `run_echo` (Phase 0 skeleton) + `main()` | `§5`/`§23` shell |
+| `runner.py` | `AgentRunner` — the §5 loop; runner-owned mutation; gate consult; bounding; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
+| `cli.py` | `run_agent` (real loop, takes `task_kind`) + `main()` reporting through `ArtifactManager` (+ `run_echo` Phase 0 skeleton) | `§5`/`§23` shell |
 
 Remaining **[Designed]**: the interactive `Session`/REPL (`§17`/`§23`, Phase 3), the `ContextBuilder` compaction hook, automated `phase` transitions, and §21 extensions.
