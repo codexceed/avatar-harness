@@ -82,13 +82,13 @@ uv run avatar-harness "where does the agent loop terminate, and what sets outcom
 make run TASK="explain how apply_patch stays atomic"
 ```
 
-It prints a timestamped event trajectory as it works (`[model_decision] … [tool_execution_end] … [verification_end]`), then a `Status:` line and the cited answer. The full run is also written to a JSONL event log for replay/debugging.
+It prints a timestamped event trajectory as it works (`[model_decision] … [tool_execution_end] … [verification_end]`), then a `Status:` line and the cited answer. The full run is also written to a JSONL event log for replay/debugging. Every event carries a `session_id` identifying the run, so a log can always be grouped back into its sessions.
 
 **Flags:**
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--log PATH` | `events/session.jsonl` | Where to write the append-only JSONL event log. |
+| `--log PATH` | `events/<session_id>.jsonl` | Where to write the append-only JSONL event log. By default each run gets its own per-session file, and `events/latest.jsonl` points at the newest. Pass an explicit path to write there instead (no `latest` pointer is maintained for explicit paths). |
 | `--allow-dirty` | off | Run despite uncommitted **tracked** changes in the workspace. |
 
 **Clean-tree note.** The workspace pins git `HEAD` as its diff baseline, so by default it refuses to start on a tree with uncommitted *tracked* changes (untracked files are ignored). Commit/stash first, pass `--allow-dirty` to acknowledge them, or point `AVATAR_WORKSPACE_ROOT` at a clean checkout. For an `investigate` task, pre-existing tracked changes will cause verification to refuse `success` (they look like an unintended diff) — so a clean tree gives the cleanest result.

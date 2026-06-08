@@ -6,10 +6,12 @@ shell over the loop — wiring components and event subscribers, nothing more.
 """
 
 import argparse
+import contextlib
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -102,7 +104,7 @@ def run_agent(
 def _print_event(event: Event) -> None:
     parts = []
     for key, value in event.items():
-        if key in ("type", "ts"):  # rendered as the line prefix, not inline
+        if key in ("type", "ts", "session_id"):  # prefix/grouping keys, not inline noise
             continue
         text = str(value).replace("\n", " ")
         if len(text) > _EVENT_VALUE_WIDTH:
@@ -146,6 +148,41 @@ def _report(state: TaskState, config: HarnessConfig) -> str:
     return manager.render(manager.build(state, ws))
 
 
+def _resolve_log_path(arg: str | None, session_id: str) -> Path:
+    """Pick the event-log path: an explicit `--log`, else a per-session default.
+
+    The default `events/<session_id>.jsonl` makes one session one file — grouping is
+    physical and the filename is self-identifying — instead of appending every run to a
+    shared static log that must be filtered apart.
+
+    Args:
+        arg: The `--log` value, or `None` to use the per-session default.
+        session_id: This run's id, used to name the default log.
+
+    Returns:
+        The resolved log path.
+    """
+    if arg is not None:
+        return Path(arg)
+    return Path("events") / f"{session_id}.jsonl"
+
+
+def _update_latest_pointer(log_path: Path) -> None:
+    """Point `latest.jsonl` at this run's log so the newest session is always reachable.
+
+    Best-effort: a platform without symlink support (or a permission error) just leaves
+    the per-session log — the pointer is a convenience, not the source of truth.
+
+    Args:
+        log_path: This run's per-session log file.
+    """
+    pointer = log_path.parent / "latest.jsonl"
+    with contextlib.suppress(OSError):
+        if pointer.is_symlink() or pointer.exists():
+            pointer.unlink()
+        pointer.symlink_to(log_path.name)
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -169,7 +206,11 @@ def main(
         description="A bounded, verifiable coding-agent harness.",
     )
     parser.add_argument("task", help="The natural-language task to run.")
-    parser.add_argument("--log", default="events/session.jsonl", help="Path to the JSONL event log.")
+    parser.add_argument(
+        "--log",
+        default=None,
+        help="Path to the JSONL event log (default: events/<session_id>.jsonl + a latest.jsonl pointer).",
+    )
     parser.add_argument(
         "--allow-dirty",
         action="store_true",
@@ -178,8 +219,10 @@ def main(
     args = parser.parse_args(argv)
 
     config = config or HarnessConfig()
-    emitter = Emitter()
-    emitter.subscribe(EventLog(Path(args.log)))
+    session_id = uuid4().hex
+    log_path = _resolve_log_path(args.log, session_id)
+    emitter = Emitter(session_id=session_id)
+    emitter.subscribe(EventLog(log_path))
     emitter.subscribe(_print_event)
 
     try:
@@ -199,6 +242,13 @@ def main(
             file=sys.stderr,
         )
         return 2
+
+    # Swing the pointer only after the run has actually produced the per-session log:
+    # a run that aborts before the first event (e.g. the dirty-workspace path) never
+    # creates the file, so updating the pointer eagerly would leave latest.jsonl
+    # dangling and lose the pointer to the last usable session log.
+    if args.log is None:  # only the managed per-session layout maintains the pointer
+        _update_latest_pointer(log_path)
 
     print("\n" + _report(state, config))
     return 0 if state.outcome == "success" else 1
