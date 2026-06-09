@@ -26,6 +26,7 @@ from avatar_harness.event_types import (
     ToolEnd,
     ToolStart,
 )
+from avatar_harness.tui.modals import ApprovalChoice, ApprovalModal
 
 
 class CockpitApp(App):
@@ -90,6 +91,8 @@ class CockpitApp(App):
             self.query_one("#prompt", Input).disabled = True  # a run is active
         elif isinstance(event, PhaseChanged):
             self.phase = event.new
+        elif isinstance(event, ApprovalRequested):
+            self._prompt_approval(event)  # announce → modal → resolve_approval (control plane)
         elif isinstance(event, AgentEnd):
             self.outcome = event.outcome
             self.query_one("#prompt", Input).disabled = False  # ready for the next goal
@@ -98,6 +101,28 @@ class CockpitApp(App):
         if line is not None:
             self.rendered.append(line)
             self.query_one("#transcript", RichLog).write(line)
+
+    def _prompt_approval(self, event: ApprovalRequested) -> None:
+        """Pop the approval modal for a gated call and route the choice to the control plane.
+
+        The event only *announces* the need; the decision returns through
+        `session.resolve_approval`, never the event stream (§13).
+
+        Args:
+            event: The `ApprovalRequested` event to surface.
+        """
+        modal = ApprovalModal(tool=event.tool, reason=event.reason, tool_input=event.input)
+
+        def _resolve(choice: ApprovalChoice | None) -> None:
+            if choice is None:
+                return
+            self.run_worker(
+                self._session.resolve_approval(  # type: ignore[attr-defined]
+                    event.approval_id, allow=choice.allow, remember=choice.remember
+                )
+            )
+
+        self.push_screen(modal, _resolve)
 
     def _format(self, event: HarnessEvent) -> str | None:  # noqa: PLR0911 — a flat per-event switch
         """The transcript line for an event, or `None` for events shown only in the status bar.
