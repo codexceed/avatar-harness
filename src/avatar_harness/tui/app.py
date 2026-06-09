@@ -10,9 +10,11 @@ The app tracks its rendered transcript lines and status fields as plain attribut
 `App.run_test()` without snapshotting the rendered screen.
 """
 
+import asyncio
 from collections.abc import Callable, Iterator
 
 from textual.app import App
+from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
 
@@ -26,19 +28,32 @@ from avatar_harness.event_types import (
     ToolEnd,
     ToolStart,
 )
-from avatar_harness.tui.modals import ApprovalChoice, ApprovalModal
+from avatar_harness.session import Session
+from avatar_harness.session_state import ReplSession
+from avatar_harness.state import TaskState
+from avatar_harness.tui.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
 
 
 class CockpitApp(App):
-    """The cockpit shell: status bar + transcript + input, fed by `session.events()`.
+    """The cockpit: status bar + transcript + input, over a session's event stream (§13, §23).
+
+    Two construction modes (exactly one of `session`/`repl`):
+
+    - **observe** (`session=`): drains a single fixed stream — a `ReplaySession` for tests or a
+      future `--replay <journal>` viewer.
+    - **drive** (`repl=`): the live multi-turn REPL. Input routes through `ReplSession` — meta
+      commands handled locally, goals run as observable per-goal `Session`s (streamed here),
+      plan mode runs plan → `PlanModal` → build. The cockpit stays a pure observer + control
+      caller (§13): it renders `events()` and acts only via the modals → `resolve_approval`.
 
     Args:
-        session: Any object exposing `events()` (and `resolve_approval`/`cancel`) — a live
-            `Session` or a `ReplaySession`. The app subscribes to its event stream on mount.
-        mode: The current visible mode shown in the status bar (the resolved `task_kind`).
-        on_submit: Called with the prompt text when the user submits the input box; defaults
-            to a no-op (the live `ReplSession.submit` wiring lands with the CLI entry point).
+        session: A fixed event source (`ReplaySession`/`Session`) for observe mode, or `None`.
+        repl: The live `ReplSession` to drive; mutually exclusive with `session`.
+        mode: The visible mode shown in the status bar (defaults to the repl's resolved mode).
+        on_submit: Observe-mode submit callback (unused in drive mode); defaults to a no-op.
     """
+
+    BINDINGS = [Binding("ctrl+c", "cancel", "cancel / quit", priority=True)]  # noqa: RUF012 — Textual contract
 
     CSS = """
     #status { dock: top; height: 1; background: $boost; color: $text; }
@@ -48,14 +63,16 @@ class CockpitApp(App):
 
     def __init__(
         self,
-        session: object,
+        session: object | None = None,
         *,
+        repl: ReplSession | None = None,
         mode: str = "investigate",
         on_submit: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
-        self._session = session
-        self.mode = mode
+        self.repl = repl
+        self._session = session  # the currently-observed stream (a per-goal Session in drive mode)
+        self.mode = (repl.mode or mode) if repl is not None else mode
         self.phase = "investigating"
         self.outcome: str | None = None
         self._on_submit = on_submit or (lambda _prompt: None)
@@ -72,12 +89,17 @@ class CockpitApp(App):
         yield Input(placeholder="Ask, or describe a change…", id="prompt")
 
     def on_mount(self) -> None:
-        """Start the worker that drains the session's event stream into the UI."""
-        self.run_worker(self._consume(), exclusive=False)
+        """Observe mode: start the worker draining the fixed stream. Drive mode waits for input."""
+        if self.repl is None and self._session is not None:
+            self.run_worker(self._consume(self._session), exclusive=False)
 
-    async def _consume(self) -> None:
-        """Render each event from the session stream (observation only; never blocks the run)."""
-        async for event in self._session.events():  # type: ignore[attr-defined]
+    async def _consume(self, session: object) -> None:
+        """Render each event from `session`'s stream (observation only; never blocks the run).
+
+        Args:
+            session: The session whose `events()` to drain (a fixed source or a per-goal run).
+        """
+        async for event in session.events():  # type: ignore[attr-defined]
             self._handle(event)
 
     def _handle(self, event: HarnessEvent) -> None:
@@ -97,7 +119,14 @@ class CockpitApp(App):
             self.outcome = event.outcome
             self.query_one("#prompt", Input).disabled = False  # ready for the next goal
         self.query_one("#status", Static).update(self._status_text())
-        line = self._format(event)
+        self._write(self._format(event))
+
+    def _write(self, line: str | None) -> None:
+        """Append `line` to the transcript (and the `rendered` mirror); `None` is skipped.
+
+        Args:
+            line: The text to render, or `None` for events shown only in the status bar.
+        """
         if line is not None:
             self.rendered.append(line)
             self.query_one("#transcript", RichLog).write(line)
@@ -156,12 +185,115 @@ class CockpitApp(App):
         return f"mode: {self.mode} · phase: {self.phase} · outcome: {self.outcome or 'running'}"
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Hand a submitted prompt to the submit callback and clear the input.
+        """Route a submitted prompt: drive the REPL (drive mode) or the observe-mode callback.
 
         Args:
             event: The Textual `Input.Submitted` message carrying the prompt text.
         """
         text = event.value.strip()
-        if text:
-            self._on_submit(text)
         self.query_one("#prompt", Input).value = ""
+        if not text:
+            return
+        if self.repl is not None:
+            self._drive_input(text)
+        else:
+            self._on_submit(text)
+
+    # --- drive mode: route input through the ReplSession (§23.2) --------------------------
+
+    def _drive_input(self, text: str) -> None:
+        """Handle one line of REPL input: meta locally, otherwise run it as a goal.
+
+        Args:
+            text: The submitted line.
+        """
+        if self.repl is None:
+            return
+        if self.repl.is_meta(text):
+            self._handle_meta(text)
+        else:
+            self.run_worker(self._run_goal(text), exclusive=False)
+
+    def _handle_meta(self, text: str) -> None:
+        """Run a `/command` locally and route its `MetaResult` (quit/diff/mode/message).
+
+        Args:
+            text: The raw `/command` line.
+        """
+        if self.repl is None:
+            return
+        result = self.repl.run_meta(text)
+        if result.kind == "quit":
+            self.exit()
+            return
+        if result.kind == "diff":
+            self.push_screen(DiffModal(result.text))
+            return
+        if result.kind == "mode_set":
+            self.mode = self.repl.mode or self.mode
+        self._write(result.text)
+        self.query_one("#status", Static).update(self._status_text())
+
+    async def _run_goal(self, text: str) -> None:
+        """Run one non-meta goal: plan mode routes through the plan flow, else a direct run.
+
+        Args:
+            text: The user's goal.
+        """
+        if self.repl is None:
+            return
+        if self.repl.resolve_mode(text) == "plan":
+            await self._run_plan_goal(text)
+        else:
+            session = self.repl.start(text)
+            state = await self._observe(session)
+            self.repl.record(state)
+
+    async def _run_plan_goal(self, text: str) -> None:
+        """Plan mode: stream the read-only plan → `PlanModal` → (on approve) stream the build.
+
+        On revise the plan is re-run with the revision; an empty/abnormal plan or a declined
+        revision is surfaced without building. The goal's turn is recorded once via `record_goal`.
+
+        Args:
+            text: The user's goal.
+        """
+        if self.repl is None:
+            return
+        revision: str | None = None
+        while True:
+            plan_state = await self._observe(self.repl.start_plan(text, revision=revision))
+            if not self.repl.plan_is_approvable(plan_state):
+                self.repl.record_goal(text, plan_state)  # nothing approvable — surface it
+                return
+            choice = await self.push_screen_wait(PlanModal(self.repl.extract_plan(plan_state)))
+            if choice.approved:
+                approved_plan = choice.text or self.repl.extract_plan(plan_state)
+                break
+            revision = choice.text  # revise → re-run the plan
+        build_state = await self._observe(self.repl.start_build(text, approved_plan))
+        self.repl.record_goal(text, build_state)
+
+    async def _observe(self, session: Session) -> TaskState:
+        """Run `session` while streaming its events into the transcript; return its terminal state.
+
+        Sets `session` as the current one so an approval modal routes its decision back to it.
+
+        Args:
+            session: The per-goal `Session` to run and render.
+
+        Returns:
+            The terminal `TaskState`.
+        """
+        self._session = session
+        run = asyncio.create_task(session.run())
+        await self._consume(session)  # drains until the bus closes on agent_end
+        return await run
+
+    def action_cancel(self) -> None:
+        """Ctrl-C: cancel the in-flight run if one is active (it refeeds as history), else quit."""
+        session = self._session
+        if self.repl is not None and isinstance(session, Session) and not session.state.terminal:
+            self.run_worker(session.cancel("cancelled by user"))
+        else:
+            self.exit()

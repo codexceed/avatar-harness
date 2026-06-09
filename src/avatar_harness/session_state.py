@@ -221,8 +221,27 @@ class ReplSession:
         """
         resolved = self.resolve_mode(prompt)
         if resolved == "plan":
-            return self._make_session(prompt, "investigate", extra_constraints=[_PLAN_DIRECTIVE])
+            return self.start_plan(prompt)
         return self._make_session(prompt, cast(TaskKind, resolved))
+
+    def start_plan(self, prompt: str, *, revision: str | None = None) -> Session:
+        """Build the read-only plan `Session` for `prompt` (observable; the cockpit streams it).
+
+        A read-only `investigate` task seeded with the planning directive (and, on a revise,
+        the revision note so the model refines). No user turn is appended — the plan flow
+        records the goal's turn once via `record_goal`, so plan and build don't double it.
+
+        Args:
+            prompt: The user's goal.
+            revision: A prior revision request to fold in, or `None` for the first plan.
+
+        Returns:
+            A not-yet-started read-only plan `Session`.
+        """
+        constraints = [_PLAN_DIRECTIVE]
+        if revision:
+            constraints.append(f"Revision requested: {revision}")
+        return self._make_session(prompt, "investigate", extra_constraints=constraints, append_turn=False)
 
     def start_build(self, prompt: str, plan: str) -> Session:
         """Build the edit task for an approved plan: the plan rides as a `constraint` (§12, D5).
@@ -321,33 +340,33 @@ class ReplSession:
             The terminal `TaskState` — the build (edit) task on approval, else the terminal
             planning state when there was nothing approvable or the revision budget was hit.
         """
-        plan_state = await self._run_plan(prompt)
+        plan_state = await self.start_plan(prompt).run()
         revisions = 0
         while True:
-            plan = self._extract_plan(plan_state)
-            if not plan.strip() or plan_state.outcome in _UNAPPROVABLE_PLAN_OUTCOMES:
-                return self._finalize_goal(prompt, plan_state)  # nothing approvable — surface it
-            decision = decide(plan)
+            if not self.plan_is_approvable(plan_state):
+                return self.record_goal(prompt, plan_state)  # nothing approvable — surface it
+            decision = decide(self.extract_plan(plan_state))
             if decision.approved:
-                approved_plan = decision.text or plan
+                approved_plan = decision.text or self.extract_plan(plan_state)
                 break
             revisions += 1
             if revisions >= _MAX_PLAN_REVISIONS:
                 plan_state.add_feedback("plan revision budget exhausted; no build run", kind="blocker")
                 plan_state.outcome = "incomplete"
-                return self._finalize_goal(prompt, plan_state)
-            plan_state = await self._run_plan(prompt, revision=decision.text)
-        return self._finalize_goal(prompt, await self.start_build(prompt, approved_plan).run())
+                return self.record_goal(prompt, plan_state)
+            plan_state = await self.start_plan(prompt, revision=decision.text).run()
+        return self.record_goal(prompt, await self.start_build(prompt, approved_plan).run())
 
-    def _finalize_goal(self, prompt: str, state: TaskState) -> TaskState:
-        """Record one goal's user turn (exactly once) and its terminal task; return the state.
+    def record_goal(self, prompt: str, state: TaskState) -> TaskState:
+        """Record one plan-flow goal: append its user turn (once) and the terminal task.
 
-        The user turn is appended here — *after* the plan/build tasks have run — so neither
-        sees the current goal echoed into its own history evidence (matching `start`).
+        Used by the plan flow (`submit_plan` and the cockpit), whose plan/build sessions are
+        built with `append_turn=False` — the goal's user turn is recorded here, *after* they
+        run, so neither echoes the current goal into its own history evidence (matching `start`).
 
         Args:
             prompt: The user's goal.
-            state: The terminal task to record (a build or a surfaced planning state).
+            state: The terminal task to record (a build, or a surfaced planning state).
 
         Returns:
             The recorded terminal `TaskState`.
@@ -356,24 +375,8 @@ class ReplSession:
         self.record(state)
         return state
 
-    async def _run_plan(self, prompt: str, *, revision: str | None = None) -> TaskState:
-        """Run one read-only plan task and return its terminal state.
-
-        Args:
-            prompt: The user's goal.
-            revision: A prior revision request to fold in, so the model refines its plan.
-
-        Returns:
-            The terminal `TaskState` of the plan task (read-only `investigate`).
-        """
-        constraints = [_PLAN_DIRECTIVE]
-        if revision:
-            constraints.append(f"Revision requested: {revision}")
-        session = self._make_session(prompt, "investigate", extra_constraints=constraints, append_turn=False)
-        return await session.run()
-
     @staticmethod
-    def _extract_plan(state: TaskState) -> str:
+    def extract_plan(state: TaskState) -> str:
         """The proposed plan text from a plan task: its `final_answer`, else its `current_plan`.
 
         Args:
@@ -383,6 +386,24 @@ class ReplSession:
             The plan text (possibly empty when the run produced nothing).
         """
         return state.final_answer or "\n".join(state.current_plan)
+
+    @staticmethod
+    def plan_is_approvable(state: TaskState) -> bool:
+        """Whether a finished plan run may be offered to the human for approval (§23.5).
+
+        False for an empty plan (you can't approve `""`) or one that terminated abnormally
+        (`blocked`/`incomplete`); a non-empty verifier-rejected (`failed`) plan is approvable
+        — the human, not the structural gate, is the authority.
+
+        Args:
+            state: A terminal plan `TaskState`.
+
+        Returns:
+            True iff the plan is non-empty and did not terminate abnormally.
+        """
+        return (
+            bool(ReplSession.extract_plan(state).strip()) and state.outcome not in _UNAPPROVABLE_PLAN_OUTCOMES
+        )
 
     def is_meta(self, text: str) -> bool:
         """Whether `text` is a meta command (handled locally, never run as a goal).
