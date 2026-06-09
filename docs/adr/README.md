@@ -8,7 +8,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | --- | --- | --- |
 | [0001](0001-async-event-bus-and-durable-execution.md) | Async lifecycle event bus, two-plane UX integration, and durable execution | Proposed |
 | [0002](0002-interactive-tui-cockpit-and-mvp-feature-set.md) | Interactive TUI cockpit and the MVP coding-agent feature set | Proposed |
-| [0003](0003-file-creation-transport.md) | A robust transport for file creation (and large mutations) | Proposed |
+| [0003](0003-file-creation-transport.md) | A robust transport for file creation (and large mutations) | Accepted (A implemented; B open) |
 
 ## Conventions
 
