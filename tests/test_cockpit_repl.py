@@ -206,6 +206,35 @@ async def test_plan_mode_runs_plan_then_modal_then_build(git_repo):
 # --- CLI launch ---------------------------------------------------------------------------
 
 
+async def test_goal_error_renders_instead_of_crashing(git_repo):
+    # The dogfood crash: a follow-up goal raised DirtyWorkspaceError inside the Textual
+    # worker and tore down the whole TUI. A per-goal failure must render as a transcript
+    # line and leave the REPL alive for the next input.
+    (git_repo / "calc.py").write_text("def add(a, b):\n    return a * b\n", encoding="utf-8")
+    repl = _repl(git_repo, [])  # pre-existing dirt → the first goal's clean check trips
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain calc.py")
+        await _settle(app, pilot)
+        joined = "\n".join(app.rendered)
+        assert "DirtyWorkspaceError" in joined  # surfaced to the human...
+        assert not app.query_one("#prompt").disabled  # ...and the REPL is still usable
+    # reaching here at all means the app survived the failed goal
+
+
+def test_main_interactive_threads_allow_dirty(git_repo, monkeypatch):
+    launched: dict = {}
+
+    def _fake_run(self, *args, **kwargs):
+        launched["repl"] = self.repl
+
+    monkeypatch.setattr(CockpitApp, "run", _fake_run)
+    config = HarnessConfig(workspace_root=str(git_repo))
+    code = cli.main(["--interactive", "--allow-dirty"], config=config, model_client=ScriptedModel([]))
+    assert code == 0
+    assert launched["repl"].allow_dirty is True  # the §15 acknowledgement reaches the REPL
+
+
 def test_main_interactive_launches_cockpit(git_repo, monkeypatch):
     launched: dict = {}
 
