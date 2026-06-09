@@ -58,7 +58,7 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
-from avatar_harness.session import EventBus, Session
+from avatar_harness.session import ApprovalGrant, EventBus, Session
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.workspace import Workspace
@@ -87,6 +87,7 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "EventBus",
     "EventSink",
     "ApprovalController",
+    "ApprovalGrant",
     # --- typed lifecycle events ---
     "HarnessEvent",
     "EventBase",

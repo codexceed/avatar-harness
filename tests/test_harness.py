@@ -79,6 +79,7 @@ _ASYNC_SURFACE = (
     "EventBase",
     "EventSink",
     "ApprovalController",
+    "ApprovalGrant",
     "AgentStart",
     "AgentEnd",
     "PhaseChanged",
