@@ -4,7 +4,7 @@
 - **Date:** 2026-06-09
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — design; Codex (gpt-5.4, xhigh) — adversarial refinement
-- **Related:** `HARNESS_DESIGN.md` §13 (observation vs control), §23 (interaction layer); `docs/core-assessment.html` (§03 architecture, §06 SOTA/durable frontier)
+- **Related:** `HARNESS_DESIGN.md` §13 (observation vs control), §23 (interaction layer)
 
 ## Context
 
@@ -288,6 +288,5 @@ await session.cancel("user pressed ctrl-c")              # token → add_feedbac
 ## References
 
 - `HARNESS_DESIGN.md` §13 (observation vs control planes), §18 (`asyncio.wait(FIRST_COMPLETED)` cancellation race to reuse), §23 (interaction layer)
-- `docs/core-assessment.html` — §03 before/after architecture, §06 SOTA alignment & durable frontier
 - [12-Factor Agents — HumanLayer](https://www.humanlayer.dev/blog/12-factor-agents) (Factor 6: launch/pause/resume; Factor 8: own your control flow)
 - Durable execution landscape: Temporal, Restate, DBOS, Inngest; LangGraph checkpointer model; the 2026 *Crab* result on semantics-aware checkpoint/restore for agents
