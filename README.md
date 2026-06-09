@@ -59,7 +59,7 @@ make install          # uv sync — installs deps + dev tools
 
 > **Embedding it as a library** (outside this repo's dev env): `openai` is an **optional extra**. Run `pip install avatar-harness[openai]` (or `uv add avatar-harness[openai]`) to use the default `OpenAIModelClient`, or install the base package and inject your own `ModelClient`. The core imports without `openai`; a `Harness` is constructible without an API key (credentials are needed only at inference).
 
-> **Interactive cockpit (in progress):** the Textual TUI is a second optional extra — `pip install avatar-harness[textual]`. The core engine and SDK import without it; `import avatar_harness` never pulls in `textual`. The cockpit (event-streamed panes + status bar + input, plus approval/plan/diff modals) is built; the CLI launch flag, plan-mode flow, and meta commands land in the final Phase 3.1 increment (see [`docs/adr/`](docs/adr)).
+> **Interactive cockpit (in progress):** the Textual TUI is a second optional extra — `pip install avatar-harness[textual]`. The core engine and SDK import without it; `import avatar_harness` never pulls in `textual`. The cockpit (event-streamed panes + status bar + input, plus approval/plan/diff modals), meta commands (`/help` `/diff` `/mode` `/plan` …), `@path` grounding, and the plan-mode flow (read-only plan → approve/revise → constrained edit) are built; the conversational-verification authority and the CLI launch flag that wires it all end-to-end are the remaining 3.2-tail increments (see [`docs/adr/`](docs/adr)).
 
 ## Configuration
 

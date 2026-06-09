@@ -11,9 +11,11 @@ the flow through `PlanModal` in 3.2e. The `decide` callback stands in for that m
 tests it is injected, returning a `PlanDecision(approved, text)`.
 """
 
+import pytest
+
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
-from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
+from avatar_harness.model_client import AskUser, FinalAnswer, ModelClient, ModelDecision, ToolCall
 from avatar_harness.session_state import PlanDecision, ReplSession, default_mode
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.edit import apply_patch
@@ -38,14 +40,28 @@ class ScriptedModel(ModelClient):
         return decision
 
 
-def _repl(root, decisions=None, *, edit=False, **cfg) -> ReplSession:
+class CyclingModel(ModelClient):
+    """Replays a fixed cycle of decisions forever — one full cycle per plan task."""
+
+    def __init__(self, cycle: list[ModelDecision]) -> None:
+        self._cycle = cycle
+        self._i = 0
+
+    def decide(self, context: object) -> ModelDecision:
+        decision = self._cycle[self._i % len(self._cycle)]
+        self._i += 1
+        return decision
+
+
+def _repl(root, decisions=None, *, edit=False, model=None, **cfg) -> ReplSession:
     """A ReplSession whose registry holds the read tools (+ apply_patch when `edit`)."""
     reg = ToolRegistry()
     reg.register(read_file)
     if edit:
         reg.register(apply_patch)
     config = HarnessConfig(workspace_root=str(root), **cfg)
-    return ReplSession(Harness(config=config, model=ScriptedModel(decisions or []), tools=reg))
+    client = model if model is not None else ScriptedModel(decisions or [])
+    return ReplSession(Harness(config=config, model=client, tools=reg))
 
 
 def _evidence(session, kind: str) -> list:
@@ -176,3 +192,50 @@ async def test_plan_task_seeds_history_and_grounding(git_repo):
     assert session.state.task_kind == "investigate"  # still the read-only plan task
     assert any("explain calc.py" in e.summary for e in _evidence(session, "history"))
     assert any("calc.py" in e.summary for e in _evidence(session, "grounding"))
+
+
+# --- guards: an abnormal plan never reaches approval/build (PR #17 review) ----------------
+
+
+async def test_blocked_plan_is_surfaced_not_approved(tmp_path):
+    # A plan run that blocks on input produces no plan — it must not flow into decide()/build.
+    repl = _repl(tmp_path, [ModelDecision(action=AskUser(question="which module?"))])
+    asked: list[str] = []
+
+    def decide(proposed: str) -> PlanDecision:
+        asked.append(proposed)  # would mean "approve an empty plan" — must never happen
+        return PlanDecision(approved=True, text="")
+
+    state = await repl.submit_plan("rework the auth flow", decide)
+    assert asked == []  # the human was never asked to approve an empty/blocked plan
+    assert state.outcome == "blocked"  # the terminal planning state is surfaced instead
+    assert len(repl.state.tasks) == 1
+    assert [t.role for t in repl.state.history] == ["user", "agent"]  # still recorded as one goal
+
+
+async def test_never_approving_decider_stops_at_revision_budget(git_repo):
+    # A programmatic decide() that never approves must not spin forever (budget discipline).
+    cycle = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="PLAN: in calc.py, flip the sign")),
+    ]  # one full cycle = one valid plan task; the model keeps producing fresh plans
+    repl = _repl(git_repo, model=CyclingModel(cycle))
+    calls = 0
+
+    def never_approve(proposed: str) -> PlanDecision:
+        nonlocal calls
+        calls += 1
+        return PlanDecision(approved=False, text="needs more detail")
+
+    state = await repl.submit_plan("fix the add bug", never_approve)
+    assert state.outcome == "incomplete"  # the revision budget was hit; no build ran
+    assert calls >= 1  # the loop terminated (did not hang) rather than approving
+
+
+async def test_submit_in_plan_mode_requires_submit_plan(tmp_path):
+    # plan mode has no run-to-completion path — submit() must refuse rather than silently
+    # running a directive-laden read-only task as a goal.
+    repl = _repl(tmp_path)
+    repl.set_mode("plan")
+    with pytest.raises(ValueError, match="submit_plan"):
+        await repl.submit("rework the auth flow")

@@ -41,6 +41,15 @@ _MODES: tuple[Mode, ...] = (*_TASK_KINDS, "plan")
 # Seeded as a constraint on the read-only plan task so the model proposes a plan, not an answer.
 _PLAN_DIRECTIVE = "Plan mode: using only read tools, propose a concise step-by-step plan. Do not edit."
 
+# Plan-run outcomes that are NOT approvable: the run never produced a usable plan (blocked on
+# input, or exhausted a general budget). A *verifier-rejected* plan (`failed`) is still shown
+# to the human — the loop is the human's authority, not the structural gate's (toward 3.2d).
+_UNAPPROVABLE_PLAN_OUTCOMES = frozenset({"blocked", "incomplete"})
+
+# Budget discipline (mirrors the harness's other loops): a programmatic `decide` that never
+# approves cannot spin forever — each revision is a real model run.
+_MAX_PLAN_REVISIONS = 10
+
 _AT_PATH = re.compile(r"@(\S+)")  # `@path/to/file` grounding references in a goal
 _GROUND_BUDGET = 2000  # per-file content cap — grounding is a hint, not a dump
 
@@ -272,7 +281,13 @@ class ReplSession:
 
         Returns:
             The terminal `TaskState`.
+
+        Raises:
+            ValueError: In `plan` mode — planning is interactive (approve/revise), so it has
+                no run-to-completion path; use `submit_plan`, or `set_mode` to switch modes.
         """
+        if self.resolve_mode(prompt) == "plan":
+            raise ValueError("plan mode is interactive — use submit_plan(prompt, decide), or set_mode(...)")
         session = self.start(prompt)
         state = await session.run()
         self.record(state)
@@ -284,43 +299,83 @@ class ReplSession:
         Proposes a plan with a read-only task, then calls `decide` (the `PlanModal` in the
         cockpit; an injected callback in tests). On revise it re-runs the plan task with the
         revision fed back so the model refines it; on approval it runs the edit task seeded
-        with the approved plan as a constraint, records it, and returns its terminal state.
+        with the approved plan as a constraint and returns its terminal state.
+
+        A plan run that produced nothing usable — empty, or terminated as
+        `blocked`/`incomplete` — is never offered for approval: its terminal planning state is
+        recorded and returned instead (you can't approve `""`). A non-empty verifier-rejected
+        plan *is* shown to the human (the human is the authority, not the structural gate). A
+        `decide` that never approves stops at the revision budget and returns `incomplete`.
 
         Args:
             prompt: The user's goal.
             decide: Called with each proposed plan; returns the human's `PlanDecision`.
 
         Returns:
-            The terminal `TaskState` of the build (edit) task.
+            The terminal `TaskState` — the build (edit) task on approval, else the terminal
+            planning state when there was nothing approvable or the revision budget was hit.
         """
-        proposed = await self._run_plan(prompt)
+        plan_state = await self._run_plan(prompt)
+        revisions = 0
         while True:
-            decision = decide(proposed)
+            plan = self._extract_plan(plan_state)
+            if not plan.strip() or plan_state.outcome in _UNAPPROVABLE_PLAN_OUTCOMES:
+                return self._finalize_goal(prompt, plan_state)  # nothing approvable — surface it
+            decision = decide(plan)
             if decision.approved:
-                approved_plan = decision.text or proposed
+                approved_plan = decision.text or plan
                 break
-            proposed = await self._run_plan(prompt, revision=decision.text)
-        build = self.start_build(prompt, approved_plan)
-        self.state.history.append(Turn(role="user", text=prompt))  # the goal, recorded once
-        state = await build.run()
+            revisions += 1
+            if revisions >= _MAX_PLAN_REVISIONS:
+                plan_state.add_feedback("plan revision budget exhausted; no build run", kind="blocker")
+                plan_state.outcome = "incomplete"
+                return self._finalize_goal(prompt, plan_state)
+            plan_state = await self._run_plan(prompt, revision=decision.text)
+        return self._finalize_goal(prompt, await self.start_build(prompt, approved_plan).run())
+
+    def _finalize_goal(self, prompt: str, state: TaskState) -> TaskState:
+        """Record one goal's user turn (exactly once) and its terminal task; return the state.
+
+        The user turn is appended here — *after* the plan/build tasks have run — so neither
+        sees the current goal echoed into its own history evidence (matching `start`).
+
+        Args:
+            prompt: The user's goal.
+            state: The terminal task to record (a build or a surfaced planning state).
+
+        Returns:
+            The recorded terminal `TaskState`.
+        """
+        self.state.history.append(Turn(role="user", text=prompt))
         self.record(state)
         return state
 
-    async def _run_plan(self, prompt: str, *, revision: str | None = None) -> str:
-        """Run one read-only plan task and return its proposed plan text.
+    async def _run_plan(self, prompt: str, *, revision: str | None = None) -> TaskState:
+        """Run one read-only plan task and return its terminal state.
 
         Args:
             prompt: The user's goal.
             revision: A prior revision request to fold in, so the model refines its plan.
 
         Returns:
-            The proposed plan (the task's `final_answer`, else its `current_plan`).
+            The terminal `TaskState` of the plan task (read-only `investigate`).
         """
         constraints = [_PLAN_DIRECTIVE]
         if revision:
             constraints.append(f"Revision requested: {revision}")
         session = self._make_session(prompt, "investigate", extra_constraints=constraints, append_turn=False)
-        state = await session.run()
+        return await session.run()
+
+    @staticmethod
+    def _extract_plan(state: TaskState) -> str:
+        """The proposed plan text from a plan task: its `final_answer`, else its `current_plan`.
+
+        Args:
+            state: A terminal plan `TaskState`.
+
+        Returns:
+            The plan text (possibly empty when the run produced nothing).
+        """
         return state.final_answer or "\n".join(state.current_plan)
 
     def is_meta(self, text: str) -> bool:
