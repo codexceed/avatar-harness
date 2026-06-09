@@ -1,8 +1,7 @@
 """CLI entry point.
 
-`run_echo` is the Phase 0 skeleton (kept for the event-spine tests); `main()`
-now drives the real Phase 1 read-only loop via `run_agent`. The CLI stays a thin
-shell over the loop — wiring components and event subscribers, nothing more.
+`main()` drives the real loop via `run_agent`. The CLI stays a thin shell over the
+loop — wiring components and event subscribers, nothing more.
 """
 
 import argparse
@@ -12,8 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
-
-from pydantic import BaseModel
 
 from avatar_harness.artifact import ArtifactManager
 from avatar_harness.config import HarnessConfig
@@ -26,36 +23,6 @@ from avatar_harness.workspace import DirtyWorkspaceError, Workspace
 
 # Truncation width for event values rendered to the terminal.
 _EVENT_VALUE_WIDTH = 160
-
-
-class EchoResult(BaseModel):
-    """Result of the Phase 0 echo skeleton: the task id, echoed answer, and outcome."""
-
-    task_id: str
-    answer: str
-    outcome: str
-
-
-def run_echo(task: str, *, emitter: Emitter, config: HarnessConfig | None = None) -> EchoResult:
-    """Phase 0 skeleton: echo the task, bracketed by lifecycle events.
-
-    Args:
-        task: The natural-language task to echo back.
-        emitter: Sink for the lifecycle events.
-        config: Harness config; a default `HarnessConfig` if omitted.
-
-    Returns:
-        The task id, echoed answer, and `success` outcome.
-    """
-    config = config or HarnessConfig()
-    state = TaskState(goal=task)
-    emitter.emit("agent_start", goal=task, task_id=state.task_id)
-    emitter.emit("turn_start", task_id=state.task_id)
-    state.final_answer = task
-    state.outcome = "success"
-    emitter.emit("turn_end", task_id=state.task_id)
-    emitter.emit("agent_end", outcome=state.outcome, task_id=state.task_id)
-    return EchoResult(task_id=state.task_id, answer=state.final_answer, outcome=state.outcome)
 
 
 def run_agent(

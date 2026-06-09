@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from avatar_harness.cli import main, run_agent, run_echo
+from avatar_harness.cli import main, run_agent
 from avatar_harness.config import HarnessConfig
 from avatar_harness.events import Emitter
 from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
@@ -166,22 +166,3 @@ def test_main_respects_explicit_log_path(git_repo, tmp_path, monkeypatch):
     assert code == 0
     assert log_path.exists()
     assert not (log_path.parent / "latest.jsonl").exists()
-
-
-def test_run_emits_start_and_end():
-    emitter = Emitter()
-    events = []
-    emitter.subscribe(events.append)
-
-    run_echo("hello", emitter=emitter)
-
-    types = [e["type"] for e in events]
-    assert types[0] == "agent_start"
-    assert types[-1] == "agent_end"
-
-
-def test_echo_roundtrip():
-    emitter = Emitter()
-    result = run_echo("do the thing", emitter=emitter)
-    assert result.answer == "do the thing"
-    assert result.outcome == "success"
