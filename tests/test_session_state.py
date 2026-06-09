@@ -45,7 +45,7 @@ def _read_registry() -> ToolRegistry:
 def _gated_registry() -> ToolRegistry:
     """read_file + a tier-3 `risky` tool (reachable in `investigating`, no file mutation)."""
 
-    def _risky(args, deps) -> ToolResult:  # noqa: ARG001 — ToolHandler shape
+    def _risky(args, deps) -> ToolResult:
         return ToolResult(tool_name="risky", success=True, summary="did the thing")
 
     risky = ToolDefinition(
@@ -129,7 +129,7 @@ async def test_history_seeds_next_task_context(tmp_path):
     assert history_ev  # prior turns seeded, not forgotten
     assert any("explain the widget" in e.summary for e in history_ev)
     st = await session2.run()  # finish it so the session closes cleanly
-    repl.record(session2, st)
+    repl.record(st)
 
 
 # --- visible-mode routing ----------------------------------------------------------------
@@ -163,13 +163,13 @@ async def test_session_grant_persists_across_tasks(tmp_path):
 
     s1 = repl.start("inspect and run the risky thing")
     st1, req1 = await _drive(s1, remember_first=True)
-    repl.record(s1, st1)
+    repl.record(st1)
     assert len(req1) == 1  # task 1 prompted the human once
     assert repl.state.grants  # the grant was recorded at session scope
 
     s2 = repl.start("do the risky thing again")
     st2, req2 = await _drive(s2, remember_first=False)
-    repl.record(s2, st2)
+    repl.record(st2)
     assert len(req2) == 0  # task 2 auto-allowed by the persisted grant — no re-prompt
 
 
@@ -186,7 +186,7 @@ async def test_session_exposes_task_event_stream(tmp_path):
     run_task = asyncio.create_task(session.run())
     async for ev in stream:
         seen.append(ev.type)
-    repl.record(session, await run_task)
+    repl.record(await run_task)
     assert {"agent_start", "tool_end", "agent_end"} <= set(seen)  # cockpit can render the run
 
 

@@ -61,6 +61,7 @@ from avatar_harness.model_client import (
     ToolCall,
 )
 from avatar_harness.session import ApprovalGrant, Session
+from avatar_harness.session_state import ReplSession, SessionState, Turn
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.workspace import Workspace
@@ -91,6 +92,10 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "EventSink",
     "ApprovalController",
     "ApprovalGrant",
+    # --- multi-turn session scope (Phase 3.1 Lane 2a) ---
+    "ReplSession",
+    "SessionState",
+    "Turn",
     # --- typed lifecycle events ---
     "HarnessEvent",
     "EventBase",
