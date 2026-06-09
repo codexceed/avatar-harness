@@ -13,9 +13,9 @@ import pytest
 
 pytest.importorskip("textual")  # the cockpit lives behind the optional [textual] extra
 
-from textual.widgets import Input, Static  # noqa: E402 — after importorskip
+from textual.widgets import Input
 
-from avatar_harness.event_types import (  # noqa: E402
+from avatar_harness.event_types import (
     AgentEnd,
     AgentStart,
     ModelUpdate,
@@ -23,8 +23,8 @@ from avatar_harness.event_types import (  # noqa: E402
     ToolEnd,
     ToolStart,
 )
-from avatar_harness.tui.app import CockpitApp  # noqa: E402
-from avatar_harness.tui.replay import ReplaySession  # noqa: E402
+from avatar_harness.tui.app import CockpitApp
+from avatar_harness.tui.replay import ReplaySession
 
 
 async def _settle(app, pilot) -> None:
@@ -54,9 +54,9 @@ async def test_status_bar_reflects_phase_and_mode():
     app = CockpitApp(ReplaySession(events), mode="edit")
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-    assert app.phase == "editing" and app.mode == "edit"
-    status = str(app.query_one("#status", Static).renderable)
-    assert "editing" in status and "edit" in status
+        assert app.phase == "editing" and app.mode == "edit"
+        status = app._status_text()
+        assert "editing" in status and "edit" in status  # the bar reflects both
 
 
 async def test_tool_activity_renders():
@@ -100,5 +100,5 @@ async def test_agent_end_marks_run_complete():
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         assert app.query_one("#prompt", Input).disabled is False  # re-enabled for the next goal
+        assert "success" in app._status_text()
     assert app.outcome == "success"
-    assert "success" in str(app.query_one("#status", Static).renderable)
