@@ -1,3 +1,4 @@
+from conftest import ScriptedModel
 from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
@@ -20,19 +21,6 @@ from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
-
-
-class ScriptedModel(ModelClient):
-    """A ModelClient that replays pre-built decisions; repeats the last when exhausted."""
-
-    def __init__(self, decisions: list[ModelDecision]) -> None:
-        self._decisions = decisions
-        self._i = 0
-
-    def decide(self, context: object) -> ModelDecision:
-        decision = self._decisions[min(self._i, len(self._decisions) - 1)]
-        self._i += 1
-        return decision
 
 
 def _runner(tmp_path, registry: ToolRegistry, decisions, *, emitter=None, **config_kw) -> AgentRunner:

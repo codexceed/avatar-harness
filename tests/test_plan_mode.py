@@ -12,10 +12,11 @@ tests it is injected, returning a `PlanDecision(approved, text)`.
 """
 
 import pytest
+from conftest import CyclingModel, ScriptedModel
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
-from avatar_harness.model_client import AskUser, FinalAnswer, ModelClient, ModelDecision, ToolCall
+from avatar_harness.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import PlanDecision, ReplSession, default_mode
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.edit import apply_patch
@@ -25,32 +26,6 @@ from avatar_harness.tools.filesystem import read_file
 _FIX = (
     "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
 )
-
-
-class ScriptedModel(ModelClient):
-    """Replays pre-built decisions across the whole session; repeats the last when exhausted."""
-
-    def __init__(self, decisions: list[ModelDecision]) -> None:
-        self._decisions = decisions
-        self._i = 0
-
-    def decide(self, context: object) -> ModelDecision:
-        decision = self._decisions[min(self._i, len(self._decisions) - 1)]
-        self._i += 1
-        return decision
-
-
-class CyclingModel(ModelClient):
-    """Replays a fixed cycle of decisions forever — one full cycle per plan task."""
-
-    def __init__(self, cycle: list[ModelDecision]) -> None:
-        self._cycle = cycle
-        self._i = 0
-
-    def decide(self, context: object) -> ModelDecision:
-        decision = self._cycle[self._i % len(self._cycle)]
-        self._i += 1
-        return decision
 
 
 def _repl(root, decisions=None, *, edit=False, model=None, **cfg) -> ReplSession:

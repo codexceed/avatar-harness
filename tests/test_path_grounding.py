@@ -7,25 +7,13 @@ seeding. A refused, missing, or out-of-root path becomes a short note, never a c
 never a leaked secret.
 """
 
+from conftest import ScriptedModel
+
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
-from avatar_harness.model_client import ModelClient, ModelDecision
 from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.filesystem import read_file
-
-
-class ScriptedModel(ModelClient):
-    """Replays pre-built decisions; repeats the last when exhausted (unused here — start() only)."""
-
-    def __init__(self, decisions: list[ModelDecision]) -> None:
-        self._decisions = decisions
-        self._i = 0
-
-    def decide(self, context: object) -> ModelDecision:
-        decision = self._decisions[min(self._i, len(self._decisions) - 1)]
-        self._i += 1
-        return decision
 
 
 def _repl(root) -> ReplSession:
