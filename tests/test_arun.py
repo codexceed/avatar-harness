@@ -16,7 +16,13 @@ from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.event_types import EventBase
 from avatar_harness.events import Emitter
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar_harness.model_client import (
+    DecisionParseError,
+    DecisionRetryNote,
+    FinalAnswer,
+    ModelDecision,
+    ToolCall,
+)
 from avatar_harness.runner import AgentRunner
 from avatar_harness.session import EventBus
 from avatar_harness.state import TaskState
@@ -122,6 +128,54 @@ async def test_cancellation_observed_during_arun(tmp_path):
     state = await runner.arun(TaskState(goal="x", task_kind="investigate"))
     assert state.outcome == "incomplete"
     assert state.iterations == 0  # observed before any turn ran
+
+
+async def test_recovered_parse_retries_recorded_and_published(tmp_path):
+    # A decision that needed in-client retries arrives annotated (`retry_trace`); the
+    # runner must surface each failed attempt as state evidence (so the model remembers
+    # its own failed patches next turn) AND as a typed `decision_error` event (so the
+    # journal shows the struggle). Closes the dogfood gap: 24 turns of invisible failure.
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    annotated = ModelDecision(
+        action=FinalAnswer(answer="done"),
+        retry_trace=[DecisionRetryNote(error="not valid JSON: truncated", raw='{"action": {"type": "apply_pat')],
+    )
+    bus = EventBus(session_id="sess")
+    runner = _runner(tmp_path, _read_registry(tmp_path), [annotated], event_sink=bus)
+    state = await runner.arun(TaskState(goal="g", task_kind="investigate"))
+
+    retries = [e for e in state.evidence if e.kind == "decision_error"]
+    assert retries and "not valid JSON" in retries[0].summary  # the model will see this
+    assert "apply_pat" in (retries[0].detail or "")  # raw attempt retained for debugging
+    published = [e for e in bus.history if e.type == "decision_error"]
+    assert published and published[0].recovered is True
+    assert "not valid JSON" in published[0].error
+
+
+async def test_exhausted_parse_failure_publishes_typed_event(tmp_path):
+    # When every in-client attempt is malformed, the runner already records feedback —
+    # but the typed stream (the journal) said nothing. The lost turn must be journaled.
+    class _AlwaysMalformed:
+        def decide(self, context):
+            raise DecisionParseError("no valid decision after retries")
+
+    bus = EventBus(session_id="sess")
+    config = HarnessConfig(max_iterations=2)
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    runner = AgentRunner(
+        model_client=_AlwaysMalformed(),
+        registry=_read_registry(tmp_path),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+        event_sink=bus,
+    )
+    await runner.arun(TaskState(goal="g", task_kind="investigate"))
+
+    published = [e for e in bus.history if e.type == "decision_error"]
+    assert published and all(e.recovered is False for e in published)
 
 
 async def test_arun_emits_typed_events_with_monotonic_ids(tmp_path):

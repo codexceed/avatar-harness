@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from avatar_harness.event_types import (
     AgentStart,
     ApprovalRequested,
+    DecisionError,
     EventBase,
     ModelUpdate,
     PhaseChanged,
@@ -34,6 +35,7 @@ def test_harness_event_union_round_trips():
         PhaseChanged(event_id=2, session_id="s", ts=_TS, old="investigating", new="editing"),
         ToolEnd(event_id=3, session_id="s", ts=_TS, tool="read_file", success=True, summary="ok"),
         ApprovalRequested(event_id=4, session_id="s", ts=_TS, approval_id="a1", tool="run_command"),
+        DecisionError(event_id=5, session_id="s", ts=_TS, error="not valid JSON", raw="{", recovered=True),
     ]
     for original in samples:
         reparsed = parse_event(dump_event(original))

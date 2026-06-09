@@ -18,10 +18,12 @@ from textual.widgets import Input
 from avatar_harness.event_types import (
     AgentEnd,
     AgentStart,
+    DecisionError,
     ModelUpdate,
     PhaseChanged,
     ToolEnd,
     ToolStart,
+    VerificationEnd,
 )
 from avatar_harness.tui.app import CockpitApp
 from avatar_harness.tui.replay import ReplaySession
@@ -92,6 +94,53 @@ async def test_input_submit_invokes_callback():
         await pilot.pause()
         assert app.query_one("#prompt", Input).value == ""  # input cleared after submit
     assert seen == ["explain the loop"]  # the prompt reached the submit callback once
+
+
+async def test_failed_verification_verdict_is_visible():
+    # The 3.2d contract: in conversational mode the verifier is advisory and outcome may be
+    # "success" — so the cockpit MUST surface the real verdict, or the human (the terminal
+    # authority) is deciding blind. Regression: the dogfood run where a failed
+    # `diff_present` check rendered only as `■ success`.
+    events = [
+        AgentStart(goal="write the script"),
+        VerificationEnd(passed=False, summary="verification failed: ['diff_present']"),
+        AgentEnd(outcome="success"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        status = app._status_text()
+    joined = "\n".join(app.rendered)
+    assert "⚠" in joined and "diff_present" in joined  # the verdict is in the transcript
+    assert "⚠" in status  # and flagged in the status bar, next to the outcome
+
+
+async def test_passed_verification_verdict_is_visible():
+    events = [
+        AgentStart(goal="g"),
+        VerificationEnd(passed=True, summary="all checks passed"),
+        AgentEnd(outcome="success"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    assert "✓ verification" in joined
+
+
+async def test_decision_errors_render_in_transcript():
+    # A malformed-decision retry (recovered or not) must be visible live — a looping
+    # run should *look* like it is struggling, not idle.
+    events = [
+        AgentStart(goal="g"),
+        DecisionError(error="not valid JSON: ...", recovered=True),
+        DecisionError(error="no valid decision after retries", recovered=False),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    assert "not valid JSON" in joined and "no valid decision" in joined
 
 
 async def test_agent_end_marks_run_complete():

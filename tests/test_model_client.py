@@ -60,6 +60,19 @@ def _fake_openai(content: str, captured: dict):
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
 
+def _fake_openai_seq(contents: list[str], captured: list[dict] | None = None):
+    """A transport returning each reply in `contents` in turn (for retry-path tests)."""
+    replies = iter(contents)
+
+    def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        message = SimpleNamespace(content=next(replies))
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
 def test_openai_client_builds_request_and_parses():
     captured: dict = {}
     content = (
@@ -82,6 +95,34 @@ def test_openai_client_builds_request_and_parses():
     blob = " ".join(m["content"] for m in captured["messages"])
     assert "where is the bug?" in blob  # the goal reached the prompt
     assert "read_file" in blob  # the allowed tool was advertised
+
+
+def test_openai_client_records_parse_retry_trace():
+    # The in-client retry loop must leave a trace: the dogfood run showed apply_patch
+    # attempts dying invisibly inside decide(), the model downgrading to reads, and no
+    # record anywhere (state, journal, or context) that a patch was ever attempted.
+    malformed = '{"thought_summary": "patching", "action": {"type": "apply_patch", '  # truncated JSON
+    valid = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_seq([malformed, valid]))
+    packet = ContextPacket(goal="g", phase="investigating", allowed_tools=[])
+
+    decision = client.decide(packet)
+
+    assert isinstance(decision.action, FinalAnswer)  # the run still recovered
+    assert len(decision.retry_trace) == 1  # ...but the failed attempt is on the record
+    note = decision.retry_trace[0]
+    assert "JSON" in note.error  # what was wrong
+    assert "apply_patch" in note.raw  # and the raw attempt itself, for debugging
+
+
+def test_parse_decision_ignores_model_supplied_retry_trace():
+    # `retry_trace` is a harness-owned diagnostics channel: a model emitting the field
+    # in its JSON must not be able to plant fake retry history.
+    raw = (
+        '{"thought_summary": "t", "action": {"type": "final_answer", "answer": "a"},'
+        ' "retry_trace": [{"error": "fake", "raw": "fake"}]}'
+    )
+    assert parse_decision(raw).retry_trace == []
 
 
 def test_default_prompt_is_kind_aware():
