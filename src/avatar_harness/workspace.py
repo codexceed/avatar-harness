@@ -311,6 +311,43 @@ class Workspace:
         result = self._git("diff", self._baseline)
         return result.stdout if result else ""
 
+    def status_paths(self) -> set[str]:
+        """Workspace-relative paths git currently sees as changed *or untracked*.
+
+        Used to attribute a command's side effects: snapshot before and after a
+        `run` and the delta is what the command touched. Includes untracked files
+        (unlike `diff`, which is `git diff <baseline>`), so command-created files
+        are visible. Empty when not a git repo.
+
+        Returns:
+            The set of paths from `git status --porcelain` (rename → its new path).
+        """
+        status = self._git("status", "--porcelain")
+        if status is None or status.returncode != 0:
+            return set()
+        paths: set[str] = set()
+        for line in status.stdout.splitlines():
+            entry = line[3:].strip()  # porcelain is "XY <path>"
+            if " -> " in entry:  # rename/copy: "old -> new" — attribute the new path
+                entry = entry.split(" -> ", 1)[1]
+            if entry:
+                paths.add(entry.strip('"'))
+        return paths
+
+    def stage(self, paths: list[str]) -> None:
+        """`git add` the given paths so they enter the pinned-HEAD `diff` (§15).
+
+        Mirrors `apply_patch`'s `git apply --index`: a command-created (untracked)
+        file is invisible to `git diff <baseline>` until staged, so staging is what
+        makes codegen/migration output show up in the diff, artifact, and verifier.
+        No-op when not a git repo or given no paths.
+
+        Args:
+            paths: Workspace-relative paths to stage.
+        """
+        if paths:
+            self._git("add", "--", *paths)
+
     def _git(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str] | None:
         try:
             return subprocess.run(

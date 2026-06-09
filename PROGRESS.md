@@ -294,7 +294,9 @@ The single sequential spine the lanes fan out around: the typed event union, the
 
 - [ ] **Lane 1 · Engine internals** — upgrade the foundation `EventBus` to a **bounded** per-subscriber fan-out (drop policy: coalesce/drop `*_update` under pressure, never lifecycle/control) + a privileged write-ahead `JsonlEventJournal`; route `arun()` emissions through `await bus.publish()`. *Depends only on the foundation's event types.*
 - [ ] **Lane 2 · Textual cockpit** — full-screen panes + status bar + input + approval/plan/diff modals, against a **replay session**; multi-turn `SessionState` + `submit()` + visible-mode routing. *Depends only on event types + session API.*
-- [ ] **Lane 3 · `run_command`** — tier-3 tool over `Workspace.run`; prefix-scoped `ApprovalGrant`; default-blocked in batch, approval-gated in the REPL. *Independent.*
+- **Lane 3 · `run_command`** — *Independent.*
+  - [x] **The tool** — tier-3 over `Workspace.run` (argv, no shell metacharacters), **editing/verifying only** (ADR-0002 — keeps `investigating` read-only, avoids the command-ungrounded verifier dead-end); default-blocked in batch, approval-gated in the REPL; a ran-but-failed command is `success=True` evidence; timeout/empty-command are model-correctable/system failures. **Mutation capture (PR #9 review fix):** a command's created/changed files are attributed into `files_changed` and **staged** (`Workspace.status_paths`/`stage`) so codegen/migrations flow into the diff → artifact → verifier, not a blind subsystem. Registered in `default_registry`. (10 tests; 168/168 green.)
+  - [ ] **Prefix-scoped `ApprovalGrant`** — `[a] always` stores a session grant (tool class + command prefix + tier) so matching commands auto-allow without re-prompting; non-matching still prompts; never global, never tier-4. *(next increment — touches `Session`.)*
 
 ### 3.2 Tail — sequential (pending)
 
