@@ -1,6 +1,6 @@
 # ADR 0003 — A robust transport for file creation (and large mutations)
 
-- **Status:** Proposed
+- **Status:** Accepted — **Option A implemented 2026-06-09** (maintainer call: A taken *first*, inverting the recommendation's ordering); Option B (`write_file`) remains open as a complementary follow-up; Option C rejected
 - **Date:** 2026-06-09
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — incident analysis and option design
@@ -42,7 +42,15 @@ The decision JSON carries only metadata (`apply_patch`, target paths); the harne
 
 ## Recommendation
 
-**B now, A later — they compose.**
+> **Outcome (2026-06-09):** the maintainer took **A first**. Implemented as the default
+> transport in `OpenAIModelClient` (`AVATAR_NATIVE_TOOL_CALLS`, default on): tool schemas
+> ride `tools=` (from each tool's real pydantic `input_schema`), `final_answer`/`ask_user`
+> are functions, malformed-argument retries keep §18 `tool_call_id` pairing + the
+> `retry_trace`, and a content-only reply falls back to the legacy `parse_decision` path
+> (endpoints without tool-call support keep working). **B stays open** — still worth
+> taking for the no-anchor case, but no longer the urgent half.
+
+**B now, A later — they compose.** *(Superseded by the outcome above — kept for the record.)*
 
 - **B (`write_file`)** is the MVP-sized fix: it addresses the exact failure (new-file creation), is one registry entry plus tests, and respects every existing invariant (confinement, denylist, staging, tiers, verification). Recommend building it next.
 - **A (native tool-calling)** is the durable fix for the whole class (large modifications included) and aligns with §18's already-catalogued streaming/tool-call plumbing. Recommend scheduling it as its own increment — it is an adapter-layer migration with a fallback mode, not a tail item.

@@ -73,6 +73,47 @@ def _fake_openai_seq(contents: list[str], captured: list[dict] | None = None):
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
 
+def _msg(content: str | None = None, tool_calls: list | None = None):
+    """One provider reply message (native tool-calling shape)."""
+    return SimpleNamespace(content=content, tool_calls=tool_calls)
+
+
+def _tc(name: str, arguments: str, call_id: str = "call_1"):
+    """One provider tool call."""
+    return SimpleNamespace(
+        id=call_id, type="function", function=SimpleNamespace(name=name, arguments=arguments)
+    )
+
+
+def _fake_openai_messages(messages: list, captured: list[dict] | None = None):
+    """A transport returning each prebuilt reply *message* in turn."""
+    replies = iter(messages)
+
+    def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=next(replies))])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def _packet(**overrides) -> ContextPacket:
+    base = {
+        "goal": "add a retry to the client",
+        "phase": "investigating",
+        "task_kind": "edit",
+        "allowed_tools": [
+            ToolSummary(
+                name="read_file",
+                description="read a file",
+                input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+            )
+        ],
+    }
+    base.update(overrides)
+    return ContextPacket(**base)
+
+
 def test_openai_client_builds_request_and_parses():
     captured: dict = {}
     content = (
@@ -94,7 +135,120 @@ def test_openai_client_builds_request_and_parses():
     assert captured["model"] == "unit-test-model"
     blob = " ".join(m["content"] for m in captured["messages"])
     assert "where is the bug?" in blob  # the goal reached the prompt
-    assert "read_file" in blob  # the allowed tool was advertised
+    # The allowed tool is advertised as a function schema (native mode, ADR-0003 A) —
+    # no longer as prose inside the system message.
+    assert "read_file" in [t["function"]["name"] for t in captured["tools"]]
+
+
+# --- native tool-calling (ADR-0003 Option A) ----------------------------------------------
+#
+# The decision rides the provider's function-calling channel: tool schemas go up as
+# `tools=`, the chosen action comes back as a structured tool call — the provider owns
+# the JSON envelope/escaping the model used to hand-write (the dogfood failure mode).
+# `final_answer`/`ask_user` are functions too; a content-only reply (an endpoint that
+# ignores `tools=`) falls back to `parse_decision`; AVATAR_NATIVE_TOOL_CALLS=false
+# restores the legacy json_object protocol verbatim.
+
+
+def test_native_mode_sends_tool_schemas():
+    captured: list[dict] = []
+    reply = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([reply], captured))
+
+    client.decide(_packet())
+
+    sent = captured[0]
+    assert "response_format" not in sent  # the JSON-envelope protocol is gone in native mode
+    names = [t["function"]["name"] for t in sent["tools"]]
+    assert "read_file" in names  # registry tools advertised as functions...
+    assert "final_answer" in names and "ask_user" in names  # ...and the decision actions too
+    read_file_schema = next(
+        t["function"]["parameters"] for t in sent["tools"] if t["function"]["name"] == "read_file"
+    )
+    assert read_file_schema["properties"] == {"path": {"type": "string"}}  # real input schema, not prose
+
+
+def test_native_tool_call_reply_parses_to_tool_call():
+    reply = _msg(content="inspecting first", tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([reply]))
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert decision.action.name == "read_file"
+    assert decision.action.input == {"path": "app.py"}
+    assert decision.thought_summary == "inspecting first"  # prose alongside the call is the thought
+
+
+def test_native_final_answer_function_parses():
+    reply = _msg(tool_calls=[_tc("final_answer", '{"answer": "the bug is in app.py:3"}')])
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([reply]))
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert decision.action.answer == "the bug is in app.py:3"
+
+
+def test_native_malformed_arguments_retry_pairs_tool_messages():
+    # Bad arguments are retried in-conversation with valid §18 pairing — the assistant's
+    # tool call answered by a role="tool" message with the matching tool_call_id — and
+    # the failed attempt lands on the retry trace like any other malformed decision.
+    bad = _msg(tool_calls=[_tc("read_file", '{"path": ', call_id="c9")])  # truncated args JSON
+    good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    captured: list[dict] = []
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([bad, good], captured))
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert len(decision.retry_trace) == 1
+    assert "read_file" in decision.retry_trace[0].raw or "path" in decision.retry_trace[0].raw
+    retry_messages = captured[1]["messages"]
+    tool_replies = [m for m in retry_messages if m.get("role") == "tool"]
+    assert tool_replies and tool_replies[0]["tool_call_id"] == "c9"  # §18: every call answered
+    assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in retry_messages)
+
+
+def test_native_plain_content_falls_back_to_json_decision():
+    # An "OpenAI-compatible" endpoint that ignores `tools=` and answers in prose still
+    # works: valid legacy-JSON content parses through parse_decision unchanged.
+    content = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=_fake_openai_messages([_msg(content=content)])
+    )
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert decision.retry_trace == []
+
+
+def test_legacy_mode_preserved_when_disabled():
+    captured: list[dict] = []
+    content = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
+    config = HarnessConfig(model="m", native_tool_calls=False)
+    client = OpenAIModelClient(config, client=_fake_openai_messages([_msg(content=content)], captured))
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    sent = captured[0]
+    assert sent["response_format"] == {"type": "json_object"}  # the escape hatch is verbatim legacy
+    assert "tools" not in sent
+
+
+def test_native_system_prompt_drops_json_envelope():
+    # In native mode the provider carries the schemas, so the prompt must not demand a
+    # hand-written JSON envelope (the instruction that conflicted with tool-calling) —
+    # while staying kind-aware (the 2.6 contract).
+    native_sys = next(
+        m["content"] for m in build_messages(_packet(), native_tools=True) if m["role"] == "system"
+    )
+    legacy_sys = next(m["content"] for m in build_messages(_packet()) if m["role"] == "system")
+    assert "JSON object" in legacy_sys  # legacy contract untouched
+    assert "JSON object" not in native_sys
+    assert "WORKING code change" in native_sys  # still kind-aware (edit framing)
 
 
 def test_openai_client_records_parse_retry_trace():

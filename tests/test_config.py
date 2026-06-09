@@ -24,3 +24,11 @@ def test_config_env_override(monkeypatch):
     assert config.interactive is False
     assert config.api_key == "sk-or-test"
     assert config.model == "anthropic/claude-sonnet-4-6"
+
+
+def test_config_native_tool_calls_defaults_on_and_overrides(monkeypatch):
+    # ADR-0003 A: native function-calling is the default transport; the env flag is the
+    # escape hatch for "OpenAI-compatible" endpoints with broken tool-call support.
+    assert HarnessConfig().native_tool_calls is True
+    monkeypatch.setenv("AVATAR_NATIVE_TOOL_CALLS", "false")
+    assert HarnessConfig().native_tool_calls is False

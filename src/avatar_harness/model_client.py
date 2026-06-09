@@ -154,6 +154,22 @@ Available tools:
 {tools}"""
 
 
+# Native-transport twin of _SYSTEM_TEMPLATE (ADR-0003 A): the provider carries the tool
+# schemas and the call envelope, so the prompt must not demand a hand-written JSON
+# object — that instruction is exactly what conflicted with tool-calling.
+_SYSTEM_TEMPLATE_NATIVE = """You are the reasoning core of a coding-agent harness. Take exactly \
+ONE action per turn by calling exactly one of the provided tools.
+
+{mission}
+
+Rules:
+- You begin with no files; discover the repo incrementally using the tools.
+- When the task is complete, call final_answer — the answer MUST cite concrete evidence \
+(paths/lines you actually inspected). Completion is verified externally; never claim work \
+you did not do.
+- If you are blocked on something only the user can answer, call ask_user."""
+
+
 def _format_tools(tools: list[ToolSummary]) -> str:
     lines = []
     for tool in tools:
@@ -162,11 +178,14 @@ def _format_tools(tools: list[ToolSummary]) -> str:
     return "\n".join(lines)
 
 
-def build_messages(context: ContextPacket) -> list[dict[str, str]]:
+def build_messages(context: ContextPacket, *, native_tools: bool = False) -> list[dict[str, str]]:
     """Assemble the system + user messages for one decision (§9 packet → prompt).
 
     Args:
         context: The assembled context packet.
+        native_tools: `True` for the native tool-calling transport (ADR-0003 A) — the
+            provider carries the tool schemas, so the prompt drops the JSON-envelope
+            contract and the prose tool list; `False` keeps the legacy protocol verbatim.
 
     Returns:
         The system + user messages for one decision.
@@ -185,13 +204,135 @@ def build_messages(context: ContextPacket) -> list[dict[str, str]]:
         parts.append("Recent evidence:\n" + "\n".join(f"- {e}" for e in context.recent_evidence))
     if context.latest_error:
         parts.append(f"Latest error: {context.latest_error}")
-    parts.append("Respond with your next action as a single JSON object.")
     mission = _KIND_FRAMING.get(context.task_kind, _KIND_FRAMING["investigate"])
-    system = _SYSTEM_TEMPLATE.format(mission=mission, tools=_format_tools(context.allowed_tools))
+    if native_tools:
+        parts.append("Take your next action now (one tool call).")
+        system = _SYSTEM_TEMPLATE_NATIVE.format(mission=mission)
+    else:
+        parts.append("Respond with your next action as a single JSON object.")
+        system = _SYSTEM_TEMPLATE.format(mission=mission, tools=_format_tools(context.allowed_tools))
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": "\n".join(parts)},
     ]
+
+
+def build_tool_schemas(context: ContextPacket) -> list[dict]:
+    """The function schemas for one decision: the advertised tools + the decision actions.
+
+    Each phase-admitted tool rides its real pydantic `input_schema`; `final_answer` and
+    `ask_user` become functions too, so every §6 decision shape is a structured call the
+    provider validates — never a hand-escaped JSON envelope (ADR-0003 A).
+
+    Args:
+        context: The assembled context packet (its `allowed_tools` are advertised).
+
+    Returns:
+        OpenAI-style `tools=` entries.
+    """
+    schemas = [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.input_schema or {"type": "object", "properties": {}},
+            },
+        }
+        for tool in context.allowed_tools
+    ]
+    schemas.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "final_answer",
+                "description": (
+                    "Claim the task is complete. The answer must cite concrete evidence "
+                    "(paths/lines actually inspected); completion is verified externally."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+            },
+        }
+    )
+    schemas.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "ask_user",
+                "description": "Ask the user a question you are blocked on (blocks in batch runs).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"question": {"type": "string"}},
+                    "required": ["question"],
+                },
+            },
+        }
+    )
+    return schemas
+
+
+def _decision_from_tool_call(call: Any, thought: str) -> ModelDecision:
+    """Map one provider tool call onto the §6 decision union, or raise a recoverable error.
+
+    Args:
+        call: The provider tool call (`.function.name` / `.function.arguments`).
+        thought: Prose the model emitted alongside the call (its `thought_summary`).
+
+    Returns:
+        The validated decision.
+
+    Raises:
+        DecisionParseError: If the arguments are not a valid JSON object for the action.
+    """
+    name = call.function.name
+    raw_args = call.function.arguments or "{}"
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError as exc:
+        raise DecisionParseError(f"tool arguments not valid JSON: {exc}") from exc
+    if not isinstance(args, dict):
+        raise DecisionParseError("tool arguments must be a JSON object")
+    try:
+        action: ToolCall | FinalAnswer | AskUser
+        if name == "final_answer":
+            action = FinalAnswer.model_validate(args)
+        elif name == "ask_user":
+            action = AskUser.model_validate(args)
+        else:
+            action = ToolCall(name=name, input=args)
+    except ValidationError as exc:
+        raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
+    return ModelDecision(thought_summary=thought, action=action)
+
+
+def _assistant_call_message(message: Any, call: Any) -> dict:
+    """Re-encode the assistant's tool-call turn for the retry conversation (§18 pairing).
+
+    Only the call being answered is included, so the appended `role="tool"` reply keeps
+    the history LLM-valid (every tool call answered by a matching `tool_call_id`).
+
+    Args:
+        message: The provider reply message carrying the call.
+        call: The tool call being retried.
+
+    Returns:
+        The assistant message dict for the retry transcript.
+    """
+    return {
+        "role": "assistant",
+        "content": getattr(message, "content", None),
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.function.name, "arguments": call.function.arguments or ""},
+            }
+        ],
+    }
 
 
 class OpenAIModelClient(ModelClient):
@@ -242,7 +383,104 @@ class OpenAIModelClient(ModelClient):
     def decide(self, context: ContextPacket) -> ModelDecision:
         """Call the endpoint and validate the reply, retrying on malformed output (§6).
 
+        The default transport is native provider tool-calling (ADR-0003 A) — the
+        provider owns the call envelope, so a large patch can't die in hand-escaping;
+        `config.native_tool_calls=False` restores the legacy single-JSON-object protocol.
+        Either path raises `DecisionParseError` when every attempt is malformed.
+
         Args:
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        client = self._ensure_client()
+        if self.config.native_tool_calls:
+            return self._decide_native(client, context)
+        return self._decide_json(client, context)
+
+    def _decide_native(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One decision over the native tool-calling transport (ADR-0003 A).
+
+        The reply's first tool call maps onto the §6 union (`final_answer`/`ask_user`
+        are functions too). A content-only reply — an endpoint that ignored `tools=` —
+        falls back to the legacy `parse_decision` path, so "OpenAI-compatible" stays
+        compatible. Malformed attempts are retried in-conversation with valid §18
+        pairing (the call answered by a `role="tool"` message) and annotated onto the
+        decision's `retry_trace`.
+
+        Args:
+            client: The OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+
+        Raises:
+            DecisionParseError: If every attempt yields malformed output.
+        """
+        messages: list[dict] = list(build_messages(context, native_tools=True))
+        tools = build_tool_schemas(context)
+        last_error: DecisionParseError | None = None
+        trace: list[DecisionRetryNote] = []
+        for _ in range(self.max_parse_retries + 1):
+            response = client.chat.completions.create(
+                model=self.config.model,
+                messages=messages,
+                tools=tools,
+                temperature=0,
+            )
+            message = response.choices[0].message
+            calls = getattr(message, "tool_calls", None)
+            if calls:
+                call = calls[0]  # the protocol is exactly one action per turn (§6)
+                try:
+                    decision = _decision_from_tool_call(call, thought=message.content or "")
+                except DecisionParseError as exc:
+                    last_error = exc
+                    raw = f"{call.function.name}({call.function.arguments or ''})"
+                    trace.append(DecisionRetryNote(error=str(exc), raw=raw[:_RAW_EXCERPT_CAP]))
+                    messages = [
+                        *messages,
+                        _assistant_call_message(message, call),
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": (
+                                f"Invalid arguments ({exc}). Re-send the SAME intended "
+                                "action with valid arguments."
+                            ),
+                        },
+                    ]
+                    continue
+                decision.retry_trace = trace
+                return decision
+            raw = message.content or ""
+            try:
+                decision = parse_decision(raw)  # endpoint ignored tools= — legacy fallback
+            except DecisionParseError as exc:
+                last_error = exc
+                trace.append(DecisionRetryNote(error=str(exc), raw=raw[:_RAW_EXCERPT_CAP]))
+                retry = (
+                    f"That was not a valid decision ({exc}). Call one of the provided tools "
+                    "— re-send the SAME intended action, do not switch to a different one."
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": retry},
+                ]
+                continue
+            decision.retry_trace = trace
+            return decision
+        text = str(last_error) if last_error else "model returned no valid decision"
+        raise DecisionParseError(text) from last_error
+
+    def _decide_json(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One decision over the legacy single-JSON-object protocol (the escape hatch).
+
+        Args:
+            client: The OpenAI-compatible client.
             context: The assembled context packet.
 
         Returns:
@@ -252,7 +490,6 @@ class OpenAIModelClient(ModelClient):
             DecisionParseError: If every attempt yields malformed output.
         """
         messages = build_messages(context)
-        client = self._ensure_client()
         last_error: DecisionParseError | None = None
         trace: list[DecisionRetryNote] = []
         for _ in range(self.max_parse_retries + 1):
