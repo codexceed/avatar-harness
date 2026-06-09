@@ -48,10 +48,13 @@ CommandRecord(*, step: int, command: str, exit_code: int | None = None, summary:
 | `summary` | `str` | no |
 ### `DecisionRecord`
 
-Why the agent chose what it chose (§7).
+Why the agent chose what it chose, and how it turned out (§7).
+
+`outcome` is filled in after the action runs (tool summary/error, verifier
+verdict, block reason) so the action ledger can show `chosen → outcome`.
 
 ```python
-DecisionRecord(*, step: int, rationale: str, chosen: str, rejected: list[str] = <factory>) -> None
+DecisionRecord(*, step: int, rationale: str, chosen: str, rejected: list[str] = <factory>, outcome: str = '') -> None
 ```
 
 **Fields**
@@ -62,6 +65,7 @@ DecisionRecord(*, step: int, rationale: str, chosen: str, rejected: list[str] = 
 | `rationale` | `str` | yes |
 | `chosen` | `str` | yes |
 | `rejected` | `list[str]` | no |
+| `outcome` | `str` | no |
 ### `Evidence`
 
 A test output, command result, file finding, or error (§7).
@@ -118,9 +122,17 @@ TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <fact
 
 Append evidence the next context build will surface (§5 repair loop).
 
+Args:
+    summary: One-line evidence the next context build surfaces.
+    detail: Optional verbatim detail kept out of the model's summary view.
+    kind: Evidence category, e.g. `feedback` or `blocker`.
+
 #### `TaskState.block(self, reason: str) -> None`
 
 Terminal: the task needs human input (§5 ask_user in a non-interactive run).
+
+Args:
+    reason: Why the task is blocked.
 
 #### `TaskState.terminal`
 

@@ -1,0 +1,60 @@
+---
+title: avatar_harness.tui.app
+---
+
+CockpitApp — the full-screen Textual cockpit shell (Phase 3.1 Lane 2b, ADR-0002).
+
+Renders a run from a session's `events()` stream into three regions: a **status bar**
+(mode · phase · outcome), a scrollable **transcript** of lifecycle events, and an **input**
+box for the next goal. It is purely an observation subscriber + an input source — it never
+sits inside the loop (§13). Approval/plan/diff modals are Lane 2c.
+
+The app tracks its rendered transcript lines and status fields as plain attributes
+(`rendered`, `phase`, `mode`, `outcome`) so behavior is assertable headlessly via
+`App.run_test()` without snapshotting the rendered screen.
+
+## Classes
+### `CockpitApp`
+
+The cockpit: status bar + transcript + input, over a session's event stream (§13, §23).
+
+Two construction modes (exactly one of `session`/`repl`):
+
+- **observe** (`session=`): drains a single fixed stream — a `ReplaySession` for tests or a
+  future `--replay &lt;journal>` viewer.
+- **drive** (`repl=`): the live multi-turn REPL. Input routes through `ReplSession` — meta
+  commands handled locally, goals run as observable per-goal `Session`s (streamed here),
+  plan mode runs plan → `PlanModal` → build. The cockpit stays a pure observer + control
+  caller (§13): it renders `events()` and acts only via the modals → `resolve_approval`.
+
+Args:
+    session: A fixed event source (`ReplaySession`/`Session`) for observe mode, or `None`.
+    repl: The live `ReplSession` to drive; mutually exclusive with `session`.
+    mode: The visible mode shown in the status bar (defaults to the repl's resolved mode).
+    on_submit: Observe-mode submit callback (unused in drive mode); defaults to a no-op.
+
+```python
+CockpitApp(session: object | None = None, *, repl: ReplSession | None = None, mode: str = 'investigate', on_submit: Callable[[str], None] | None = None) -> None
+```
+
+#### `CockpitApp.action_cancel(self) -> None`
+
+Ctrl-C: cancel the in-flight run if one is active (it refeeds as history), else quit.
+
+#### `CockpitApp.compose(self) -> Iterator[Widget]`
+
+Lay out the three regions.
+
+Yields:
+    The status bar, transcript log, and input widgets.
+
+#### `CockpitApp.on_input_submitted(self, event: Submitted) -> None`
+
+Route a submitted prompt: drive the REPL (drive mode) or the observe-mode callback.
+
+Args:
+    event: The Textual `Input.Submitted` message carrying the prompt text.
+
+#### `CockpitApp.on_mount(self) -> None`
+
+Observe mode: start the worker draining the fixed stream. Drive mode waits for input.

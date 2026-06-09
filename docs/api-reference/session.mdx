@@ -1,0 +1,130 @@
+---
+title: avatar_harness.session
+---
+
+Session — the two-plane interactive boundary over one task run (ADR-0001/0002, Phase 3.0).
+
+Observation flows OUT via `events()` (an async stream that can never block or
+redirect the run); control flows IN via `resolve_approval()` and `cancel()`. An
+event may *announce* that approval is needed, but only the control method decides
+it (§13). The cockpit binds to exactly this surface; the engine stays unchanged.
+
+The `EventBus` fan-out + the privileged `JsonlEventJournal` live in `bus.py`/`journal.py`
+(Lane 1); this module owns the session boundary and approval/grant control.
+
+## Classes
+### `ApprovalGrant`
+
+A session-scoped standing approval: auto-allow one tool's calls sharing a program.
+
+Stored when a human approves a tier-3 call with `[a] always`. Scoped to a `(tool,
+prefix, tier)` triple — never global (an empty `prefix` matches nothing) and never
+tier-4 (destructive actions always re-prompt).
+
+```python
+ApprovalGrant(*, tool: str, prefix: str, tier: int) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `tool` | `str` | yes |
+| `prefix` | `str` | yes |
+| `tier` | `int` | yes |
+
+#### `ApprovalGrant.matches(self, tool: str, program: str, tier: int) -> bool`
+
+Whether this grant auto-allows a call to `tool`/`program` at `tier`.
+
+Args:
+    tool: The tool name of the incoming call.
+    program: The incoming call's program prefix (see `_grant_prefix`).
+    tier: The incoming call's permission tier.
+
+Returns:
+    True iff the grant covers the call (same tool + program, at or below the
+    granted tier, and below the tier-4 ceiling). A blank prefix never matches.
+### `Session`
+
+A live, interruptible task run exposing the two-plane API (§13, §23).
+
+Args:
+    runner: The `AgentRunner` to drive (its `event_sink`/`approval_controller`
+        are wired to this session for the duration of `run`).
+    state: The task state to execute.
+    session_id: Stable id stamped on events; generated if omitted.
+    journal: The privileged write-ahead sink for this run's events; `None` (default)
+        keeps the in-memory `history` only. `run()` closes it when the run ends.
+    grants: The standing-approval list to consult and append to. Pass the multi-turn
+        `SessionState.grants` (by reference) so a `[a] always` granted in one task
+        persists to later tasks in the conversation; omit for a fresh per-run list.
+
+```python
+Session(runner: AgentRunner, state: TaskState, *, session_id: str | None = None, journal: JsonlEventJournal | None = None, grants: list[ApprovalGrant] | None = None) -> None
+```
+
+#### `Session.cancel(self, reason: str = 'cancelled') -> None`
+
+Control plane: trip the cancellation token; the loop observes it at the next turn.
+
+Also denies any in-flight approval so a run blocked on the gate can reach the
+cancellation checkpoint rather than hanging.
+
+Args:
+    reason: Why the run is being cancelled (retained for display; the loop records
+        its own cancellation feedback when it observes the token).
+
+#### `Session.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+
+The observation plane: an independent async stream of typed events (§13).
+
+Subscribes *eagerly* (at call time, not first iteration), so a consumer created
+before `run()` never misses early events. Each call yields a fresh, independent
+stream — many observers can watch the same run concurrently.
+
+Returns:
+    An async iterator over this run's `HarnessEvent`s, ending on `agent_end`.
+
+#### `Session.request_approval(self, approval_id: str, tool: str, reason: str, tool_input: dict) -> bool`
+
+Announce a gated call (observation) and await the human's decision (control).
+
+Called by the runner on a tier-3 `ask`. Emits `ApprovalRequested`, then blocks
+*this run only* until `resolve_approval` completes the future — the decision
+never returns through the event stream (§13).
+
+A standing `ApprovalGrant` from an earlier `[a] always` short-circuits the human:
+the call is auto-allowed and recorded as `ApprovalResolved(via="grant")` with **no**
+`ApprovalRequested` (that event means "a human must decide"; a grant skips the human).
+
+Args:
+    approval_id: Correlates the announcement with its resolution.
+    tool: The tool name awaiting approval.
+    reason: The gate's reason, shown to the human.
+    tool_input: The proposed call arguments.
+
+Returns:
+    True iff the call was allowed.
+
+#### `Session.resolve_approval(self, approval_id: str, *, allow: bool, remember: bool = False) -> None`
+
+Control plane: resolve a pending approval (the decision the event announced).
+
+Tolerant of an unknown id (resolves the sole pending request if there is exactly
+one) so a caller that didn't capture the id can still unblock the run. With
+`allow` and `remember` both set (the `[a] always` choice), stores a session-scoped
+`ApprovalGrant` for the call's program prefix so matching calls auto-allow later.
+`remember` is ignored on a denial (there is no "always deny") and on a blank prefix.
+
+Args:
+    approval_id: The id from the `ApprovalRequested` event.
+    allow: Whether to permit the gated call.
+    remember: Whether to store a standing grant (only meaningful with `allow`).
+
+#### `Session.run(self) -> TaskState`
+
+Drive the run with this session as the event sink + approval controller.
+
+Returns:
+    The terminal `TaskState`.

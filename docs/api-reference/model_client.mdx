@@ -51,12 +51,18 @@ The real implementation calls an OpenAI-compatible endpoint and runs the
 result through `parse_decision`; tests substitute a scripted fake.
 
 ```python
-ModelClient(*args, **kwargs)
+ModelClient()
 ```
 
 #### `ModelClient.decide(self, context: ContextPacket) -> ModelDecision`
 
 Turn a context packet into a validated decision for the current turn.
+
+Args:
+    context: The assembled context packet.
+
+Returns:
+    The validated decision for the current turn.
 ### `ModelDecision`
 
 One validated model decision: a thought plus exactly one action (§6).
@@ -79,6 +85,13 @@ A malformed reply is fed back to the model for a bounded number of retries
 before surfacing as a `DecisionParseError` (which the runner treats as a
 recoverable, model-correctable error).
 
+Args:
+    config: The harness configuration.
+    client: An injected OpenAI-compatible client, or `None` to build one lazily on
+        first use — so construction needs no credentials; the optional `openai`
+        extra and an API key are required only when `decide()` is first called.
+    max_parse_retries: Number of retries on malformed model output.
+
 ```python
 OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None
 ```
@@ -86,6 +99,15 @@ OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: 
 #### `OpenAIModelClient.decide(self, context: ContextPacket) -> ModelDecision`
 
 Call the endpoint and validate the reply, retrying on malformed output (§6).
+
+Args:
+    context: The assembled context packet.
+
+Returns:
+    The validated decision for the current turn.
+
+Raises:
+    DecisionParseError: If every attempt yields malformed output.
 ### `ToolCall`
 
 Decision to invoke a named tool with validated input (§6).
@@ -106,6 +128,21 @@ ToolCall(*, type: Literal['tool_call'] = 'tool_call', name: str, input: dict = <
 ### `build_messages(context: ContextPacket) -> list[dict[str, str]]`
 
 Assemble the system + user messages for one decision (§9 packet → prompt).
+
+Args:
+    context: The assembled context packet.
+
+Returns:
+    The system + user messages for one decision.
 ### `parse_decision(raw: str) -> ModelDecision`
 
 Validate raw model output into a `ModelDecision`, or raise a recoverable error.
+
+Args:
+    raw: The raw model output to validate.
+
+Returns:
+    The validated `ModelDecision`.
+
+Raises:
+    DecisionParseError: If `raw` is not valid JSON or not a valid decision.

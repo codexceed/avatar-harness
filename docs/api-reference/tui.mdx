@@ -1,0 +1,20 @@
+---
+title: avatar_harness.tui
+---
+
+The interactive Textual cockpit (Phase 3.1 Lane 2, ADR-0002).
+
+Behind the optional `[textual]` extra: the core engine + SDK import without `textual`, so
+this package's heavy imports are *not* pulled in by `import avatar_harness`. Use
+`load_cockpit()` to obtain the app class with a clear install hint when the extra is absent.
+
+## Functions
+### `load_cockpit() -> type`
+
+Return the `CockpitApp` class, raising a clear hint if the `textual` extra is missing.
+
+Returns:
+    The `CockpitApp` type.
+
+Raises:
+    RuntimeError: If `textual` is not installed (the optional cockpit extra).

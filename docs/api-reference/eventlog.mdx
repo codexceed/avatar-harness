@@ -12,6 +12,13 @@ and eval data. It is a plain subscriber: it observes, never influences.
 
 An append-only JSONL subscriber: one timestamped record per event (§13).
 
+Accepts both the sync `Emitter`'s raw-dict events and typed `HarnessEvent`
+models (Phase 3.0) — a typed event is serialized via `model_dump_json`, so the
+same log can be reloaded by `event_types.load_events`.
+
+Args:
+    path: JSONL file the events are appended to.
+
 ```python
 EventLog(path: Path) -> None
 ```

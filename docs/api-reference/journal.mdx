@@ -1,0 +1,39 @@
+---
+title: avatar_harness.journal
+---
+
+JsonlEventJournal — the privileged, lossless write-ahead sink (ADR-0001, Phase 3.1).
+
+Unlike an observation subscriber (bounded, droppable), the journal is *part of the
+engine*: every published event is appended in global order and **flushed per event**,
+so a crash mid-run leaves a durable, replayable prefix. It is the substrate 3.3's
+semantics-aware resume will replay (`load_events`); Lane 1 builds the record, not the
+replay engine.
+
+It keeps the file handle open for the run (append mode) and flushes on every write —
+the write-ahead property — rather than reopening per event like the sync-`Emitter`
+`EventLog`. The two are deliberately distinct: `EventLog` is an emitter *subscriber*;
+this is the engine's durable commit log for the typed `HarnessEvent` stream.
+
+## Classes
+### `JsonlEventJournal`
+
+An append-only, per-event-flushed JSONL record of the typed event stream.
+
+Args:
+    path: JSONL file the events are appended to (parent dirs are created).
+
+```python
+JsonlEventJournal(path: Path) -> None
+```
+
+#### `JsonlEventJournal.append(self, event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> None`
+
+Append `event` as one JSON line and flush it to disk (write-ahead).
+
+Args:
+    event: The stamped event to persist (must carry its ordering keys).
+
+#### `JsonlEventJournal.close(self) -> None`
+
+Close the journal file handle (idempotent).

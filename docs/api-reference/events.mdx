@@ -15,14 +15,26 @@ hooks elsewhere, not subscribers here.
 
 Fans lifecycle events out to observation-only subscribers (§13).
 
+Args:
+    session_id: Stamped on every emitted event to group a run's events. A run is
+        one process invocation; in a future REPL it is the long-lived process, so
+        grouping is intentional rather than incidental. `None` omits the key.
+
 ```python
-Emitter() -> None
+Emitter(session_id: str | None = None) -> None
 ```
 
 #### `Emitter.emit(self, event_type: str, **payload: object) -> None`
 
 Build the event and deliver it to every subscriber, isolating failures.
 
+Args:
+    event_type: The event's `type` tag.
+    **payload: Extra event fields merged after `type` and `ts`.
+
 #### `Emitter.subscribe(self, subscriber: Callable[[dict[str, object]], None]) -> None`
 
 Register a subscriber to receive every subsequent event.
+
+Args:
+    subscriber: Callable invoked with each emitted event.
