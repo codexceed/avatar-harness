@@ -113,9 +113,9 @@ A status bar (mode · phase · outcome), a streaming transcript, and an input bo
 | `--interactive` | off | Launch the interactive Textual cockpit (a multi-turn REPL) instead of a batch run. Needs the `[textual]` extra. |
 | `--auto` | off | In the cockpit, keep the strict verification gate (default: conversational — verify runs + reports, the human decides). |
 | `--log PATH` | `events/<session_id>.jsonl` | Where to write the append-only JSONL event log (batch and interactive alike — the cockpit journals one file per sitting). By default each run gets its own per-session file, and `events/latest.jsonl` points at the newest. Pass an explicit path to write there instead (no `latest` pointer is maintained for explicit paths). |
-| `--allow-dirty` | off | Run despite uncommitted **tracked** changes in the workspace. |
+| `--allow-dirty` | off | Run despite uncommitted **tracked** changes in the workspace (honored by batch and the cockpit alike). |
 
-**Clean-tree note.** The workspace pins git `HEAD` as its diff baseline, so by default it refuses to start on a tree with uncommitted *tracked* changes (untracked files are ignored). Commit/stash first, pass `--allow-dirty` to acknowledge them, or point `AVATAR_WORKSPACE_ROOT` at a clean checkout. For an `investigate` task, pre-existing tracked changes will cause verification to refuse `success` (they look like an unintended diff) — so a clean tree gives the cleanest result.
+**Clean-tree note.** The workspace pins git `HEAD` as its diff baseline, so by default it refuses to start on a tree with uncommitted *tracked* changes (untracked files are ignored). Commit/stash first, pass `--allow-dirty` to acknowledge them, or point `AVATAR_WORKSPACE_ROOT` at a clean checkout. For an `investigate` task, pre-existing tracked changes will cause verification to refuse `success` (they look like an unintended diff) — so a clean tree gives the cleanest result. **In the cockpit the check applies to the first goal of a sitting only**: changes the session itself makes (its staged edits between goals) never block a follow-up goal — they're the session's own work product.
 
 ## Use it as a library
 
