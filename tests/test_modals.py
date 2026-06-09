@@ -11,19 +11,19 @@ import pytest
 
 pytest.importorskip("textual")
 
-from textual.app import App  # noqa: E402
-from textual.widgets import TextArea  # noqa: E402
+from textual.app import App
+from textual.widgets import TextArea
 
-from avatar_harness.event_types import AgentStart, ApprovalRequested  # noqa: E402
-from avatar_harness.tui.app import CockpitApp  # noqa: E402
-from avatar_harness.tui.modals import (  # noqa: E402
+from avatar_harness.event_types import AgentStart, ApprovalRequested
+from avatar_harness.tui.app import CockpitApp
+from avatar_harness.tui.modals import (
     ApprovalChoice,
     ApprovalModal,
     DiffModal,
     PlanChoice,
     PlanModal,
 )
-from avatar_harness.tui.replay import ReplaySession  # noqa: E402
+from avatar_harness.tui.replay import ReplaySession
 
 
 class _Host(App):
