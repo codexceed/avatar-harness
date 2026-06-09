@@ -20,7 +20,9 @@ from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import read_file
 
 # A valid unified diff against the `git_repo` fixture's calc.py (fixes the `-` bug).
-_FIX = "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+_FIX = (
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+)
 
 
 class ScriptedModel(ModelClient):
@@ -93,7 +95,7 @@ def test_approved_plan_seeds_edit_task_constraints(tmp_path):
 
 
 async def test_plan_flow_runs_plan_then_build(git_repo):
-    the_plan = "PLAN: change `-` to `+` in add()"
+    the_plan = "PLAN: in calc.py, change `-` to `+` in add()"
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
         ModelDecision(action=FinalAnswer(answer=the_plan)),  # plan task proposes the plan
@@ -113,7 +115,7 @@ async def test_plan_flow_runs_plan_then_build(git_repo):
 
 
 async def test_revise_reruns_plan_before_build(git_repo):
-    the_plan = "PLAN: change `-` to `+` in add()"
+    the_plan = "PLAN: in calc.py, change `-` to `+` in add()"
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
         ModelDecision(action=FinalAnswer(answer=the_plan)),  # first plan attempt
