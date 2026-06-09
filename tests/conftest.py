@@ -3,9 +3,45 @@ from pathlib import Path
 
 import pytest
 
+from avatar_harness.model_client import ModelClient, ModelDecision
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
+
+
+class ScriptedModel(ModelClient):
+    """A `ModelClient` stub that replays pre-built decisions; repeats the last when exhausted.
+
+    The shared scripted-model factory for the whole suite: construct one with the turn-by-turn
+    decisions a test needs (`ScriptedModel([tool_call, ..., final_answer])`). Imported from
+    `conftest` rather than redefined per module.
+    """
+
+    def __init__(self, decisions: list[ModelDecision]) -> None:
+        self._decisions = decisions
+        self._i = 0
+
+    def decide(self, context: object) -> ModelDecision:
+        decision = self._decisions[min(self._i, len(self._decisions) - 1)]
+        self._i += 1
+        return decision
+
+
+class CyclingModel(ModelClient):
+    """A `ModelClient` stub that replays a fixed cycle of decisions forever.
+
+    Useful when a test runs an unknown number of identical tasks (e.g. one full cycle per
+    plan task) and must keep producing fresh decisions rather than repeating the last.
+    """
+
+    def __init__(self, cycle: list[ModelDecision]) -> None:
+        self._cycle = cycle
+        self._i = 0
+
+    def decide(self, context: object) -> ModelDecision:
+        decision = self._cycle[self._i % len(self._cycle)]
+        self._i += 1
+        return decision
 
 
 @pytest.fixture

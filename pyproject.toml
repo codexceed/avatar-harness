@@ -127,6 +127,9 @@ check-class-attributes = false
 # --- Pyrefly: sole hard type gate (#1). Pinned to 1.0.x; bump deliberately. ---
 [tool.pyrefly]
 project-includes = ["src", "tests"]
+# `tests` is an import root too, so shared test stubs in `tests/conftest.py` (e.g. ScriptedModel,
+# imported as `from conftest import ...`) resolve under the type checker as they do under pytest.
+search-path = ["src", "tests"]
 python-version = "3.12"
 
 # --- deptry: dependency hygiene — unused/missing/transitive (#5). ---
