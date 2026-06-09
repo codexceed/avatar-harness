@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. **Phase 2.6 ✅ complete 2026-06-09** (135/135 green; `make check` clean) — built by a **4-lane worktree-isolated agents team**: tool-failure isolation, real phase advance/enforce, honored budgets + cancellation, public `Harness` facade, neutral model boundary (`openai` now an optional extra). Next: **Phase 3** (async engine · durable execution · TUI cockpit — ADR-0001).
+> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. **Phase 2.6 ✅ complete 2026-06-09** (137/137 green; `make check` clean; CI gate green; PR #6) — built by a **4-lane worktree-isolated agents team**: tool-failure isolation, real phase advance/enforce, honored budgets + cancellation, public `Harness` facade, neutral model boundary (`openai` now an optional extra), plus a kind-aware-prompt addendum (`task_kind` on the `ContextPacket`) and a lazy OpenAI client (a `Harness` is constructible with no API key). Next: **Phase 3** (async engine · durable execution · TUI cockpit — ADR-0001).
 
 ## How to use this file
 
@@ -219,7 +219,7 @@ Replace `ContextBuilder`'s fixed `evidence[-5:]` slice with a char/token budget 
 
 ## Phase 2.6 — Pre-Phase-3 hardening (extensibility + enforcement)
 
-**Implemented 2026-06-09** on branch `feat/phase-2.6-hardening` — 4 worktree-isolated agents (one per lane), each TDD red→green in isolation; merged clean (disjoint files); combined `make check` **135/135** green. One merge-integration fix (a Harness seam test's injected policy had to subclass `PermissionPolicy` for the hard pyrefly gate). All lane test lists below landed green.
+**Implemented 2026-06-09** on branch `feat/phase-2.6-hardening` (PR #6, CI green) — 4 worktree-isolated agents (one per lane), each TDD red→green in isolation; merged clean (disjoint files). Two integration bugs the *combined* gate caught that no single lane could: (1) a Harness seam test's injected policy had to subclass `PermissionPolicy` (pyrefly); (2) the facade constructs the default `OpenAIModelClient` eagerly, whose `__init__` built `OpenAI(api_key=…)` — which needs credentials, so CI (no key, no `.env`) raised `OpenAIError` *before* the dirty-workspace check → fixed by **lazy client construction** (credentials are inference-time only). Plus a **kind-aware-prompt addendum**: `task_kind` now rides on `ContextPacket` so `build_messages` frames the mission per kind. Combined `make check` **137/137** green. All lane test lists below landed green.
 
 The high/medium-impact items from the core-library assessment (`docs/core-assessment.html`, cross-validated by Codex gpt-5.4/xhigh). Two motivations: (1) **enforcement** — turn declared-but-dead control axes into real ones (assessment thesis: *abstractions ahead of enforcement*); (2) these are **prerequisites** the ADR-0001 async/durable migration needs anyway (tool-failure isolation, real phase advancement, consumed budgets/cancellation). The facade + model boundary close the "extensible importable core" gaps.
 
@@ -234,33 +234,38 @@ The high/medium-impact items from the core-library assessment (`docs/core-assess
 | **C — public API + facade** | `__init__.py` · `harness.py` (new) · `cli.py` · `test_harness.py` (new) | curated `__all__` · `Harness` facade · CLI delegates to it |
 | **D — model boundary** | `model_client.py` · `pyproject.toml` · `config.py` · `test_model_client.py` | kind-aware default prompt · prompt behind the adapter · `openai` an optional extra |
 
-**Lane A — engine loop** [tests proposed · pending sign-off]
-- [ ] `test_phase_advances_to_editing_on_first_edit_intent` (advance on the model's first `apply_patch`; edit tools reachable on `edit`/`test_only` kinds — non-circular)
-- [ ] `test_pure_creation_from_bare_workspace_succeeds` (new-file hunk, **zero reads** — the creation case that kills a `≥1 read` trigger)
-- [ ] `test_modify_without_read_fails_stale_then_recovers` (inspect-before-edit **emerges from clean-apply** `git apply --check`; no read-counter needed)
-- [ ] `test_phase_changed_emitted_on_transition`
-- [ ] `test_out_of_phase_tool_call_is_model_correctable` (**workflow feedback, NOT a security control** — security = permission tier + Workspace chokepoint + `task_kind` gate)
-- [ ] `test_repair_falls_back_to_editing` (verifying → editing on failed verification)
-- [ ] `test_wall_clock_budget_yields_incomplete`
-- [ ] `test_context_budget_yields_incomplete`
-- [ ] `test_cancellation_observed_yields_incomplete`
-- [ ] `test_cancellation_records_feedback`
+**Lane A — engine loop** [landed green]
+- [x] `test_phase_advances_to_editing_on_first_edit_intent` (advance on the model's first `apply_patch`; edit tools reachable on `edit`/`test_only` kinds — non-circular)
+- [x] `test_pure_creation_from_bare_workspace_succeeds` (new-file hunk, **zero reads** — the creation case that kills a `≥1 read` trigger)
+- [x] `test_modify_without_read_fails_stale_then_recovers` (inspect-before-edit **emerges from clean-apply** `git apply --check`; no read-counter needed)
+- [x] `test_phase_changed_emitted_on_transition`
+- [x] `test_out_of_phase_tool_call_is_model_correctable` (**workflow feedback, NOT a security control** — security = permission tier + Workspace chokepoint + `task_kind` gate)
+- [x] `test_repair_falls_back_to_editing` (verifying → editing on failed verification)
+- [x] `test_wall_clock_budget_yields_incomplete`
+- [x] `test_context_budget_yields_incomplete`
+- [x] `test_cancellation_observed_yields_incomplete`
+- [x] `test_cancellation_records_feedback`
 
-**Lane B — tool-failure isolation** [pending sign-off]
-- [ ] `test_tool_handler_exception_becomes_failed_result` (a raising tool → `ToolResult(success=False)`; loop continues)
-- [ ] `test_runtime_never_raises_into_loop`
-- [ ] `test_system_failure_is_surfaced_not_retried` (system error distinct from model-correctable)
+**Lane B — tool-failure isolation** [landed green]
+- [x] `test_tool_handler_exception_becomes_failed_result` (a raising tool → `ToolResult(success=False)`; loop continues)
+- [x] `test_runtime_never_raises_into_loop`
+- [x] `test_system_failure_is_surfaced_not_retried` (system error distinct from model-correctable)
 
-**Lane C — public API + Harness facade** [pending sign-off]
-- [ ] `test_public_api_exports_stable_surface` (`from avatar_harness import Harness, TaskState, ToolDefinition, ToolResult, RunDeps, ModelClient, Workspace, HarnessConfig`)
-- [ ] `test_harness_from_env_runs_investigate_end_to_end`
-- [ ] `test_harness_overrides_each_seam` (inject model / tools / verifier / policy)
-- [ ] `test_cli_delegates_to_harness_facade` (CLI wires through the facade, not bespoke construction)
+**Lane C — public API + Harness facade** [landed green]
+- [x] `test_public_api_exports_stable_surface` (`from avatar_harness import Harness, TaskState, ToolDefinition, ToolResult, RunDeps, ModelClient, Workspace, HarnessConfig`)
+- [x] `test_harness_from_env_runs_investigate_end_to_end`
+- [x] `test_harness_overrides_each_seam` (inject model / tools / verifier / policy)
+- [x] `test_cli_delegates_to_harness_facade` (CLI wires through the facade, not bespoke construction)
 
-**Lane D — model boundary** [pending sign-off]
-- [ ] `test_default_prompt_is_kind_aware` (an `edit` task is not framed "READ-ONLY investigation")
-- [ ] `test_core_imports_without_openai` (`import avatar_harness` works with `openai` uninstalled — lazy/guarded provider import)
-- [ ] `test_custom_model_client_runs_end_to_end` (provider fully swappable; prompt contract behind the adapter)
+**Lane D — model boundary** [landed green]
+- [x] `test_default_prompt_is_kind_aware` (now genuinely kind-aware via the addendum — edit vs investigate framing differs)
+- [x] `test_core_imports_without_openai` (`import avatar_harness` works with `openai` absent — lazy/guarded provider import)
+- [x] `test_custom_model_client_runs_end_to_end` (provider fully swappable; prompt contract behind the adapter)
+
+**Addendum — kind-aware prompt + lazy client** [landed green]
+- [x] `test_context_packet_carries_task_kind` (`ContextBuilder` threads `state.task_kind` onto the packet)
+- [x] `test_default_prompt_is_kind_aware` strengthened (edit framing ≠ investigate framing; edit never re-locked to READ-ONLY)
+- [x] `test_openai_client_constructs_without_credentials` (lazy `OpenAI` client — a `Harness` builds with no key; the CI regression fix)
 
 **Exit criteria**
 - [x] a third-party tool that raises can't crash a run (returns a failed `ToolResult`)
@@ -312,6 +317,7 @@ From §21, one at a time, each justified by friction actually hit.
 
 ## Decision log
 
+- **2026-06-09** — Phase 2.6 shipped via a **4-lane worktree-isolated agents team** (PR #6, CI green, 137/137). Lanes touched **disjoint files** (engine-loop / tool-runtime / facade / model-boundary) and merged conflict-free; each ran TDD red→green in isolation. The *combined* hard gate caught two integration bugs invisible to any single lane: a seam-test policy type error, and — the instructive one — the facade's **eager default-model construction** (`Harness.__init__` builds `OpenAIModelClient(config)`, whose `__init__` built `OpenAI(api_key=…)`) **required credentials at build time**, so CI (no key, no `.env`) raised `OpenAIError` before the dirty-workspace check. Fix: **lazy client construction** (`_ensure_client()` on first `decide()`) — credentials are inference-time only, so a `Harness` is constructible without a key (also a real facade improvement). Reproduced the exact CI condition locally (`.env` moved aside, keys unset) to verify. Plus a **kind-aware-prompt addendum** closing the follow-up Lane D flagged: `task_kind` now rides on `ContextPacket`, so `build_messages` frames the mission per kind (edit "make a working change" / investigate "without editing" / test_only "add passing tests") via `_KIND_FRAMING` — capability is still gated by tool *exposure* (§10/§21), the framing only orients. Takeaway recorded: parallel disjoint-file lanes work, but the integration gate (run the *whole* suite post-merge, ideally credential-free) is non-optional — a green lane is not a green merge.
 - **2026-06-09** — Phase 3 design locked in **ADR-0001** (`docs/adr/`): async engine (`arun()` + sync wrapper), typed async event bus (non-blocking fan-out; the **journal is a privileged lossless write-ahead sink**, not just a subscriber), **two-plane** UX (`events()` out · `resolve_approval()`/`cancel()` in — no `drive()`), and **durable execution** via semantics-aware journal replay (reuse reads, never re-apply patches, resume into pending approvals). Refined with Codex (gpt-5.4/xhigh); corrections folded in: async over thread-bridge, "async publish ≠ await subscribers", rename streamed "thought" → `model_update(channel="display")`. Carved out **Phase 2.6 — pre-Phase-3 hardening** (high/medium items from `docs/core-assessment.html`): tool-failure isolation, real phase advance/enforce, consumed budgets+cancellation, public `Harness` facade, neutral model boundary. Structured into **4 disjoint-file lanes** for a worktree-isolated agents team; enabling choice = **phase enforcement in the runner** (`tool.phases` vs `state.phase` consult), which frees the tool-runtime lane. Scope ends at durable execution — MCP/middleware/graph deferred. Tests proposed; **pending sign-off** before code (standing TDD rule).
 
 - **2026-06-08** — Sensitive-path matching **normalized to one matcher**. Review found two engines interpreting the same `sensitive_path_globs`: `path_is_sensitive` (component `fnmatch`) at the gate + workspace, vs ripgrep's gitignore `-g` globs in `search_repo` — divergent on slash patterns (`fnmatch`'s `*` crosses `/`, gitignore's doesn't). Fix: `search_repo` dropped the `-g` excludes and now post-filters rg output through `path_is_sensitive`, so all three sites (gate, workspace, search) share one matcher and one semantics. Trade-off accepted: rg now *reads* a denylisted file and we discard its matching lines before they reach the model/log (vs `-g` never opening it) — momentary in-process only, consistent with the existing non-path residual-risk stance, and the price of a single source of truth. 115/115 green.

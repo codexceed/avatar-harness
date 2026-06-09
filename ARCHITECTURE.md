@@ -73,20 +73,21 @@ flowchart TD
     class SESS,CLI,R,CB,MC,TR,PP,V,AM,UI,WS todo;
 ```
 
-> Status note: as of **Phase 2**, the whole non-interactive engine is **[Implemented]** and wired end-to-end through `cli.main` — the read-only loop *and* the closing edit path (`apply_patch` under the permission gate, the external-evidence `Verifier`, the `ArtifactManager`), dogfooded live (an investigate task answered a real repo question and verified `success`). What remains **[Designed]** is the interactive `Session`/REPL (`§23`, Phase 3) and §21 extensions. Two live boundaries: the runner does not yet *advance* `phase` — tool *availability* is enforced by `task_kind` instead (an investigate task is blocked from `apply_patch` at the gate), with automated `investigating → editing → verifying` transitions deferred to Phase 3; and intake does not yet classify a free-text goal into a `task_kind` (the CLI runs `investigate` by default or takes an explicit kind).
+> Status note: as of **Phase 2.6**, the whole non-interactive engine is **[Implemented]** and wired end-to-end — and now importable as a library via the **`Harness` facade** (`from avatar_harness import Harness`); the CLI delegates to it. The runner **advances and enforces `phase`** (`investigating → editing → verifying`, edit-intent detected by tier, emitting `phase_changed`; an out-of-phase call is model-correctable), honors wall-clock/context budgets and the cancellation token (→ `incomplete`), and `ToolRuntime` isolates handler exceptions as failed `ToolResult`s. The model boundary is neutral and kind-aware (`task_kind` on the `ContextPacket`), and `openai` is an optional extra (lazy client — a `Harness` builds without a key). What remains **[Designed]** is the interactive `Session`/REPL (`§23`, Phase 3 — async engine, durable execution, TUI per **ADR-0001**) and §21 extensions. One live boundary: intake does not yet classify a free-text goal into a `task_kind` (the CLI runs `investigate` by default or takes an explicit kind).
 
 | Component | Role | Status |
 | --- | --- | --- |
-| `AgentRunner` | Owns the loop, budgets, phase transitions, cancellation. | [Implemented] (loop + budgets + gate; auto phase transitions [Designed]) |
+| `AgentRunner` | Owns the loop, budgets, phase transitions, cancellation. | [Implemented] (loop + budgets + gate + phase advance/enforce + wall-clock/context budgets + cancellation) |
 | `TaskState` | Explicit per-task progress — the source of truth. | [Implemented] |
 | `ContextBuilder` | Builds the compact per-turn packet; budgeted compaction + action ledger. | [Implemented] |
 | `ModelClient` | Constrained decision protocol; streaming/delta assembly. | [Implemented] |
-| `ToolRuntime` | Executes typed, phase-gated tools against the workspace. | [Implemented] |
+| `ToolRuntime` | Executes typed tools against the workspace; isolates handler exceptions as failed `ToolResult`s. | [Implemented] |
 | `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4 + sensitive-path denylist over declared paths). | [Implemented] (synchronous; async with the REPL) |
 | `Verifier` | Proves completion via external evidence. | [Implemented] (`investigate`/`edit`/`test_only`) |
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id` (per-session log file). | [Implemented] |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
 | `Workspace` | Path confinement + sensitive-path denylist (resolved-path backstop), diff/rollback, command execution. | [Implemented] |
+| `Harness` | Public facade (`from_env()`/`run()`); wires defaults, every seam overridable; the CLI delegates to it. | [Implemented] |
 | `Session` | REPL above the runner (`§23`). | [Designed] (Phase 3) |
 
 ### The two control planes (don't conflate them — `§13`)
@@ -266,7 +267,7 @@ Verification always *runs and reports*. **Who decides on the result** shifts: in
 
 ## 5. Dry run — one task, end to end
 
-**Goal:** "Fix the failing auth test." `task_kind = edit`. This traces both the task lifecycle (§3) and verification (§4). *(The engine that runs this is now built (Phase 2); a live-model dogfood is still pending an endpoint.)*
+**Goal:** "Fix the failing auth test." `task_kind = edit`. This traces both the task lifecycle (§3) and verification (§4). *(The engine that runs this is built (through Phase 2.6) and dogfooded live against a configured model.)*
 
 ```mermaid
 sequenceDiagram
@@ -321,7 +322,7 @@ If the patch were wrong, the verifier returns `passed=false`, `recommended_next_
 
 ## 6. Current implementation footprint
 
-What exists in `src/avatar_harness/` today (through Phase 2):
+What exists in `src/avatar_harness/` today (through Phase 2.6):
 
 | Module | Contents | Maps to |
 | --- | --- | --- |
@@ -330,13 +331,15 @@ What exists in `src/avatar_harness/` today (through Phase 2):
 | `events.py` · `eventlog.py` | `Emitter` (observation-only, stamps `ts` + `session_id`) + `EventLog` (JSONL subscriber; CLI defaults to a per-session `events/<session_id>.jsonl` + `latest.jsonl` pointer) | `§13`, `§23` |
 | `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log`, clean-start assertion | `§8`, `§10`, `§15` |
 | `deps.py` | `RunDeps`, `CancellationToken` — run-scoped, no globals | `§8` |
-| `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime`), `filesystem`, `search`, `edit` (`apply_patch`), `commands` (`run_tests`/`run_linter`) | `§10` |
+| `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime` — handler exceptions isolated as failed results), `filesystem`, `search`, `edit` (`apply_patch`), `commands` (`run_tests`/`run_linter`) | `§10` |
 | `permission.py` | `PermissionPolicy` + `ToolPermission` — the synchronous `before_tool_call` gate | `§11` |
-| `model_client.py` | Constrained decision union + `OpenAIModelClient` (decision parsing) | `§6` |
-| `context.py` | `ContextBuilder` + `ContextPacket` — compact, phase-gated per-turn packet | `§9` |
+| `model_client.py` | Constrained decision union + `OpenAIModelClient` (lazy client — no key to construct); kind-aware prompt via `_KIND_FRAMING` | `§6` |
+| `context.py` | `ContextBuilder` + `ContextPacket` (carries `task_kind`) — compact, phase-gated per-turn packet | `§9` |
 | `verifier.py` | `Verifier` — `investigate`/`edit`/`test_only` gates; runs its own verification command | `§12` |
 | `artifact.py` | `ArtifactManager` + `Artifact` — `status = state.outcome`, files/commands/verification/diff | `§14` |
-| `runner.py` | `AgentRunner` — the §5 loop; runner-owned mutation; gate consult; bounding; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
-| `cli.py` | `run_agent` (real loop, takes `task_kind`) + `main()` reporting through `ArtifactManager` (+ `run_echo` Phase 0 skeleton) | `§5`/`§23` shell |
+| `runner.py` | `AgentRunner` — the §5 loop; runner-owned mutation; gate consult; phase advance/enforce + `phase_changed`; wall-clock/context budgets + cancellation; bounding; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
+| `harness.py` | `Harness` facade — wires defaults, every seam overridable; `from_env()` / `run()` | `§8` |
+| `__init__.py` | Curated public API (`__all__`): `Harness`, `TaskState`, `ToolDefinition`/`ToolResult`, `RunDeps`, `ModelClient`, `Workspace`, `HarnessConfig`, decision types | public surface |
+| `cli.py` | `run_agent`/`main()` — thin callers that delegate to `Harness`; `main()` reports through `ArtifactManager` (+ `run_echo` Phase 0 skeleton) | `§5`/`§23` shell |
 
-Remaining **[Designed]**: the interactive `Session`/REPL (`§17`/`§23`, Phase 3), automated `phase` transitions, and §21 extensions.
+Remaining **[Designed]**: the interactive `Session`/REPL (`§17`/`§23`, Phase 3 — async engine, typed event bus, durable execution per **ADR-0001**), free-text-goal → `task_kind` intake classification, and §21 extensions.
