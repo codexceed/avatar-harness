@@ -8,6 +8,8 @@ re-deriving the wiring.
 """
 
 import asyncio
+import subprocess
+import sys
 from typing import Any
 from unittest.mock import patch
 
@@ -107,6 +109,18 @@ def test_public_api_exports_stable_surface():
     for name in (*_STABLE_SURFACE, *_ASYNC_SURFACE):
         assert name in avatar_harness.__all__
         assert getattr(avatar_harness, name, None) is not None
+
+
+def test_core_imports_without_textual():
+    # The TUI cockpit is behind the optional [textual] extra: importing the core
+    # package must not pull in textual (or the tui package). Checked in a fresh
+    # interpreter so it is independent of whatever other tests have imported.
+    code = (
+        "import avatar_harness, sys; "
+        "assert 'textual' not in sys.modules, sorted(m for m in sys.modules if 'textual' in m); "
+        "assert 'avatar_harness.tui' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 async def test_harness_arun_runs_investigate_end_to_end(git_repo):
