@@ -69,3 +69,9 @@ class HarnessConfig(BaseSettings):
     model: str = "openai/gpt-4o-mini"
     base_url: str = "https://openrouter.ai/api/v1"
     api_key: str | None = None  # AVATAR_API_KEY; if unset, the client falls back to OPENAI_API_KEY
+
+    # Decision transport (ADR-0003 A). Native provider function-calling is the default —
+    # the provider owns the JSON envelope, so a large patch can't die in hand-escaping.
+    # `false` restores the legacy single-JSON-object protocol for endpoints whose
+    # tool-call support is broken (content-only replies also fall back automatically).
+    native_tool_calls: bool = True

@@ -80,7 +80,9 @@ def _msg(content: str | None = None, tool_calls: list | None = None):
 
 def _tc(name: str, arguments: str, call_id: str = "call_1"):
     """One provider tool call."""
-    return SimpleNamespace(id=call_id, type="function", function=SimpleNamespace(name=name, arguments=arguments))
+    return SimpleNamespace(
+        id=call_id, type="function", function=SimpleNamespace(name=name, arguments=arguments)
+    )
 
 
 def _fake_openai_messages(messages: list, captured: list[dict] | None = None):
@@ -96,18 +98,18 @@ def _fake_openai_messages(messages: list, captured: list[dict] | None = None):
 
 
 def _packet(**overrides) -> ContextPacket:
-    base = dict(
-        goal="add a retry to the client",
-        phase="investigating",
-        task_kind="edit",
-        allowed_tools=[
+    base = {
+        "goal": "add a retry to the client",
+        "phase": "investigating",
+        "task_kind": "edit",
+        "allowed_tools": [
             ToolSummary(
                 name="read_file",
                 description="read a file",
                 input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             )
         ],
-    )
+    }
     base.update(overrides)
     return ContextPacket(**base)
 
@@ -160,7 +162,9 @@ def test_native_mode_sends_tool_schemas():
     names = [t["function"]["name"] for t in sent["tools"]]
     assert "read_file" in names  # registry tools advertised as functions...
     assert "final_answer" in names and "ask_user" in names  # ...and the decision actions too
-    read_file_schema = next(t["function"]["parameters"] for t in sent["tools"] if t["function"]["name"] == "read_file")
+    read_file_schema = next(
+        t["function"]["parameters"] for t in sent["tools"] if t["function"]["name"] == "read_file"
+    )
     assert read_file_schema["properties"] == {"path": {"type": "string"}}  # real input schema, not prose
 
 
@@ -210,7 +214,9 @@ def test_native_plain_content_falls_back_to_json_decision():
     # An "OpenAI-compatible" endpoint that ignores `tools=` and answers in prose still
     # works: valid legacy-JSON content parses through parse_decision unchanged.
     content = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
-    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([_msg(content=content)]))
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=_fake_openai_messages([_msg(content=content)])
+    )
 
     decision = client.decide(_packet())
 
@@ -236,7 +242,9 @@ def test_native_system_prompt_drops_json_envelope():
     # In native mode the provider carries the schemas, so the prompt must not demand a
     # hand-written JSON envelope (the instruction that conflicted with tool-calling) —
     # while staying kind-aware (the 2.6 contract).
-    native_sys = next(m["content"] for m in build_messages(_packet(), native_tools=True) if m["role"] == "system")
+    native_sys = next(
+        m["content"] for m in build_messages(_packet(), native_tools=True) if m["role"] == "system"
+    )
     legacy_sys = next(m["content"] for m in build_messages(_packet()) if m["role"] == "system")
     assert "JSON object" in legacy_sys  # legacy contract untouched
     assert "JSON object" not in native_sys
