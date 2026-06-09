@@ -11,10 +11,45 @@ the edges (Principle A).
 
     from avatar_harness import Harness
     state = Harness.from_env().run("explain the retry loop")
+
+For an interactive UI or autonomous wrapper, the **two-plane async surface** is
+the one to build on — observation out (`Session.events()` → typed `HarnessEvent`s),
+control in (`Session.resolve_approval()` / `Session.cancel()`):
+
+    session = Harness.from_env().session("fix the bug", task_kind="edit")
+    run_task = asyncio.create_task(session.run())
+    async for event in session.events():
+        render(event)
+        if isinstance(event, ApprovalRequested):
+            await session.resolve_approval(event.approval_id, allow=ask_user(event))
+    state = await run_task
 """
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import RunDeps
+from avatar_harness.event_types import (
+    AgentEnd,
+    AgentStart,
+    ApprovalController,
+    ApprovalRequested,
+    ApprovalResolved,
+    CancellationObserved,
+    EventBase,
+    EventSink,
+    HarnessEvent,
+    ModelDecisionEvent,
+    ModelUpdate,
+    PhaseChanged,
+    ToolEnd,
+    ToolStart,
+    TurnEnd,
+    TurnStart,
+    VerificationEnd,
+    VerificationStart,
+    dump_event,
+    load_events,
+    parse_event,
+)
 from avatar_harness.harness import Harness
 from avatar_harness.model_client import (
     AskUser,
@@ -23,24 +58,53 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
+from avatar_harness.session import EventBus, Session
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.workspace import Workspace
 
 __version__ = "0.0.0"
 
-__all__ = [
-    "AskUser",
-    "FinalAnswer",
+__all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping is the SDK map
+    # --- core entry points & state ---
     "Harness",
     "HarnessConfig",
+    "TaskState",
+    "RunDeps",
+    "Workspace",
+    # --- model decisions ---
     "ModelClient",
     "ModelDecision",
-    "RunDeps",
-    "TaskState",
     "ToolCall",
+    "FinalAnswer",
+    "AskUser",
+    # --- tools ---
     "ToolDefinition",
     "ToolRegistry",
     "ToolResult",
-    "Workspace",
+    # --- two-plane async surface (Phase 3.0) ---
+    "Session",
+    "EventBus",
+    "EventSink",
+    "ApprovalController",
+    # --- typed lifecycle events ---
+    "HarnessEvent",
+    "EventBase",
+    "AgentStart",
+    "AgentEnd",
+    "TurnStart",
+    "TurnEnd",
+    "PhaseChanged",
+    "ModelDecisionEvent",
+    "ModelUpdate",
+    "ToolStart",
+    "ToolEnd",
+    "ApprovalRequested",
+    "ApprovalResolved",
+    "VerificationStart",
+    "VerificationEnd",
+    "CancellationObserved",
+    "parse_event",
+    "dump_event",
+    "load_events",
 ]

@@ -25,7 +25,14 @@ from avatar_harness.state import TaskState
 
 
 class EventBus:
-    """Stamps, orders, and fans typed events to a single async consumer (foundation).
+    """Stamps, orders, and **fans events to every subscriber independently** (foundation).
+
+    Each `subscribe()` gets its own queue, so multiple observers — a TUI, the journal,
+    a telemetry exporter, a benchmark collector — each see the *same* stream rather than
+    competing for a shared one. The fan-out is unbounded and non-blocking here; lane 1
+    swaps in bounded per-subscriber queues with a drop policy + the privileged journal.
+    A late subscriber sees only events published after it subscribed (the journal/
+    `history` is the lossless record for replay).
 
     Args:
         session_id: Stamped on every event so a stream/journal groups back to its run.
@@ -34,11 +41,26 @@ class EventBus:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         self.history: list[HarnessEvent] = []
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._subscribers: list[asyncio.Queue] = []
         self._next_id = 0
+        self._closed = False
+
+    def subscribe(self) -> "asyncio.Queue":
+        """Register an independent consumer and return its queue.
+
+        Returns:
+            A queue that will receive every event published from now on, then a `None`
+            close sentinel. An already-closed bus returns a queue holding only the sentinel.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        if self._closed:
+            queue.put_nowait(None)
+        else:
+            self._subscribers.append(queue)
+        return queue
 
     def publish_nowait(self, draft: HarnessEvent) -> HarnessEvent:
-        """Stamp `draft` with the next id/session/ts and enqueue it (never blocks, §13).
+        """Stamp `draft` and fan it out to every subscriber (never blocks, §13).
 
         Args:
             draft: The event to publish; mutated in place with the ordering keys.
@@ -51,7 +73,8 @@ class EventBus:
         draft.session_id = self.session_id
         draft.ts = datetime.now(UTC)
         self.history.append(draft)
-        self._queue.put_nowait(draft)
+        for queue in self._subscribers:
+            queue.put_nowait(draft)
         return draft
 
     async def emit(self, draft: HarnessEvent) -> HarnessEvent:
@@ -66,20 +89,10 @@ class EventBus:
         return self.publish_nowait(draft)
 
     def close(self) -> None:
-        """Signal end-of-stream so a consuming `stream()` terminates."""
-        self._queue.put_nowait(None)
-
-    async def stream(self) -> AsyncIterator[HarnessEvent]:
-        """Yield events in publish order until the bus is closed.
-
-        Yields:
-            Each stamped event, oldest first, until the close sentinel.
-        """
-        while True:
-            item = await self._queue.get()
-            if item is None:
-                return
-            yield item
+        """Signal end-of-stream to every subscriber so their drains terminate."""
+        self._closed = True
+        for queue in self._subscribers:
+            queue.put_nowait(None)
 
 
 class Session:
@@ -101,12 +114,31 @@ class Session:
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
-        """The observation plane: an async stream of typed events (cannot alter control).
+        """The observation plane: an independent async stream of typed events (§13).
+
+        Subscribes *eagerly* (at call time, not first iteration), so a consumer created
+        before `run()` never misses early events. Each call yields a fresh, independent
+        stream — many observers can watch the same run concurrently.
 
         Returns:
             An async iterator over this run's `HarnessEvent`s, ending on `agent_end`.
         """
-        return self.bus.stream()
+        return self._drain(self.bus.subscribe())
+
+    async def _drain(self, queue: "asyncio.Queue") -> AsyncIterator[HarnessEvent]:
+        """Yield events from one subscriber queue until the close sentinel.
+
+        Args:
+            queue: This consumer's queue, from `EventBus.subscribe`.
+
+        Yields:
+            Each event for this consumer, in publish order.
+        """
+        while True:
+            item = await queue.get()
+            if item is None:
+                return
+            yield item
 
     async def run(self) -> TaskState:
         """Drive the run with this session as the event sink + approval controller.

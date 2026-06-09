@@ -104,6 +104,33 @@ async def test_session_events_yields_typed_stream(tmp_path):
     assert any(e.type == "agent_end" for e in collected)  # the stream terminates on agent_end
 
 
+async def test_two_event_consumers_each_see_full_stream(tmp_path):
+    # SDK contract: independent observers (TUI, journal, telemetry, benchmark collector)
+    # each see the SAME run, not a competing split of one shared queue.
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "app.py"})),
+        ModelDecision(action=FinalAnswer(answer="x is set in app.py")),
+    ]
+    session = Session(
+        _runner(tmp_path, _read_registry(tmp_path), decisions),
+        TaskState(goal="where?", task_kind="investigate"),
+    )
+    a, b = [], []
+    gen_a, gen_b = session.events(), session.events()  # eager-subscribe both before the run
+
+    async def drain(gen, sink):
+        async for ev in gen:
+            sink.append(ev)
+
+    run_task = asyncio.create_task(session.run())
+    await asyncio.gather(drain(gen_a, a), drain(gen_b, b))
+    await run_task
+    assert [e.event_id for e in a] == [e.event_id for e in b]  # identical, independent streams
+    assert len(a) > 1
+    assert a[-1].type == "agent_end" and b[-1].type == "agent_end"
+
+
 async def test_session_events_subscriber_cannot_alter_control(tmp_path):
     # A raising observer cannot block or change the run outcome (§13 invariant).
     (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
