@@ -2,7 +2,7 @@
 
 **Authoritative, durable, git-tracked record of where the build is.** Read this first when resuming. `HARNESS_DESIGN.md` is *what* we're building and *why*; this file is *how far* we've gotten and *what's next*. Progress is tracked as checklists — a phase advances only when its boxes are ticked.
 
-> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. **Phase 2.6 ✅ complete 2026-06-09** (139/139 green; `make check` clean; CI gate green; PR #6) — built by a **4-lane worktree-isolated agents team**: tool-failure isolation, real phase advance/enforce, honored budgets + cancellation, public `Harness` facade, neutral model boundary (`openai` now an optional extra), plus a kind-aware-prompt addendum (`task_kind` on the `ContextPacket`) and a lazy OpenAI client (a `Harness` is constructible with no API key). A PR-review fix then closed an advertised-vs-admitted-tools drift — the context now advertises exactly what the runner's phase gate admits (one shared predicate), so a live edit task actually discovers `apply_patch` instead of looping on reads. Next: **Phase 3** (async engine · durable execution · TUI cockpit — ADR-0001).
+> **Current position:** Phase 2 ✅ complete (73/73 green; `make check` clean — lint + pyrefly + deptry + docstrings). The edit loop closes: `apply_patch` (atomic, path-confined) under the permission gate, the harness-owned `Verifier` runs its own command to set `outcome`, `ArtifactManager` reports it. Scripted-model smoke: read → patch → verifier runs command → success. **Live model dogfood confirmed 2026-06-08** (investigate task → read → grounded answer → verifier passed → `success`). **Phase 2.5 ✅ complete 2026-06-08** (110/110 green; `make check` clean) — sensitive-path denylist at the gate, `list_files` directory expansion, decision/action ledger, and less-lossy evidence compaction. **Phase 2.6 ✅ complete 2026-06-09** (139/139 green; `make check` clean; CI gate green; PR #6) — built by a **4-lane worktree-isolated agents team**: tool-failure isolation, real phase advance/enforce, honored budgets + cancellation, public `Harness` facade, neutral model boundary (`openai` now an optional extra), plus a kind-aware-prompt addendum (`task_kind` on the `ContextPacket`) and a lazy OpenAI client (a `Harness` is constructible with no API key). A PR-review fix then closed an advertised-vs-admitted-tools drift — the context now advertises exactly what the runner's phase gate admits (one shared predicate), so a live edit task actually discovers `apply_patch` instead of looping on reads. **Phase 3.0 foundation ✅ complete 2026-06-09** (158/158 green; `make check` clean; PR #7) — the foundation per ADR-0001/0002: a typed discriminated `HarnessEvent` union, the async `arun()` core (sync `run()` wraps it), and the two-plane `Session` (`events()` out · `resolve_approval()`/`cancel()` in). PR-review hardening folded in: **per-subscriber event fan-out** (independent observers, not one shared queue) and the **async/session surface exported + documented** (`Harness.arun()`/`session()`, `Session`, typed events in `__all__`). Next: **Phase 3.1** — the contract-first lane team (engine internals · Textual cockpit · `run_command`).
 
 ## How to use this file
 
@@ -275,27 +275,36 @@ The high/medium-impact items from a core-library assessment (cross-validated by 
 - [x] the default model adapter is provider- and kind-neutral; `openai` is an optional extra
 - [x] all lanes green · `make check` clean
 
-## Phase 3 — Interactive cockpit (async engine · durable execution · TUI)
+## Phase 3 — Interactive cockpit (async engine · two-plane session · TUI)
 
-Design locked in **ADR-0001** (`docs/adr/0001-async-event-bus-and-durable-execution.md`), refined with Codex (gpt-5.4/xhigh). The interaction layer (§23) rides on three structural upgrades, sequenced **sync-first** per the ADR migration plan (Phase 2.6 lands first).
+Design locked in **ADR-0001** (async engine · typed event bus · durable execution) and **ADR-0002** (`docs/adr/0002-interactive-tui-cockpit-and-mvp-feature-set.md` — the MVP coding-agent feature set · **Textual full-screen cockpit** · constrained tier-3 **`run_command`** · **visible modes** over a hidden classifier · **plan mode**), the latter cross-validated with Codex (gpt-5.5/xhigh). Phase 3 is a **layered build**, not a 2.6-style disjoint-file fan-out: a sequential **foundation** (a stable contract the lanes fill in) → a small **contract-first lane team** → a sequential **tail**. Durable execution moves *past* the MVP (ADR-0002 defers crash-resume wiring).
 
-**3a — Async engine.** `AgentRunner.arun()` becomes the loop; sync `run()` wraps it via `asyncio.run()`. Legacy sync model/tool/verifier bodies offloaded with `asyncio.to_thread()` behind async adapters. The one costly-to-retrofit decision; it pays for the TUI *and* web/server cockpits.
+### 3.0 Foundation — the stable contract ✅ complete 2026-06-09 (17 foundation tests; 158/158 suite green; `make check` clean; PR #7)
 
-**3b — Typed async event bus** (replaces the sync raw-dict `Emitter`). A versioned discriminated-union `HarnessEvent` (pydantic) with `*_start`/`*_update`/`*_end` granularity for model + tools, plus `phase_changed`, approval, checkpoint, cancellation events. An `AsyncEventBus` fans out **non-blocking** to bounded per-subscriber queues (per-subscriber drop policy); a slow/broken subscriber can never stall the loop. The **journal is privileged** — a lossless, awaited, write-ahead sink on the commit path, not just another subscriber.
+The single sequential spine the lanes fan out around: the typed event union, the async core, and the two-plane session API. The *interface* is stable (lanes don't edit the event-union types or the session API signatures); lanes fill in implementations behind it. Hardened on PR-review feedback: per-subscriber `events()` fan-out and an explicit, exported async/session SDK surface.
 
-**3c — Two-plane UX integration.** Observation flows out via `session.events()` (cannot block/redirect); control flows in via explicit awaited methods — `session.resolve_approval()`, `session.cancel()` — and the async `before_tool_call` hook. An event *announces* an approval need; the decision returns through the control method, never the event. (No `drive()` generator — it blurs the planes.) Model output streams as `model_update(channel="display")`; the action dispatches once, after a validated `ModelDecision`; private chain-of-thought is never streamed.
+- [x] **Typed `HarnessEvent` union** (`event_types.py`) — closed, versioned, discriminated; `event_id` bus-assigned; `EventLog` round-trips typed events; `EventSink`/`ApprovalController` protocols. The `type` discriminator lives per concrete event (not the mutable base).
+  - [x] `test_harness_event_union_round_trips` · `test_event_base_fields_present` · `test_unknown_event_type_is_rejected` · `test_model_update_channel_is_display` · `test_eventlog_writes_and_reloads_typed_events`
+- [x] **Async core `arun()`** (`runner.py`) — the real loop; sync `run()` wraps it via `asyncio.run()`; sync model/tool/verifier bodies offloaded with `to_thread`; typed events published in order. (Removed the now-dead sync `_run_tool_call`/`_verify` twins.)
+  - [x] `test_arun_drives_loop_to_terminal_outcome` · `test_run_wraps_arun_via_asyncio_run` · `test_sync_tool_body_does_not_block_loop` · `test_cancellation_observed_during_arun` · `test_arun_emits_typed_events_with_monotonic_ids`
+- [x] **Two-plane `Session`** (`session.py`) — `events()` out (cannot block/redirect); `resolve_approval()`/`cancel()` in; an event *announces* an approval need, the control method *decides* it (§13). `EventBus` is the foundation's simple unbounded fan-out.
+  - [x] `test_session_events_yields_typed_stream` · `test_two_event_consumers_each_see_full_stream` · `test_session_events_subscriber_cannot_alter_control` · `test_resolve_approval_unblocks_gated_call` · `test_cancel_records_feedback_and_stops` · `test_approval_announced_by_event_not_decided_by_it`
 
-**3d — Durable execution** (the SOTA frontier; scope ends here). Checkpoint at turn end + write-ahead intent before any side effect; `resume()` replays the journal into `TaskState` with **semantics-aware** rules — reuse logged reads, never re-apply a patch (validate the workspace diff hash), resume into a pending approval (same `approval_id`). Pause/resume survives a process restart. *Deferred past this line:* MCP, middleware pipeline, graph topology.
+### 3.1 Lanes — contract-first team (pending; tests proposed before code)
 
-**TUI surface (§23):** REPL over `async with harness.session(...)`; streaming render subscribes to `events()`; allow-once/deny approval via `resolve_approval`; Ctrl-C → `session.cancel()` → `add_feedback`; `/diff`, `/quit` hit no model; batch (`--auto`) shares the path.
+- [ ] **Lane 1 · Engine internals** — upgrade the foundation `EventBus` to a **bounded** per-subscriber fan-out (drop policy: coalesce/drop `*_update` under pressure, never lifecycle/control) + a privileged write-ahead `JsonlEventJournal`; route `arun()` emissions through `await bus.publish()`. *Depends only on the foundation's event types.*
+- [ ] **Lane 2 · Textual cockpit** — full-screen panes + status bar + input + approval/plan/diff modals, against a **replay session**; multi-turn `SessionState` + `submit()` + visible-mode routing. *Depends only on event types + session API.*
+- [ ] **Lane 3 · `run_command`** — tier-3 tool over `Workspace.run`; prefix-scoped `ApprovalGrant`; default-blocked in batch, approval-gated in the REPL. *Independent.*
 
-- [ ] Tests proposed & approved (per ADR-0001; depends on Phase 2.6 landing first)
-- [ ] 3a async engine: red → green
-- [ ] 3b typed event bus + privileged journal: red → green
-- [ ] 3c two-plane session API: red → green
-- [ ] 3d durable checkpoint + resume (semantics-aware): red → green
-- [ ] TUI cockpit: red → green
-- [ ] Exit: multi-turn REPL streams model+tool activity by phase, prompts approval before `apply_patch`, cancels in-flight work and refeeds, **resumes a killed run from the journal without re-applying side effects**, `/diff` runs model-free, `--auto` shares the code path
+### 3.2 Tail — sequential (pending)
+
+- [ ] **Plan mode** (read-only plan → approve/revise → approved plan seeds the edit task) · **conversational-verification authority** (runs+reports, human terminal; `--auto` keeps the strict §12 gate) · **meta commands** + minimal `@path`.
+
+### 3.3 Durable execution — deferred past the MVP
+
+- [ ] Per-turn checkpoint + write-ahead intent; `resume()` with **semantics-aware** replay (reuse logged reads, never re-apply a patch — validate the diff hash, resume into a pending approval). *Deferred past this line:* MCP, middleware, graph topology.
+
+**Exit (MVP cockpit):** multi-turn REPL streams model+tool activity by phase, prompts approval before `apply_patch`/`run_command`, cancels in-flight work and refeeds, plan→approve→build, `/diff` runs model-free, `--auto` shares the code path.
 
 ## Phase 4+ — Earned extensions
 

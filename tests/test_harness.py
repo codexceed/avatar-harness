@@ -7,6 +7,7 @@ actually used, and (d) that the CLI delegates to the facade rather than
 re-deriving the wiring.
 """
 
+import asyncio
 from typing import Any
 from unittest.mock import patch
 
@@ -70,14 +71,57 @@ _STABLE_SURFACE = (
     "AskUser",
 )
 
+# The async / two-plane surface a third-party UI or autonomous wrapper builds against
+# (Phase 3.0). Exported deliberately so consumers never deep-import internals.
+_ASYNC_SURFACE = (
+    "Session",
+    "HarnessEvent",
+    "EventBase",
+    "EventSink",
+    "ApprovalController",
+    "AgentStart",
+    "AgentEnd",
+    "PhaseChanged",
+    "ModelUpdate",
+    "ToolStart",
+    "ToolEnd",
+    "ApprovalRequested",
+    "ApprovalResolved",
+    "VerificationStart",
+    "VerificationEnd",
+    "parse_event",
+    "load_events",
+)
+
 
 def test_public_api_exports_stable_surface():
     # The curated surface a downstream user imports — pinning it guards against
     # accidental churn of the public contract: every name is both importable from
     # the top-level package and listed in `__all__`.
-    for name in _STABLE_SURFACE:
+    for name in (*_STABLE_SURFACE, *_ASYNC_SURFACE):
         assert name in avatar_harness.__all__
         assert getattr(avatar_harness, name, None) is not None
+
+
+async def test_harness_arun_runs_investigate_end_to_end(git_repo):
+    # The async entry point: `await harness.arun(...)` drives the same loop as run().
+    harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=_read_then_answer())
+    state = await harness.arun("explain add()", task_kind="investigate")
+    assert state.outcome == "success"
+    assert "calc.py" in state.files_read
+
+
+async def test_harness_session_streams_to_completion(git_repo):
+    # The two-plane SDK shape: harness.session(...) → events() out, run() drives it.
+    harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=_read_then_answer())
+    session = harness.session("explain add()", task_kind="investigate")
+    seen: list[str] = []
+    run_task = asyncio.create_task(session.run())
+    async for ev in session.events():
+        seen.append(ev.type)
+    state = await run_task
+    assert state.outcome == "success"
+    assert seen[-1] == "agent_end"  # the stream ran to completion
 
 
 def test_harness_from_env_runs_investigate_end_to_end(git_repo, monkeypatch):

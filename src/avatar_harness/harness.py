@@ -22,6 +22,7 @@ from avatar_harness.events import Emitter
 from avatar_harness.model_client import ModelClient, OpenAIModelClient
 from avatar_harness.permission import PermissionPolicy
 from avatar_harness.runner import AgentRunner
+from avatar_harness.session import Session
 from avatar_harness.state import TaskState
 from avatar_harness.tools import default_registry
 from avatar_harness.tools.base import ToolRegistry
@@ -104,26 +105,17 @@ class Harness:
             emitter=emitter,
         )
 
-    def run(
-        self,
-        task: str,
-        *,
-        task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
-        allow_dirty: bool = False,
-    ) -> TaskState:
-        """Run the agent loop over `task` and return the terminal `TaskState`.
+    def _build_runner(self, allow_dirty: bool) -> AgentRunner:
+        """Assemble a run-scoped `AgentRunner` (shared by `run`/`arun`/`session`).
 
-        Constructs the run-scoped `Workspace`/`RunDeps` the same way `cli.run_agent`
-        does — threading `config.sensitive_path_globs` into the workspace as the
-        secure-by-default backstop — then drives the `AgentRunner`.
+        Constructs the `Workspace`/`RunDeps` the same way `cli.run_agent` did — threading
+        `config.sensitive_path_globs` into the workspace as the secure-by-default backstop.
 
         Args:
-            task: The natural-language task to run.
-            task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
             allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
 
         Returns:
-            The terminal `TaskState` after the loop settles.
+            A fresh `AgentRunner` wired with this facade's collaborators.
         """
         deps = RunDeps(
             workspace=Workspace(
@@ -134,7 +126,7 @@ class Harness:
             config=self.config,
             cancellation=CancellationToken(),
         )
-        runner = AgentRunner(
+        return AgentRunner(
             model_client=self.model,
             registry=self.tools,
             deps=deps,
@@ -144,4 +136,71 @@ class Harness:
             config=self.config,
             policy=self.policy,
         )
-        return runner.run(TaskState(goal=task, task_kind=task_kind))
+
+    def run(
+        self,
+        task: str,
+        *,
+        task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
+        allow_dirty: bool = False,
+    ) -> TaskState:
+        """Run the agent loop over `task` synchronously and return the terminal `TaskState`.
+
+        The batch/library entry point; for an interactive UI use `session` (observation +
+        control) or `arun` (the bare async loop).
+
+        Args:
+            task: The natural-language task to run.
+            task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+            allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+
+        Returns:
+            The terminal `TaskState` after the loop settles.
+        """
+        return self._build_runner(allow_dirty).run(TaskState(goal=task, task_kind=task_kind))
+
+    async def arun(
+        self,
+        task: str,
+        *,
+        task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
+        allow_dirty: bool = False,
+    ) -> TaskState:
+        """Async twin of `run` — the bare loop, for callers already on an event loop.
+
+        Use `session` instead when you also want the typed event stream + approval/cancel
+        controls; `arun` returns only the terminal state.
+
+        Args:
+            task: The natural-language task to run.
+            task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+            allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+
+        Returns:
+            The terminal `TaskState` after the loop settles.
+        """
+        return await self._build_runner(allow_dirty).arun(TaskState(goal=task, task_kind=task_kind))
+
+    def session(
+        self,
+        task: str,
+        *,
+        task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
+        allow_dirty: bool = False,
+    ) -> Session:
+        """Open an interactive `Session` over `task` — the two-plane SDK surface (§13, §23).
+
+        Returns a not-yet-started session: drive it with `await session.run()` while
+        consuming `session.events()` (observation) and calling `session.resolve_approval()`
+        / `session.cancel()` (control). This is the shape a TUI or autonomous wrapper binds to.
+
+        Args:
+            task: The natural-language task to run.
+            task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+            allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+
+        Returns:
+            A `Session` wrapping the run — observation out, control in.
+        """
+        runner = self._build_runner(allow_dirty)
+        return Session(runner, TaskState(goal=task, task_kind=task_kind))

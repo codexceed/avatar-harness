@@ -119,7 +119,36 @@ harness = Harness(
 state = harness.run("fix the failing auth test", task_kind="edit")
 ```
 
-`Harness.from_env()` needs no API key to construct (credentials are used only when the model is first called). Public exports: `Harness`, `HarnessConfig`, `TaskState`, `ToolDefinition`, `ToolResult`, `RunDeps`, `ModelClient`, `Workspace`, and the decision types.
+`Harness.from_env()` needs no API key to construct (credentials are used only when the model is first called).
+
+### Async + interactive (the two-plane surface)
+
+For an interactive UI or an autonomous wrapper, build on the **session** surface — typed events flow *out* (observation, never blocking the run), approval/cancel flow *in* (control). The same engine powers it; `run()` is just the batch degenerate case.
+
+```python
+import asyncio
+from avatar_harness import Harness, ApprovalRequested
+
+async def main():
+    harness = Harness.from_env()
+
+    # Bare async loop (returns only the terminal state):
+    state = await harness.arun("explain the retry loop", task_kind="investigate")
+
+    # Or an interactive session — observe the stream, answer approvals:
+    session = harness.session("fix the failing auth test", task_kind="edit")
+    run_task = asyncio.create_task(session.run())
+    async for event in session.events():
+        render(event)                                   # your UI
+        if isinstance(event, ApprovalRequested):        # control: explicit, awaited
+            await session.resolve_approval(event.approval_id, allow=ask_user(event))
+    state = await run_task
+    # session.cancel("user pressed esc") interrupts from anywhere
+
+asyncio.run(main())
+```
+
+**Public exports** (`avatar_harness.__all__`): the core entry points (`Harness`, `HarnessConfig`, `TaskState`, `Workspace`, `RunDeps`), decision types, tool contracts, the **two-plane surface** (`Session`, `EventBus`, `EventSink`, `ApprovalController`), and the typed lifecycle events (`HarnessEvent` + `ApprovalRequested`, `ToolStart`/`ToolEnd`, `PhaseChanged`, …). Build on these rather than deep-importing internals.
 
 ## Development
 
