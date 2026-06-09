@@ -1,0 +1,176 @@
+"""Phase 3.2c — plan mode (§23, ADR-0002 Decision 5).
+
+Plan mode is a session *interaction mode*, not a `task_kind`. It rides the existing
+phase gate: a read-only **plan task** (`task_kind="investigate"`, mutation blocked at the
+gate) proposes a plan, the human **approves or revises**, and the approved plan **seeds the
+edit task as a constraint** (which `model_client` surfaces). Revise re-runs the read-only
+plan task so the model refines it (ADR mermaid: revise → PLAN). No new control plane.
+
+Pure `ReplSession` logic here (mirroring 3.2a meta + 3.2b grounding); the cockpit renders
+the flow through `PlanModal` in 3.2e. The `decide` callback stands in for that modal — in
+tests it is injected, returning a `PlanDecision(approved, text)`.
+"""
+
+from avatar_harness.config import HarnessConfig
+from avatar_harness.harness import Harness
+from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
+from avatar_harness.session_state import PlanDecision, ReplSession, default_mode
+from avatar_harness.tools.base import ToolRegistry
+from avatar_harness.tools.edit import apply_patch
+from avatar_harness.tools.filesystem import read_file
+
+# A valid unified diff against the `git_repo` fixture's calc.py (fixes the `-` bug).
+_FIX = "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+
+
+class ScriptedModel(ModelClient):
+    """Replays pre-built decisions across the whole session; repeats the last when exhausted."""
+
+    def __init__(self, decisions: list[ModelDecision]) -> None:
+        self._decisions = decisions
+        self._i = 0
+
+    def decide(self, context: object) -> ModelDecision:
+        decision = self._decisions[min(self._i, len(self._decisions) - 1)]
+        self._i += 1
+        return decision
+
+
+def _repl(root, decisions=None, *, edit=False, **cfg) -> ReplSession:
+    """A ReplSession whose registry holds the read tools (+ apply_patch when `edit`)."""
+    reg = ToolRegistry()
+    reg.register(read_file)
+    if edit:
+        reg.register(apply_patch)
+    config = HarnessConfig(workspace_root=str(root), **cfg)
+    return ReplSession(Harness(config=config, model=ScriptedModel(decisions or []), tools=reg))
+
+
+def _evidence(session, kind: str) -> list:
+    return [e for e in session.state.evidence if e.kind == kind]
+
+
+class _Decider:
+    """Records calls and replays a script of `PlanDecision`s — stands in for the PlanModal."""
+
+    def __init__(self, *responses: PlanDecision) -> None:
+        self._responses = responses
+        self.proposals: list[str] = []
+
+    def __call__(self, proposed: str) -> PlanDecision:
+        self.proposals.append(proposed)
+        i = min(len(self.proposals) - 1, len(self._responses) - 1)
+        resp = self._responses[i]
+        # An approval with no edited text keeps the proposed plan.
+        return resp if resp.text else PlanDecision(approved=resp.approved, text=proposed)
+
+
+# --- the read-only plan task -------------------------------------------------------------
+
+
+def test_plan_mode_task_is_read_only(tmp_path):
+    repl = _repl(tmp_path)
+    repl.set_mode("plan")
+    session = repl.start("rework the auth flow")
+    # The plan task investigates (read-only) — mutation is blocked at the phase + task_kind gate.
+    assert session.state.task_kind == "investigate"
+    assert session.state.phase == "investigating"
+    # A planning directive is seeded so the model proposes a plan rather than answering.
+    assert any("plan" in c.lower() for c in session.state.constraints)
+
+
+# --- the approved plan seeds the edit task -----------------------------------------------
+
+
+def test_approved_plan_seeds_edit_task_constraints(tmp_path):
+    plan = "1. flip the sign in add()\n2. keep the signature"
+    session = _repl(tmp_path).start_build("fix the add bug", plan)
+    assert session.state.task_kind == "edit"  # the build task can reach the edit tools
+    assert any(plan in c for c in session.state.constraints)  # approved plan rides as a constraint
+
+
+# --- the full plan → approve → build flow ------------------------------------------------
+
+
+async def test_plan_flow_runs_plan_then_build(git_repo):
+    the_plan = "PLAN: change `-` to `+` in add()"
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer=the_plan)),  # plan task proposes the plan
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="fixed add()")),  # build task
+    ]
+    repl = _repl(git_repo, decisions, edit=True, test_command="true", lint_command="true")
+    decide = _Decider(PlanDecision(approved=True, text=""))  # approve the proposed plan as-is
+    state = await repl.submit_plan("fix the add bug", decide)
+
+    assert state.task_kind == "edit"
+    assert state.outcome == "success"  # plan → approve → edit → verified
+    assert len(repl.state.tasks) == 1  # only the build task is the recorded goal task
+    assert any(the_plan in c for c in state.constraints)  # the approved plan seeded the build
+    assert len(decide.proposals) == 1  # approved on the first proposal
+    assert [t.role for t in repl.state.history] == ["user", "agent"]  # one turn pair, not doubled
+
+
+async def test_revise_reruns_plan_before_build(git_repo):
+    the_plan = "PLAN: change `-` to `+` in add()"
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer=the_plan)),  # first plan attempt
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer=the_plan)),  # re-plan after revise
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="fixed add()")),  # build task
+    ]
+    repl = _repl(git_repo, decisions, edit=True, test_command="true", lint_command="true")
+    decide = _Decider(
+        PlanDecision(approved=False, text="also keep the docstring"),  # revise → re-plan
+        PlanDecision(approved=True, text=""),  # then approve
+    )
+    state = await repl.submit_plan("fix the add bug", decide)
+
+    assert len(decide.proposals) == 2  # the plan task re-ran on revise before approval
+    assert state.outcome == "success"
+    assert len(repl.state.tasks) == 1  # no build task ran until the plan was approved
+    assert any(the_plan in c for c in state.constraints)
+
+
+# --- mode plumbing -----------------------------------------------------------------------
+
+
+def test_plan_meta_command_enters_plan_mode(tmp_path):
+    repl = _repl(tmp_path)
+    result = repl.run_meta("/plan")
+    assert result.kind == "mode_set"
+    assert repl.mode == "plan"
+
+    repl2 = _repl(tmp_path)
+    assert repl2.run_meta("/mode plan").kind == "mode_set"  # /mode plan is also valid
+    assert repl2.mode == "plan"
+
+
+def test_heuristic_never_selects_plan(tmp_path):
+    # The heuristic only ever returns edit/investigate — plan is opt-in (visible), never inferred.
+    assert default_mode("fix the failing test") == "edit"
+    assert default_mode("explain how the loop works") == "investigate"
+    repl = _repl(tmp_path)  # no explicit override
+    assert repl.resolve_mode("fix the failing test") != "plan"
+    assert repl.resolve_mode("explain how the loop works") != "plan"
+
+
+# --- plan mode composes with history + grounding -----------------------------------------
+
+
+async def test_plan_task_seeds_history_and_grounding(git_repo):
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py adds two numbers")),
+    ]
+    repl = _repl(git_repo, decisions)
+    await repl.submit("explain calc.py")  # a prior turn populates history
+
+    repl.set_mode("plan")
+    session = repl.start("rework @calc.py")  # plan task with an @path reference
+    assert session.state.task_kind == "investigate"  # still the read-only plan task
+    assert any("explain calc.py" in e.summary for e in _evidence(session, "history"))
+    assert any("calc.py" in e.summary for e in _evidence(session, "grounding"))
