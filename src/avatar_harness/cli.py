@@ -18,7 +18,9 @@ from avatar_harness.eventlog import EventLog
 from avatar_harness.events import Emitter, Event
 from avatar_harness.harness import Harness
 from avatar_harness.model_client import ModelClient
+from avatar_harness.session_state import ReplSession
 from avatar_harness.state import TaskState
+from avatar_harness.tui import load_cockpit
 from avatar_harness.workspace import DirtyWorkspaceError, Workspace
 
 # Truncation width for event values rendered to the terminal.
@@ -133,6 +135,24 @@ def _update_latest_pointer(log_path: Path) -> None:
         pointer.symlink_to(log_path.name)
 
 
+def _launch_cockpit(*, config: HarnessConfig, model_client: ModelClient | None, auto: bool) -> int:
+    """Build a `ReplSession` over the cockpit and run it to exit (the `--interactive` path).
+
+    Args:
+        config: Harness config for the session.
+        model_client: Model client; a default `OpenAIModelClient` if omitted.
+        auto: `True` keeps the strict §12 gate; `False` (default) is conversational (§23.5).
+
+    Returns:
+        Process exit code (`0` once the cockpit is dismissed).
+    """
+    harness = Harness(config=config, model=model_client)
+    repl = ReplSession(harness, auto=auto)
+    cockpit_cls = load_cockpit()  # guarded import — clear hint if the [textual] extra is absent
+    cockpit_cls(repl=repl).run()
+    return 0
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -155,7 +175,7 @@ def main(
         prog="avatar-harness",
         description="A bounded, verifiable coding-agent harness.",
     )
-    parser.add_argument("task", help="The natural-language task to run.")
+    parser.add_argument("task", nargs="?", default=None, help="The natural-language task to run.")
     parser.add_argument(
         "--log",
         default=None,
@@ -166,9 +186,24 @@ def main(
         action="store_true",
         help="Run despite uncommitted tracked changes in the workspace (§15).",
     )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Launch the interactive Textual cockpit (a multi-turn REPL) instead of a batch run.",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="In the cockpit, keep the strict §12 verification gate (default: conversational).",
+    )
     args = parser.parse_args(argv)
 
     config = config or HarnessConfig()
+    if args.interactive:
+        return _launch_cockpit(config=config, model_client=model_client, auto=args.auto)
+    if args.task is None:
+        parser.error("a task is required (or pass --interactive for the cockpit)")
+
     session_id = uuid4().hex
     log_path = _resolve_log_path(args.log, session_id)
     emitter = Emitter(session_id=session_id)

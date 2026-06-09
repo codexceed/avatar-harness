@@ -6,14 +6,15 @@ A minimal, ground-up **coding agent harness** — the runtime around an LLM that
 
 ## Status
 
-**In active development (TDD, phased).** The non-interactive engine is built and tested: the read-only investigate loop runs end-to-end against a live model, and the editing path (`apply_patch` under a permission gate → harness-owned verifier → artifact) is implemented and covered by tests.
+**In active development (TDD, phased).** Both the non-interactive engine and the interactive cockpit are built and tested: the read-only investigate loop runs end-to-end against a live model, the editing path (`apply_patch` under a permission gate → harness-owned verifier → artifact) is implemented and covered, and the Phase 3 cockpit (async engine + two-plane session + Textual TUI) drives a multi-turn REPL.
 
 What this means for you today:
 
-- **Working now:** ask a question about a repo and get a grounded, verifier-checked answer (`investigate` tasks).
-- **Use it as a library:** `from avatar_harness import Harness` — embed the engine in your own app (`Harness.from_env().run(...)`), with every collaborator (model, tools, verifier, policy) overridable.
-- **Built but not yet wired into CLI intake:** edit tasks (`"fix the bug in X"` → patch → verify). The engine handles them; classifying a goal into an edit task from the CLI lands in a later phase.
-- **Not yet:** the interactive REPL (Phase 3 — async engine, durable execution, TUI; see [`docs/adr/`](docs/adr)).
+- **Working now (batch):** ask a question about a repo and get a grounded, verifier-checked answer (`investigate` tasks).
+- **Working now (interactive):** `avatar-harness --interactive` — a multi-turn cockpit that reads/edits/runs/verifies with you in the loop (approval prompts, plan mode, `@path`, meta commands; see [Usage](#usage)). Needs the `[textual]` extra.
+- **Use it as a library:** `from avatar_harness import Harness` — embed the engine in your own app (`Harness.from_env().run(...)`), or drive the two-plane `Session`/`ReplSession` surface; every collaborator (model, tools, verifier, policy) is overridable.
+- **Built but not yet wired into batch-CLI intake:** classifying a free-text goal into an edit task on the *non-interactive* path (the cockpit already routes modes); the engine handles edit tasks today.
+- **Not yet:** durable crash-resume (Phase 3.3; see [`docs/adr/`](docs/adr)).
 
 See [`PROGRESS.md`](PROGRESS.md) for the build ledger, [`ARCHITECTURE.md`](ARCHITECTURE.md) for the system map, and [`HARNESS_DESIGN.md`](HARNESS_DESIGN.md) for the full design spec.
 
@@ -59,7 +60,7 @@ make install          # uv sync — installs deps + dev tools
 
 > **Embedding it as a library** (outside this repo's dev env): `openai` is an **optional extra**. Run `pip install avatar-harness[openai]` (or `uv add avatar-harness[openai]`) to use the default `OpenAIModelClient`, or install the base package and inject your own `ModelClient`. The core imports without `openai`; a `Harness` is constructible without an API key (credentials are needed only at inference).
 
-> **Interactive cockpit (in progress):** the Textual TUI is a second optional extra — `pip install avatar-harness[textual]`. The core engine and SDK import without it; `import avatar_harness` never pulls in `textual`. The cockpit (event-streamed panes + status bar + input, plus approval/plan/diff modals), meta commands (`/help` `/diff` `/mode` `/plan` …), `@path` grounding, and the plan-mode flow (read-only plan → approve/revise → constrained edit) are built; the conversational-verification authority and the CLI launch flag that wires it all end-to-end are the remaining 3.2-tail increments (see [`docs/adr/`](docs/adr)).
+> **Interactive cockpit:** the Textual TUI is a second optional extra — `pip install avatar-harness[textual]`. The core engine and SDK import without it; `import avatar_harness` never pulls in `textual`. Launch it with `avatar-harness --interactive` (see [Usage](#usage)): event-streamed transcript + status bar + input, approval/plan/diff modals, meta commands, `@path` grounding, the plan-mode flow (read-only plan → approve/revise → constrained edit), and conversational verification (`--auto` restores the strict gate). Durable crash-resume (Phase 3.3) is the remaining cockpit increment (see [`docs/adr/`](docs/adr)).
 
 ## Configuration
 
@@ -93,10 +94,20 @@ make run TASK="explain how apply_patch stays atomic"
 
 It prints a timestamped event trajectory as it works (`[model_decision] … [tool_execution_end] … [verification_end]`), then a `Status:` line and the cited answer. The full run is also written to a JSONL event log for replay/debugging. Every event carries a `session_id` identifying the run, so a log can always be grouped back into its sessions.
 
+**Interactive cockpit.** Pass `--interactive` (needs the `[textual]` extra) for a full-screen multi-turn REPL instead of a one-shot batch run:
+
+```bash
+uv run avatar-harness --interactive
+```
+
+A status bar (mode · phase · outcome), a streaming transcript, and an input box. Type goals across turns; the agent reads/edits/runs/verifies with you in the loop. Slash **meta commands** are handled locally (never hit the model): `/help`, `/mode <edit|investigate|test_only|plan>`, `/plan`, `/diff`, `/state`, `/permissions`, `/quit`. Reference a file with `@path/to/file` to ground a goal in it. `apply_patch`/`run_command` prompt for approval (`[y]` once · `[a]` always for this session · `[d]` deny); plan mode proposes a read-only plan you approve or revise before any edit. By default the cockpit is **conversational** — verification always runs and is reported, but the reply isn't blocked on it (you're the terminal authority); pass `--auto` to keep the strict gate.
+
 **Flags:**
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
+| `--interactive` | off | Launch the interactive Textual cockpit (a multi-turn REPL) instead of a batch run. Needs the `[textual]` extra. |
+| `--auto` | off | In the cockpit, keep the strict verification gate (default: conversational — verify runs + reports, the human decides). |
 | `--log PATH` | `events/<session_id>.jsonl` | Where to write the append-only JSONL event log. By default each run gets its own per-session file, and `events/latest.jsonl` points at the newest. Pass an explicit path to write there instead (no `latest` pointer is maintained for explicit paths). |
 | `--allow-dirty` | off | Run despite uncommitted **tracked** changes in the workspace. |
 

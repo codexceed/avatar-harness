@@ -14,6 +14,7 @@ pytest.importorskip("textual")  # the cockpit lives behind the optional [textual
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
+from avatar_harness import cli
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
 from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
@@ -182,7 +183,14 @@ async def test_plan_mode_runs_plan_then_modal_then_build(git_repo):
         ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
         ModelDecision(action=FinalAnswer(answer="fixed add()")),
     ]
-    repl = _repl(git_repo, decisions, registry=_read_registry(edit=True), auto=True, test_command="true", lint_command="true")
+    repl = _repl(
+        git_repo,
+        decisions,
+        registry=_read_registry(edit=True),
+        auto=True,
+        test_command="true",
+        lint_command="true",
+    )
     repl.set_mode("plan")
     app = CockpitApp(repl=repl)
     async with app.run_test() as pilot:
@@ -199,17 +207,16 @@ async def test_plan_mode_runs_plan_then_modal_then_build(git_repo):
 
 
 def test_main_interactive_launches_cockpit(git_repo, monkeypatch):
-    from avatar_harness import cli
-
     launched: dict = {}
 
-    def _fake_run(self, *args, **kwargs):  # noqa: ANN001 — stub for CockpitApp.run
+    def _fake_run(self, *args, **kwargs):  # stub replacing the blocking CockpitApp.run
         launched["repl"] = self.repl
-        return None
 
     monkeypatch.setattr(CockpitApp, "run", _fake_run)
     config = HarnessConfig(workspace_root=str(git_repo))
-    code = cli.main(["fix something", "--interactive", "--auto"], config=config, model_client=ScriptedModel([]))
+    code = cli.main(
+        ["fix something", "--interactive", "--auto"], config=config, model_client=ScriptedModel([])
+    )
     assert code == 0
     assert isinstance(launched["repl"], ReplSession)
     assert launched["repl"].auto is True  # --auto threaded into the REPL (strict gate)
