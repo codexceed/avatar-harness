@@ -17,7 +17,7 @@ from avatar_harness.runner import AgentRunner
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import apply_patch
+from avatar_harness.tools.edit import apply_patch, write_file
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
@@ -290,6 +290,28 @@ def test_pure_creation_from_bare_workspace_succeeds(git_repo):
     assert result.outcome == "success"
     assert not result.files_read  # never forced to read
     assert "greeter.py" in result.files_modified
+
+
+def test_pure_creation_via_write_file_succeeds(git_repo):
+    # ADR-0003 B: file creation as plain content — phase advance (tier-1 edit intent),
+    # staging into the diff, and the §12 edit gate all behave exactly as for apply_patch.
+    test_cmd = "python -c \"import greeter; assert greeter.greet() == 'hi'\""
+    decisions = [
+        ModelDecision(
+            action=ToolCall(
+                name="write_file",
+                input={"path": "greeter.py", "content": "def greet():\n    return 'hi'\n"},
+            )
+        ),
+        ModelDecision(action=FinalAnswer(answer="created greeter.py with greet()")),
+    ]
+    reg = _edit_registry()
+    reg.register(write_file)
+    state = TaskState(goal="add a greeter", task_kind="edit")
+    result = _runner(git_repo, reg, decisions, test_command=test_cmd, lint_command="").run(state)
+    assert result.outcome == "success"  # verified: the diff exists and the test ran green
+    assert "greeter.py" in result.files_modified
+    assert state.phase in {"editing", "verifying"}  # tier-1 write advanced the phase
 
 
 def test_modify_without_read_fails_stale_then_recovers(git_repo):

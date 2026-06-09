@@ -5,7 +5,7 @@ from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.tools import filesystem
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult, ToolRuntime
 from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import apply_patch
+from avatar_harness.tools.edit import apply_patch, write_file
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
@@ -117,7 +117,7 @@ def test_invalid_tool_input_fed_back(tmp_path):
 
 def _edit_runtime(root, **config_kw) -> ToolRuntime:
     reg = ToolRegistry()
-    for tool in (read_file, apply_patch, run_tests, run_linter):
+    for tool in (read_file, apply_patch, write_file, run_tests, run_linter):
         reg.register(tool)
     config = HarnessConfig(**config_kw)
     deps = RunDeps(workspace=Workspace(root), config=config, cancellation=CancellationToken())
@@ -136,6 +136,48 @@ def test_apply_patch_tool_stale_context_is_model_correctable(git_repo):
     assert result.success is False  # returned, never raised into the loop
     assert result.error
     assert "a + b" not in (Workspace(git_repo).read("calc.py"))  # nothing written
+
+
+# --- write_file (ADR-0003 B): first-class file creation -----------------------------------
+#
+# New-file creation gets a plain-content transport — no diff costume (a new-file hunk has
+# no anchor content, so the unified-diff format is pure fragility there, per the dogfood
+# incident). Modification stays diff-anchored: without overwrite=true an existing target
+# is refused toward apply_patch, preserving the clean-apply staleness invariant.
+
+
+def test_write_file_creates_and_stages_new_file(git_repo):
+    result = _edit_runtime(git_repo).execute(
+        "write_file", {"path": "tools/chat.py", "content": "print('hi')\n"}
+    )
+    assert result.success
+    assert result.files_changed == ["tools/chat.py"]
+    ws = Workspace(git_repo, allow_dirty=True)
+    assert ws.read("tools/chat.py") == "print('hi')\n"
+    assert "tools/chat.py" in ws.diff()  # staged → visible to diff/artifact/verifier
+
+
+def test_write_file_refuses_existing_without_overwrite(git_repo):
+    result = _edit_runtime(git_repo).execute("write_file", {"path": "calc.py", "content": "x = 1\n"})
+    assert result.success is False  # model-correctable, never raised into the loop
+    assert "apply_patch" in (result.error or "")  # steered to the diff-anchored path
+    assert "return a - b" in Workspace(git_repo).read("calc.py")  # nothing clobbered
+
+
+def test_write_file_overwrite_replaces_content(git_repo):
+    result = _edit_runtime(git_repo).execute(
+        "write_file", {"path": "calc.py", "content": "def add(a, b):\n    return a + b\n", "overwrite": True}
+    )
+    assert result.success
+    assert Workspace(git_repo, allow_dirty=True).read("calc.py") == "def add(a, b):\n    return a + b\n"
+
+
+def test_write_file_outside_root_refused(git_repo):
+    # Defense in depth at the Workspace chokepoint (the gate also blocks via declared paths).
+    result = _edit_runtime(git_repo).execute("write_file", {"path": "../escape.py", "content": "x"})
+    assert result.success is False
+    assert "outside" in (result.error or "")
+    assert not (git_repo.parent / "escape.py").exists()
 
 
 def test_run_tests_passing_surfaces_evidence(git_repo):
