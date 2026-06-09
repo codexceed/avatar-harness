@@ -9,11 +9,15 @@ forward. The Textual cockpit (Lane 2b) renders this; here it stays pure logic.
 
 Mode routing is a **visible heuristic default + explicit override** (ADR-0002 D3): a
 lightweight rule seeds `task_kind`, and `set_mode` overrides it — never a hidden
-per-prompt classifier. Local **meta commands** (`/help` `/quit` `/state` `/mode` `/diff`
-`/permissions`) are handled by `run_meta` and never reach the model (§23.2).
+per-prompt classifier. **Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
+a read-only plan task → human approve/revise → the approved plan seeds the edit task as a
+constraint; `submit_plan` drives that flow. Local **meta commands** (`/help` `/quit` `/state`
+`/mode` `/plan` `/diff` `/permissions`) are handled by `run_meta` and never reach the
+model (§23.2).
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import uuid4
@@ -29,10 +33,30 @@ from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathErr
 TaskKind = Literal["edit", "investigate", "test_only"]
 _TASK_KINDS: tuple[TaskKind, ...] = ("edit", "investigate", "test_only")
 
+# A session interaction mode: a `task_kind`, or `plan` — the read-only plan→approve→build
+# flow (ADR-0002 Decision 5). `plan` is not a `task_kind`; it routes through `submit_plan`.
+Mode = Literal["edit", "investigate", "test_only", "plan"]
+_MODES: tuple[Mode, ...] = (*_TASK_KINDS, "plan")
+
+# Seeded as a constraint on the read-only plan task so the model proposes a plan, not an answer.
+_PLAN_DIRECTIVE = "Plan mode: using only read tools, propose a concise step-by-step plan. Do not edit."
+
+# Plan-run outcomes that are NOT approvable: the run never produced a usable plan (blocked on
+# input, or exhausted a general budget). A *verifier-rejected* plan (`failed`) is still shown
+# to the human — the loop is the human's authority, not the structural gate's (toward 3.2d).
+_UNAPPROVABLE_PLAN_OUTCOMES = frozenset({"blocked", "incomplete"})
+
+# Budget discipline (mirrors the harness's other loops): a programmatic `decide` that never
+# approves cannot spin forever — each revision is a real model run.
+_MAX_PLAN_REVISIONS = 10
+
 _AT_PATH = re.compile(r"@(\S+)")  # `@path/to/file` grounding references in a goal
 _GROUND_BUDGET = 2000  # per-file content cap — grounding is a hint, not a dump
 
-_META_HELP = "commands: /help · /quit · /state · /mode <edit|investigate|test_only> · /diff · /permissions"
+_META_HELP = (
+    "commands: /help · /quit · /state · /mode <edit|investigate|test_only|plan> · "
+    "/plan · /diff · /permissions"
+)
 
 
 @dataclass(frozen=True)
@@ -44,6 +68,19 @@ class MetaResult:
     """
 
     kind: Literal["message", "mode_set", "state", "diff", "quit"]
+    text: str
+
+
+@dataclass(frozen=True)
+class PlanDecision:
+    """The human's verdict on a proposed plan — the `PlanModal` choice, decoupled from Textual.
+
+    `approved`: build with this plan (transition into editing). `text`: the (possibly edited)
+    plan — on approval an empty `text` keeps the proposed plan; on revise it is the revision
+    request fed back into the re-planning turn.
+    """
+
+    approved: bool
     text: str
 
 
@@ -105,7 +142,7 @@ class SessionState(BaseModel):
         history: Conversational turns, carried across goals as context.
         tasks: One terminal `TaskState` per goal run so far.
         grants: Session-scoped standing approvals (`[a] always`); never cross-session.
-        mode: The explicit mode override, or `None` to use the per-prompt heuristic.
+        mode: The explicit mode override (incl. `plan`), or `None` for the per-prompt heuristic.
     """
 
     session_id: str
@@ -114,7 +151,7 @@ class SessionState(BaseModel):
     history: list[Turn] = Field(default_factory=list)
     tasks: list[TaskState] = Field(default_factory=list)
     grants: list[ApprovalGrant] = Field(default_factory=list)
-    mode: TaskKind | None = None
+    mode: Mode | None = None
 
 
 class ReplSession:
@@ -139,35 +176,37 @@ class ReplSession:
         )
 
     @property
-    def mode(self) -> TaskKind | None:
-        """The explicit mode override, or `None` when the heuristic decides."""
+    def mode(self) -> Mode | None:
+        """The explicit mode override (incl. `plan`), or `None` when the heuristic decides."""
         return self.state.mode
 
-    def set_mode(self, mode: TaskKind) -> None:
+    def set_mode(self, mode: Mode) -> None:
         """Pin the mode for subsequent goals (the `/mode` override; overrides the heuristic).
 
         Args:
-            mode: The `task_kind` to force on later goals until changed.
+            mode: The mode to force on later goals until changed (a `task_kind`, or `plan`).
         """
         self.state.mode = mode
 
-    def resolve_mode(self, prompt: str) -> TaskKind:
+    def resolve_mode(self, prompt: str) -> Mode:
         """The mode for `prompt`: the explicit override if set, else the heuristic.
 
         Args:
             prompt: The user's goal.
 
         Returns:
-            The resolved `task_kind`.
+            The resolved mode. The heuristic only ever yields a `task_kind`; `plan` is
+            opt-in (set explicitly), never inferred.
         """
         return self.state.mode or default_mode(prompt)
 
     def start(self, prompt: str) -> Session:
-        """Build (but don't run) a per-goal `Session`: resolve mode, seed history, record the turn.
+        """Build (but don't run) the next per-goal `Session`: resolve mode, seed history + the turn.
 
-        The returned session is wired with the session-scoped grant list (shared by
-        reference, so a `[a] always` persists across goals); the caller runs it and observes
-        `events()`, then calls `record`.
+        In `plan` mode this is the read-only **plan task** (`task_kind="investigate"` with the
+        planning directive) — the first step of the plan flow the cockpit drives; otherwise it
+        is a direct run of the resolved `task_kind`. The returned session is wired with the
+        session-scoped grant list (shared by reference), so a `[a] always` persists across goals.
 
         Args:
             prompt: The user's goal.
@@ -175,10 +214,52 @@ class ReplSession:
         Returns:
             A not-yet-started `Session` for this goal.
         """
-        task = TaskState(goal=prompt, task_kind=self.resolve_mode(prompt))
+        resolved = self.resolve_mode(prompt)
+        if resolved == "plan":
+            return self._make_session(prompt, "investigate", extra_constraints=[_PLAN_DIRECTIVE])
+        return self._make_session(prompt, cast(TaskKind, resolved))
+
+    def start_build(self, prompt: str, plan: str) -> Session:
+        """Build the edit task for an approved plan: the plan rides as a `constraint` (§12, D5).
+
+        The build is a normal `edit` task — it rides the `investigating → editing` gate; the
+        approved plan is surfaced to the model as a constraint. No user turn is appended: the
+        goal's turn was recorded when planning began (this is the same goal, continued).
+
+        Args:
+            prompt: The user's goal.
+            plan: The approved plan text to seed as a constraint.
+
+        Returns:
+            A not-yet-started edit `Session`.
+        """
+        return self._make_session(prompt, "edit", extra_constraints=[plan], append_turn=False)
+
+    def _make_session(
+        self,
+        prompt: str,
+        kind: TaskKind,
+        *,
+        extra_constraints: list[str] | None = None,
+        append_turn: bool = True,
+    ) -> Session:
+        """Build a per-goal `Session` for `kind`, seeding prior history + `@path` grounding.
+
+        Args:
+            prompt: The user's goal.
+            kind: The `task_kind` for the fresh `TaskState`.
+            extra_constraints: Constraints to seed (a planning directive, an approved plan).
+            append_turn: Whether to record the user turn now (off for the build step, whose
+                turn was already recorded at planning time).
+
+        Returns:
+            A not-yet-started `Session` wired with the session-scoped grants.
+        """
+        task = TaskState(goal=prompt, task_kind=kind, constraints=list(extra_constraints or ()))
         self._seed_history(task)  # prior turns become initial evidence (before this turn is added)
         self._ground_paths(task, prompt)  # @path references seed the named files as context
-        self.state.history.append(Turn(role="user", text=prompt))
+        if append_turn:
+            self.state.history.append(Turn(role="user", text=prompt))
         runner = self.harness._build_runner(allow_dirty=False)
         return Session(runner, task, grants=self.state.grants)
 
@@ -200,11 +281,102 @@ class ReplSession:
 
         Returns:
             The terminal `TaskState`.
+
+        Raises:
+            ValueError: In `plan` mode — planning is interactive (approve/revise), so it has
+                no run-to-completion path; use `submit_plan`, or `set_mode` to switch modes.
         """
+        if self.resolve_mode(prompt) == "plan":
+            raise ValueError("plan mode is interactive — use submit_plan(prompt, decide), or set_mode(...)")
         session = self.start(prompt)
         state = await session.run()
         self.record(state)
         return state
+
+    async def submit_plan(self, prompt: str, decide: Callable[[str], PlanDecision]) -> TaskState:
+        """Drive the plan flow: read-only plan → approve/revise → build (ADR-0002 D5, §23).
+
+        Proposes a plan with a read-only task, then calls `decide` (the `PlanModal` in the
+        cockpit; an injected callback in tests). On revise it re-runs the plan task with the
+        revision fed back so the model refines it; on approval it runs the edit task seeded
+        with the approved plan as a constraint and returns its terminal state.
+
+        A plan run that produced nothing usable — empty, or terminated as
+        `blocked`/`incomplete` — is never offered for approval: its terminal planning state is
+        recorded and returned instead (you can't approve `""`). A non-empty verifier-rejected
+        plan *is* shown to the human (the human is the authority, not the structural gate). A
+        `decide` that never approves stops at the revision budget and returns `incomplete`.
+
+        Args:
+            prompt: The user's goal.
+            decide: Called with each proposed plan; returns the human's `PlanDecision`.
+
+        Returns:
+            The terminal `TaskState` — the build (edit) task on approval, else the terminal
+            planning state when there was nothing approvable or the revision budget was hit.
+        """
+        plan_state = await self._run_plan(prompt)
+        revisions = 0
+        while True:
+            plan = self._extract_plan(plan_state)
+            if not plan.strip() or plan_state.outcome in _UNAPPROVABLE_PLAN_OUTCOMES:
+                return self._finalize_goal(prompt, plan_state)  # nothing approvable — surface it
+            decision = decide(plan)
+            if decision.approved:
+                approved_plan = decision.text or plan
+                break
+            revisions += 1
+            if revisions >= _MAX_PLAN_REVISIONS:
+                plan_state.add_feedback("plan revision budget exhausted; no build run", kind="blocker")
+                plan_state.outcome = "incomplete"
+                return self._finalize_goal(prompt, plan_state)
+            plan_state = await self._run_plan(prompt, revision=decision.text)
+        return self._finalize_goal(prompt, await self.start_build(prompt, approved_plan).run())
+
+    def _finalize_goal(self, prompt: str, state: TaskState) -> TaskState:
+        """Record one goal's user turn (exactly once) and its terminal task; return the state.
+
+        The user turn is appended here — *after* the plan/build tasks have run — so neither
+        sees the current goal echoed into its own history evidence (matching `start`).
+
+        Args:
+            prompt: The user's goal.
+            state: The terminal task to record (a build or a surfaced planning state).
+
+        Returns:
+            The recorded terminal `TaskState`.
+        """
+        self.state.history.append(Turn(role="user", text=prompt))
+        self.record(state)
+        return state
+
+    async def _run_plan(self, prompt: str, *, revision: str | None = None) -> TaskState:
+        """Run one read-only plan task and return its terminal state.
+
+        Args:
+            prompt: The user's goal.
+            revision: A prior revision request to fold in, so the model refines its plan.
+
+        Returns:
+            The terminal `TaskState` of the plan task (read-only `investigate`).
+        """
+        constraints = [_PLAN_DIRECTIVE]
+        if revision:
+            constraints.append(f"Revision requested: {revision}")
+        session = self._make_session(prompt, "investigate", extra_constraints=constraints, append_turn=False)
+        return await session.run()
+
+    @staticmethod
+    def _extract_plan(state: TaskState) -> str:
+        """The proposed plan text from a plan task: its `final_answer`, else its `current_plan`.
+
+        Args:
+            state: A terminal plan `TaskState`.
+
+        Returns:
+            The plan text (possibly empty when the run produced nothing).
+        """
+        return state.final_answer or "\n".join(state.current_plan)
 
     def is_meta(self, text: str) -> bool:
         """Whether `text` is a meta command (handled locally, never run as a goal).
@@ -235,6 +407,9 @@ class ReplSession:
             return MetaResult(kind="quit", text="ending session")
         if cmd == "mode":
             return self._meta_mode(arg)
+        if cmd == "plan":
+            self.set_mode("plan")
+            return MetaResult(kind="mode_set", text="mode set to plan")
         if cmd == "state":
             summary = (
                 f"mode: {self.resolve_mode('')} · "
@@ -248,7 +423,7 @@ class ReplSession:
         return MetaResult(kind="message", text=f"unknown command: /{cmd} — {_META_HELP}")
 
     def _meta_mode(self, arg: str) -> MetaResult:
-        """Set the mode from `/mode <arg>`, or report an invalid kind.
+        """Set the mode from `/mode <arg>`, or report an invalid mode.
 
         Args:
             arg: The requested mode.
@@ -256,10 +431,12 @@ class ReplSession:
         Returns:
             A `mode_set` result on success, else a `message` error.
         """
-        if arg in _TASK_KINDS:
-            self.set_mode(cast(TaskKind, arg))
+        if arg in _MODES:
+            self.set_mode(cast(Mode, arg))
             return MetaResult(kind="mode_set", text=f"mode set to {arg}")
-        return MetaResult(kind="message", text=f"unknown mode: {arg} (use edit | investigate | test_only)")
+        return MetaResult(
+            kind="message", text=f"unknown mode: {arg} (use edit | investigate | test_only | plan)"
+        )
 
     def _meta_permissions(self) -> MetaResult:
         """List the session-scoped standing grants.
