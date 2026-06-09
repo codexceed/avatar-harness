@@ -239,6 +239,38 @@ class Workspace:
             )
         return sorted(targets)
 
+    def write_file(self, path: str, content: str, *, overwrite: bool = False) -> str:
+        """Create a file with `content` and stage it; refuse an existing target by default.
+
+        The plain-content twin of `apply_patch` for the no-anchor case (ADR-0003 B):
+        creation needs no diff costume, while *modification* stays diff-anchored —
+        without `overwrite`, an existing target raises `FileExistsError` so the
+        clean-apply staleness invariant can't be bypassed casually. Confinement and
+        the sensitive-path denylist apply at this chokepoint like every other access,
+        and the new file is staged so it appears in `diff()` (matching `apply_patch
+        --index` and the `run_command` mutation capture).
+
+        Args:
+            path: The workspace-relative file to create.
+            content: The full file content to write.
+            overwrite: `True` to deliberately replace an existing file.
+
+        Returns:
+            The workspace-relative path written.
+
+        Raises:
+            FileExistsError: When the target exists and `overwrite` is `False`.
+        """
+        resolved = self._resolve(path)  # raises PathOutsideWorkspaceError on escape
+        self._assert_not_sensitive(resolved)
+        rel = str(resolved.relative_to(self.root))
+        if resolved.exists() and not overwrite:
+            raise FileExistsError(rel)
+        resolved.parent.mkdir(parents=True, exist_ok=True)  # parents are confined with the file
+        resolved.write_text(content, encoding="utf-8")
+        self.stage([rel])  # untracked output is invisible to `git diff <baseline>` until staged
+        return rel
+
     # --- command execution (§15) -----------------------------------------
 
     def run(self, command: str, timeout: int | None = None) -> CommandOutput:

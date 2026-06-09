@@ -1,8 +1,12 @@
-"""Editing tool: apply_patch (§10, tier 1).
+"""Editing tools: apply_patch + write_file (§10, tier 1).
 
-The only mutating tool in the MVP. It hands a unified diff to the `Workspace`,
-which applies it atomically; a failed apply (stale context) comes back as a
+The mutating tools. `apply_patch` hands a unified diff to the `Workspace`, which
+applies it atomically; a failed apply (stale context) comes back as a
 model-correctable `ToolResult`, never an exception thrown at the loop (§10).
+`write_file` (ADR-0003 B) is the plain-content transport for the no-anchor case —
+file *creation* — where a unified diff is pure fragility; modification stays
+diff-anchored (an existing target is refused toward `apply_patch` unless
+`overwrite` is explicit).
 """
 
 from pydantic import BaseModel
@@ -56,4 +60,55 @@ apply_patch = ToolDefinition(
     permission_tier=1,
     # The diff's target files are the gate's path policy inputs (confinement + denylist, §11).
     paths=lambda args: tuple(sorted(_parse_patch_targets(args.diff))),
+)
+
+
+class WriteFileInput(BaseModel):
+    """Input for `write_file`: create a file with full content (overwrite only if explicit)."""
+
+    path: str
+    content: str
+    overwrite: bool = False
+
+
+def _write_file(args: WriteFileInput, deps: RunDeps) -> ToolResult:
+    try:
+        rel = deps.workspace.write_file(args.path, args.content, overwrite=args.overwrite)
+    except PathOutsideWorkspaceError as exc:
+        # A path escape is a system-level refusal, not a retry — surface it.
+        return ToolResult(tool_name="write_file", success=False, error=f"path outside workspace: {exc}")
+    except SensitivePathError as exc:
+        # A denylisted target is refused at the workspace (defense in depth behind the gate).
+        return ToolResult(tool_name="write_file", success=False, error=f"sensitive path refused: {exc}")
+    except FileExistsError as exc:
+        # Model-correctable: modification stays diff-anchored (clean-apply staleness, §10).
+        return ToolResult(
+            tool_name="write_file",
+            success=False,
+            error=(
+                f"file exists: {exc} — modify existing content with apply_patch, "
+                "or pass overwrite=true to replace it deliberately"
+            ),
+        )
+    return ToolResult(
+        tool_name="write_file",
+        success=True,
+        content=f"wrote {rel} ({len(args.content)} chars)",
+        summary=f"wrote {rel}",
+        files_changed=[rel],
+    )
+
+
+write_file = ToolDefinition(
+    name="write_file",
+    description=(
+        "Create a new file with the given full content (set overwrite=true to replace an "
+        "existing file deliberately). For modifying existing content, use apply_patch."
+    ),
+    input_model=WriteFileInput,
+    handler=_write_file,
+    phases=_EDIT_PHASES,
+    permission_tier=1,
+    # The target file is the gate's path policy input (confinement + denylist, §11).
+    paths=lambda args: (args.path,),
 )

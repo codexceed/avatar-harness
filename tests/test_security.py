@@ -15,7 +15,7 @@ from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.permission import PermissionPolicy
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolRuntime
-from avatar_harness.tools.edit import ApplyPatchInput, apply_patch
+from avatar_harness.tools.edit import ApplyPatchInput, apply_patch, write_file
 from avatar_harness.tools.filesystem import ListFilesInput, ReadFileInput, list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import SensitivePathError, Workspace
@@ -55,6 +55,14 @@ def test_apply_patch_denied_when_target_is_sensitive(git_repo):
     # The denylist spans every declared path, not just reads — a patch writing `.env` is blocked.
     diff = "--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+LEAK=1\n"
     perm = PermissionPolicy().check(apply_patch, {"diff": diff}, _state(), Workspace(git_repo))
+    assert perm.blocked is True
+
+
+def test_write_file_denied_when_target_is_sensitive(git_repo):
+    # write_file (ADR-0003 B) declares its target path, so the central denylist covers it
+    # exactly like apply_patch — a new mutating tool gets the policy for free (§11).
+    raw = {"path": ".env", "content": "LEAK=1"}
+    perm = PermissionPolicy().check(write_file, raw, _state(), Workspace(git_repo))
     assert perm.blocked is True
 
 
