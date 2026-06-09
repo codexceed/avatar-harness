@@ -75,6 +75,8 @@ _STABLE_SURFACE = (
 # (Phase 3.0). Exported deliberately so consumers never deep-import internals.
 _ASYNC_SURFACE = (
     "Session",
+    "EventBus",
+    "JsonlEventJournal",
     "HarnessEvent",
     "EventBase",
     "EventSink",

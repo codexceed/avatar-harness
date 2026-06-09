@@ -69,7 +69,9 @@ def test_journal_appends_in_order_and_round_trips(tmp_path):
     journal.close()
     reloaded = load_events(journal.path)
     assert [e.type for e in reloaded] == ["agent_start", "phase_changed", "agent_end"]
-    assert reloaded[1].old == "investigating" and reloaded[1].new == "editing"  # typed round-trip
+    phase = reloaded[1]
+    assert isinstance(phase, PhaseChanged)  # narrow the union for the typed field check
+    assert phase.old == "investigating" and phase.new == "editing"  # typed round-trip
 
 
 def test_journal_writes_ahead_each_event_flushed(tmp_path):
