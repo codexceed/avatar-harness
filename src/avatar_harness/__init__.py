@@ -25,6 +25,7 @@ control in (`Session.resolve_approval()` / `Session.cancel()`):
     state = await run_task
 """
 
+from avatar_harness.bus import EventBus
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import RunDeps
 from avatar_harness.event_types import (
@@ -51,6 +52,7 @@ from avatar_harness.event_types import (
     parse_event,
 )
 from avatar_harness.harness import Harness
+from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.model_client import (
     AskUser,
     FinalAnswer,
@@ -58,7 +60,7 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
-from avatar_harness.session import ApprovalGrant, EventBus, Session
+from avatar_harness.session import ApprovalGrant, Session
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.workspace import Workspace
@@ -85,6 +87,7 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     # --- two-plane async surface (Phase 3.0) ---
     "Session",
     "EventBus",
+    "JsonlEventJournal",
     "EventSink",
     "ApprovalController",
     "ApprovalGrant",

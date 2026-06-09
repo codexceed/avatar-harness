@@ -5,25 +5,25 @@ redirect the run); control flows IN via `resolve_approval()` and `cancel()`. An
 event may *announce* that approval is needed, but only the control method decides
 it (§13). The cockpit binds to exactly this surface; the engine stays unchanged.
 
-`EventBus` is the foundation's deliberately-simple fan-out: one unbounded queue and
-a monotonic `event_id` stamp. Lane 1 (ADR-0001) replaces it with bounded
-per-subscriber queues + the privileged write-ahead journal, behind this same API.
+The `EventBus` fan-out + the privileged `JsonlEventJournal` live in `bus.py`/`journal.py`
+(Lane 1); this module owns the session boundary and approval/grant control.
 """
 
 import asyncio
 import shlex
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from avatar_harness.bus import EventBus
 from avatar_harness.event_types import (
     ApprovalRequested,
     ApprovalResolved,
     HarnessEvent,
 )
+from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.runner import AgentRunner
 from avatar_harness.state import TaskState
 
@@ -94,77 +94,6 @@ class _Pending:
     tier: int
 
 
-class EventBus:
-    """Stamps, orders, and **fans events to every subscriber independently** (foundation).
-
-    Each `subscribe()` gets its own queue, so multiple observers — a TUI, the journal,
-    a telemetry exporter, a benchmark collector — each see the *same* stream rather than
-    competing for a shared one. The fan-out is unbounded and non-blocking here; lane 1
-    swaps in bounded per-subscriber queues with a drop policy + the privileged journal.
-    A late subscriber sees only events published after it subscribed (the journal/
-    `history` is the lossless record for replay).
-
-    Args:
-        session_id: Stamped on every event so a stream/journal groups back to its run.
-    """
-
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self.history: list[HarnessEvent] = []
-        self._subscribers: list[asyncio.Queue] = []
-        self._next_id = 0
-        self._closed = False
-
-    def subscribe(self) -> "asyncio.Queue":
-        """Register an independent consumer and return its queue.
-
-        Returns:
-            A queue that will receive every event published from now on, then a `None`
-            close sentinel. An already-closed bus returns a queue holding only the sentinel.
-        """
-        queue: asyncio.Queue = asyncio.Queue()
-        if self._closed:
-            queue.put_nowait(None)
-        else:
-            self._subscribers.append(queue)
-        return queue
-
-    def publish_nowait(self, draft: HarnessEvent) -> HarnessEvent:
-        """Stamp `draft` and fan it out to every subscriber (never blocks, §13).
-
-        Args:
-            draft: The event to publish; mutated in place with the ordering keys.
-
-        Returns:
-            The stamped event.
-        """
-        self._next_id += 1
-        draft.event_id = self._next_id
-        draft.session_id = self.session_id
-        draft.ts = datetime.now(UTC)
-        self.history.append(draft)
-        for queue in self._subscribers:
-            queue.put_nowait(draft)
-        return draft
-
-    async def emit(self, draft: HarnessEvent) -> HarnessEvent:
-        """Awaitable publish — the frozen async interface (lane 1 adds backpressure).
-
-        Args:
-            draft: The event to publish.
-
-        Returns:
-            The stamped event.
-        """
-        return self.publish_nowait(draft)
-
-    def close(self) -> None:
-        """Signal end-of-stream to every subscriber so their drains terminate."""
-        self._closed = True
-        for queue in self._subscribers:
-            queue.put_nowait(None)
-
-
 class Session:
     """A live, interruptible task run exposing the two-plane API (§13, §23).
 
@@ -173,13 +102,22 @@ class Session:
             are wired to this session for the duration of `run`).
         state: The task state to execute.
         session_id: Stable id stamped on events; generated if omitted.
+        journal: The privileged write-ahead sink for this run's events; `None` (default)
+            keeps the in-memory `history` only. `run()` closes it when the run ends.
     """
 
-    def __init__(self, runner: AgentRunner, state: TaskState, *, session_id: str | None = None) -> None:
+    def __init__(
+        self,
+        runner: AgentRunner,
+        state: TaskState,
+        *,
+        session_id: str | None = None,
+        journal: JsonlEventJournal | None = None,
+    ) -> None:
         self.runner = runner
         self.state = state
         self.session_id = session_id or uuid4().hex
-        self.bus = EventBus(self.session_id)
+        self.bus = EventBus(self.session_id, journal=journal)
         self._pending: dict[str, _Pending] = {}
         self._grants: list[ApprovalGrant] = []  # standing approvals from `[a] always` (this run only)
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
