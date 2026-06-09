@@ -89,6 +89,8 @@ class AgentRunner:
         policy: The before-tool-call control gate (§11); defaults to the standard tier policy.
         event_sink: Optional typed-event sink (a `Session`); absent on the batch/sync path.
         approval_controller: Optional awaited gate for tier-3 `ask` calls (a `Session`).
+        conversational: Verification authority (§23.5). `False` (default) is the strict §12
+            gate; `True` runs the verifier as advisory and delivers without repairing.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only dependency injection of the run's collaborators
@@ -104,6 +106,7 @@ class AgentRunner:
         policy: PermissionPolicy | None = None,
         event_sink: EventSink | None = None,
         approval_controller: ApprovalController | None = None,
+        conversational: bool = False,
     ) -> None:
         self.model_client = model_client
         self.registry = registry
@@ -112,6 +115,10 @@ class AgentRunner:
         self.verifier = verifier
         self.emitter = emitter
         self.config = config
+        # Verification authority (§23.5): strict (`False`, default) runs the §12 gate that
+        # sets `outcome` and drives the repair loop; conversational (`True`) runs + reports
+        # the verifier as advisory and delivers the reply without repairing (human is authority).
+        self.conversational = conversational
         # The before-tool-call control gate (§11); defaults to the standard tier policy,
         # threaded with the configured sensitive-path denylist (§11, Phase 2.5).
         self.policy = policy or PermissionPolicy(config.sensitive_path_globs)
@@ -397,7 +404,12 @@ class AgentRunner:
         )
         self._publish(VerificationEnd(task_id=state.task_id, passed=report.passed, summary=report.summary))
         state.verifier_results.append(report)
-        if report.passed:
+        if self.conversational:
+            # §23.5: the verifier ran + reported (above); in conversational mode it is advisory.
+            # Deliver the reply and end the turn — the human is terminal authority. The verdict
+            # stays on `verifier_results[-1]` for the cockpit to render; never repair.
+            state.outcome = "success"
+        elif report.passed:
             state.outcome = "success"
         else:
             state.repair_failures += 1
