@@ -182,17 +182,30 @@ class OpenAIModelClient(ModelClient):
 
     Args:
         config: The harness configuration.
-        client: An injected OpenAI-compatible client, or `None` to construct one.
+        client: An injected OpenAI-compatible client, or `None` to build one lazily on
+            first use — so construction needs no credentials; the optional `openai`
+            extra and an API key are required only when `decide()` is first called.
         max_parse_retries: Number of retries on malformed model output.
-
-    Raises:
-        ImportError: If `client` is `None` and the optional `openai` extra is not installed.
     """
 
     def __init__(self, config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None:
         self.config = config
         self.max_parse_retries = max_parse_retries
-        if client is None:
+        # Built lazily on first decide() (see _ensure_client): credentials are an
+        # inference-time concern, so a Harness with the default model is constructible
+        # without an API key (and without the `openai` extra installed).
+        self._client = client
+
+    def _ensure_client(self) -> Any:
+        """Return the OpenAI-compatible client, constructing it on first use.
+
+        Returns:
+            The injected client, or one constructed from `config` on first call.
+
+        Raises:
+            ImportError: If no client was injected and the optional `openai` extra is not installed.
+        """
+        if self._client is None:
             try:
                 from openai import OpenAI  # noqa: PLC0415 — lazy: `openai` is an optional extra
             except ImportError as exc:  # openai not installed — it is an optional extra
@@ -201,10 +214,9 @@ class OpenAIModelClient(ModelClient):
                     "Install it with `pip install avatar-harness[openai]` (or `uv sync --extra openai`), "
                     "or inject a `client` / use a custom ModelClient instead."
                 ) from exc
-
             # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
-            client = OpenAI(api_key=config.api_key, base_url=config.base_url)
-        self.client = client
+            self._client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+        return self._client
 
     def decide(self, context: ContextPacket) -> ModelDecision:
         """Call the endpoint and validate the reply, retrying on malformed output (§6).
@@ -219,9 +231,10 @@ class OpenAIModelClient(ModelClient):
             DecisionParseError: If every attempt yields malformed output.
         """
         messages = build_messages(context)
+        client = self._ensure_client()
         last_error: DecisionParseError | None = None
         for _ in range(self.max_parse_retries + 1):
-            response = self.client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
                 response_format={"type": "json_object"},

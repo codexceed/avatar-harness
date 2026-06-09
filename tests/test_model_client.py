@@ -132,9 +132,19 @@ def test_core_imports_without_openai(monkeypatch):
     messages = isolated.build_messages(packet)
     assert any("where is the bug?" in m["content"] for m in messages)
 
-    # Using OpenAIModelClient without the extra raises a clear, actionable error.
+    # Construction is lazy (no credentials/extra needed); the clear, actionable error
+    # surfaces when the client is first actually used (decide → _ensure_client).
+    client = isolated.OpenAIModelClient(HarnessConfig(model="x"))
     with pytest.raises(ImportError):
-        isolated.OpenAIModelClient(HarnessConfig(model="x"))
+        client.decide(packet)
+
+
+def test_openai_client_constructs_without_credentials():
+    # Regression: a Harness with the default model must be constructible without an API
+    # key — credentials are inference-time only. Eager OpenAI(...) in __init__ raised
+    # OpenAIError in CI (no key), masking the dirty-workspace error. Client is now lazy.
+    client = OpenAIModelClient(HarnessConfig(api_key=None))
+    assert client._client is None  # not built at construction time
 
 
 class _ScriptedModel(ModelClient):
