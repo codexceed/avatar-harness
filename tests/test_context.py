@@ -1,5 +1,6 @@
 from avatar_harness.context import ContextBuilder
 from avatar_harness.state import DecisionRecord, TaskState
+from avatar_harness.tools import default_registry
 from avatar_harness.tools.base import ToolDefinition
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.workspace import Workspace
@@ -23,6 +24,14 @@ def test_context_surfaces_evidence_detail(tmp_path, read_registry):
     assert any("def handler()" in line for line in packet.recent_evidence)
 
 
+def test_context_packet_carries_task_kind(tmp_path, read_registry):
+    # task_kind is threaded onto the packet so the model adapter can frame the prompt
+    # per kind (edit vs investigate) — see model_client._KIND_FRAMING.
+    state = TaskState(goal="fix the bug", task_kind="edit")
+    packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
+    assert packet.task_kind == "edit"
+
+
 def test_context_omits_out_of_phase_tools(tmp_path, read_registry):
     read_registry.register(
         ToolDefinition(
@@ -37,6 +46,29 @@ def test_context_omits_out_of_phase_tools(tmp_path, read_registry):
     packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
     names = {t.name for t in packet.allowed_tools}
     assert "read_file" in names
+    assert "apply_patch" not in names
+
+
+def test_edit_task_advertises_apply_patch_in_investigating(tmp_path):
+    # Contract: an edit task starts in `investigating`, and the runner's bootstrap admits
+    # the edit-intent tool (apply_patch, tier 1) from there to avoid a pure-creation
+    # deadlock (runner._phase_admits). The context MUST advertise exactly what the runner
+    # admits — a live model, told "call only the tools listed below," would otherwise never
+    # see apply_patch and would loop on reads/final_answer, never triggering the bootstrap.
+    state = TaskState(goal="add a helper function", task_kind="edit")  # phase = investigating
+    packet = ContextBuilder().build(state, Workspace(tmp_path), default_registry())
+    assert state.phase == "investigating"
+    names = {t.name for t in packet.allowed_tools}
+    assert "apply_patch" in names  # the edit-intent tool is surfaced for discovery
+    assert "run_tests" not in names  # but ONLY the edit-intent tier bootstraps, not all editing tools
+
+
+def test_investigate_task_does_not_advertise_apply_patch(tmp_path):
+    # The mirror of the bootstrap: a non-edit kind gets no edit-intent surface, so an
+    # investigate task never sees apply_patch even though the runner shares the predicate.
+    state = TaskState(goal="explain the loop", task_kind="investigate")
+    packet = ContextBuilder().build(state, Workspace(tmp_path), default_registry())
+    names = {t.name for t in packet.allowed_tools}
     assert "apply_patch" not in names
 
 

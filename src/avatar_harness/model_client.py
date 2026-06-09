@@ -93,19 +93,40 @@ class ModelClient(ABC):
         ...
 
 
-_SYSTEM_TEMPLATE = """You are the reasoning core of a coding-agent harness on a READ-ONLY \
-investigation task. Return EXACTLY ONE JSON object per turn and nothing else.
+# Kind-AWARE framing: one mission line per `task_kind`, injected into the template.
+# Capability is still gated by tool *exposure* per phase (§10/§21) — the mission only
+# orients the model. An edit task is never framed READ-ONLY (that would forbid the very
+# `apply_patch` it must call); an investigate task is explicitly told not to edit.
+_KIND_FRAMING = {
+    "investigate": (
+        "Your mission: ANSWER the question WITHOUT editing the repo. Inspect with read "
+        "tools and cite the concrete evidence (paths/lines) you actually read."
+    ),
+    "edit": (
+        "Your mission: make a WORKING code change. Inspect what you will modify, then "
+        "apply a patch; an external verifier will run real tests/lint on your diff."
+    ),
+    "test_only": (
+        "Your mission: ADD or change tests that capture the intended behavior. The new "
+        "tests must run and pass."
+    ),
+}
+
+_SYSTEM_TEMPLATE = """You are the reasoning core of a coding-agent harness. Return EXACTLY \
+ONE JSON object per turn and nothing else.
+
+{mission}
 
 Decision schema:
   {{"thought_summary": "<brief reasoning>", "action": <action>}}
 where <action> is exactly one of:
   {{"type": "tool_call", "name": "<tool name>", "input": {{...}}}}
-  {{"type": "final_answer", "answer": "<answer citing files/lines you actually read>"}}
+  {{"type": "final_answer", "answer": "<answer citing concrete evidence>"}}
   {{"type": "ask_user", "question": "<question>"}}
 
 Rules:
 - You begin with no files; discover the repo incrementally using tools.
-- Your final answer MUST cite concrete evidence (paths you actually read).
+- Your final answer MUST cite concrete evidence (paths/lines you actually inspected).
 - Call only the tools listed below, with input matching their schema.
 
 Available tools:
@@ -144,8 +165,10 @@ def build_messages(context: ContextPacket) -> list[dict[str, str]]:
     if context.latest_error:
         parts.append(f"Latest error: {context.latest_error}")
     parts.append("Respond with your next action as a single JSON object.")
+    mission = _KIND_FRAMING.get(context.task_kind, _KIND_FRAMING["investigate"])
+    system = _SYSTEM_TEMPLATE.format(mission=mission, tools=_format_tools(context.allowed_tools))
     return [
-        {"role": "system", "content": _SYSTEM_TEMPLATE.format(tools=_format_tools(context.allowed_tools))},
+        {"role": "system", "content": system},
         {"role": "user", "content": "\n".join(parts)},
     ]
 
@@ -159,19 +182,41 @@ class OpenAIModelClient(ModelClient):
 
     Args:
         config: The harness configuration.
-        client: An injected OpenAI-compatible client, or `None` to construct one.
+        client: An injected OpenAI-compatible client, or `None` to build one lazily on
+            first use — so construction needs no credentials; the optional `openai`
+            extra and an API key are required only when `decide()` is first called.
         max_parse_retries: Number of retries on malformed model output.
     """
 
     def __init__(self, config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None:
         self.config = config
         self.max_parse_retries = max_parse_retries
-        if client is None:
-            from openai import OpenAI  # noqa: PLC0415 — lazy: only needed when no client is injected
+        # Built lazily on first decide() (see _ensure_client): credentials are an
+        # inference-time concern, so a Harness with the default model is constructible
+        # without an API key (and without the `openai` extra installed).
+        self._client = client
 
+    def _ensure_client(self) -> Any:
+        """Return the OpenAI-compatible client, constructing it on first use.
+
+        Returns:
+            The injected client, or one constructed from `config` on first call.
+
+        Raises:
+            ImportError: If no client was injected and the optional `openai` extra is not installed.
+        """
+        if self._client is None:
+            try:
+                from openai import OpenAI  # noqa: PLC0415 — lazy: `openai` is an optional extra
+            except ImportError as exc:  # openai not installed — it is an optional extra
+                raise ImportError(
+                    "OpenAIModelClient requires the optional 'openai' extra. "
+                    "Install it with `pip install avatar-harness[openai]` (or `uv sync --extra openai`), "
+                    "or inject a `client` / use a custom ModelClient instead."
+                ) from exc
             # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
-            client = OpenAI(api_key=config.api_key, base_url=config.base_url)
-        self.client = client
+            self._client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+        return self._client
 
     def decide(self, context: ContextPacket) -> ModelDecision:
         """Call the endpoint and validate the reply, retrying on malformed output (§6).
@@ -186,9 +231,10 @@ class OpenAIModelClient(ModelClient):
             DecisionParseError: If every attempt yields malformed output.
         """
         messages = build_messages(context)
+        client = self._ensure_client()
         last_error: DecisionParseError | None = None
         for _ in range(self.max_parse_retries + 1):
-            response = self.client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
                 response_format={"type": "json_object"},

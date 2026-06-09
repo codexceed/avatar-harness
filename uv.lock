@@ -29,14 +29,19 @@ name = "avatar-harness"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "openai" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+]
+
+[package.optional-dependencies]
+openai = [
+    { name = "openai" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "deptry" },
+    { name = "openai" },
     { name = "pre-commit" },
     { name = "pydoclint" },
     { name = "pyrefly" },
@@ -47,14 +52,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "openai", specifier = ">=1.40" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
 ]
+provides-extras = ["openai"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "deptry", specifier = ">=0.20" },
+    { name = "openai", specifier = ">=1.40" },
     { name = "pre-commit", specifier = ">=3.7" },
     { name = "pydoclint", specifier = ">=0.5" },
     { name = "pyrefly", specifier = ">=1.0,<1.1" },

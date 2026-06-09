@@ -32,6 +32,15 @@ class ToolResult(BaseModel):
 ToolHandler = Callable[[Any, RunDeps], ToolResult]
 
 
+# The mutating tier (apply_patch). A tier-1 call is the model's *edit intent*: it
+# advances the phase to `editing` and is reachable from `investigating` on edit-shaped
+# tasks (the bootstrap exception that avoids a deadlock on pure-creation, §2.6).
+EDIT_INTENT_TIER = 1
+
+# Task kinds whose contract permits mutation, so the edit-intent bootstrap applies (§7).
+EDIT_KINDS = frozenset({"edit", "test_only"})
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """A registered tool: its schema, handler, the phases it is active in, and tier (§10).
@@ -49,6 +58,40 @@ class ToolDefinition:
     phases: frozenset[str]  # phases in which this tool is active
     permission_tier: int = 0
     paths: Callable[[Any], Sequence[str]] = field(default=lambda _args: ())
+
+
+def is_edit_intent(task_kind: str, tool: ToolDefinition) -> bool:
+    """Whether `tool` is the model's edit intent: the mutating tier on an edit-shaped task.
+
+    Args:
+        task_kind: The task's kind (only `edit`/`test_only` permit mutation, §7).
+        tool: The resolved tool definition.
+
+    Returns:
+        True when `tool` is the mutating tool (tier 1) and the task kind permits edits.
+    """
+    return tool.permission_tier == EDIT_INTENT_TIER and task_kind in EDIT_KINDS
+
+
+def phase_admits_tool(phase: str, task_kind: str, tool: ToolDefinition) -> bool:
+    """Whether `tool` may run *and* be advertised in `phase` for `task_kind` (§2.6).
+
+    The single source of truth shared by the runner's gate (what may execute) and the
+    `ContextBuilder` (what the model is told it may call) — keeping them in lockstep so
+    the model never loops blind on a tool the runner would have admitted. True when the
+    tool is active in the phase, or it is the edit-intent tool reachable from
+    `investigating` via the bootstrap exception.
+
+    Args:
+        phase: The current control phase.
+        task_kind: The task's kind, gating the edit-intent bootstrap.
+        tool: The resolved tool definition.
+
+    Returns:
+        True if `phase` is in the tool's phases, or `tool` is an edit-intent tool on an
+        edit-shaped task (the bootstrap that surfaces `apply_patch` from `investigating`).
+    """
+    return phase in tool.phases or is_edit_intent(task_kind, tool)
 
 
 class ToolRegistry:
@@ -87,6 +130,22 @@ class ToolRegistry:
         """
         return [tool for tool in self._tools.values() if phase in tool.phases]
 
+    def admitted_for(self, phase: str, task_kind: str) -> list[ToolDefinition]:
+        """Return the tools the runner will admit in `phase` for `task_kind` (§2.6).
+
+        Like `active_for_phase`, but also includes the edit-intent bootstrap, so the
+        model is advertised *exactly* what the runner's gate would let it execute —
+        notably `apply_patch` from `investigating` on an edit task.
+
+        Args:
+            phase: The phase to filter by.
+            task_kind: The task's kind, gating the edit-intent bootstrap.
+
+        Returns:
+            The tool definitions admitted in `phase` for `task_kind`.
+        """
+        return [tool for tool in self._tools.values() if phase_admits_tool(phase, task_kind, tool)]
+
 
 class ToolRuntime:
     """Validates and dispatches tool calls; never raises into the loop (§10).
@@ -108,7 +167,8 @@ class ToolRuntime:
             raw_input: The unvalidated call arguments, validated against the tool's input model.
 
         Returns:
-            The handler's `ToolResult`, or a failed one for an unknown name or invalid input.
+            The handler's `ToolResult`, or a failed one for an unknown name, invalid input,
+            or a handler that raised (isolated so a buggy tool never crashes the run).
         """
         tool = self.registry.get(name)
         if tool is None:
@@ -121,4 +181,14 @@ class ToolRuntime:
                 success=False,
                 error=f"invalid input for {name!r}: {exc.errors(include_url=False)}",
             )
-        return tool.handler(args, self.deps)
+        try:
+            return tool.handler(args, self.deps)
+        except Exception as exc:  # isolate any tool crash; never raise into the loop
+            # A buggy/third-party handler must not crash the run: surface it as a failed
+            # result. Naming the exception type marks it as a systemic failure to be
+            # surfaced (not a model-correctable error to auto-retry — §10 retry semantics).
+            return ToolResult(
+                tool_name=name,
+                success=False,
+                error=f"tool {name!r} raised {type(exc).__name__}: {exc}",
+            )

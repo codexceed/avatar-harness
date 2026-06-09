@@ -255,3 +255,162 @@ def test_repair_budget_exhaustion_yields_failed(git_repo):
     )
     assert result.outcome == "failed"  # exhausted repair attempts on a rejected claim
     assert result.repair_failures == 2
+
+
+# --- Phase 2.6 Lane A: phase advance/enforce + budgets + cancellation ----
+
+# A new-file hunk: creates `greeter.py` from nothing — no read precedes it (pure creation).
+_NEW_FILE = '--- /dev/null\n+++ b/greeter.py\n@@ -0,0 +1,2 @@\n+def greet():\n+    return "hi"\n'
+
+
+def _runner_with_token(
+    tmp_path, registry: ToolRegistry, decisions, token: CancellationToken, *, emitter=None, **config_kw
+) -> AgentRunner:
+    """Build a runner exposing a caller-supplied cancellation token (for cancel tests)."""
+    config = HarnessConfig(**config_kw)
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=token)
+    return AgentRunner(
+        model_client=ScriptedModel(decisions),
+        registry=registry,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=emitter or Emitter(),
+        config=config,
+    )
+
+
+def test_phase_advances_to_editing_on_first_edit_intent(git_repo):
+    # An edit task starts in `investigating`; the first apply_patch is the edit intent
+    # that advances the phase to `editing` — not a read-counter.
+    decisions = [ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX}))]
+    state = TaskState(goal="fix add()", task_kind="edit")
+    assert state.phase == "investigating"
+    _runner(git_repo, _edit_registry(), decisions, lint_command="", max_iterations=1).run(state)
+    assert state.phase in {"editing", "verifying"}  # advanced past investigating on the edit
+
+
+def test_pure_creation_from_bare_workspace_succeeds(git_repo):
+    # A new-file hunk applies with ZERO reads — the creation case a `>=1 read` trigger kills.
+    test_cmd = "python -c \"import greeter; assert greeter.greet() == 'hi'\""
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _NEW_FILE})),
+        ModelDecision(action=FinalAnswer(answer="created greeter.py with greet()")),
+    ]
+    state = TaskState(goal="add a greeter", task_kind="edit")
+    result = _runner(git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="").run(state)
+    assert result.outcome == "success"
+    assert not result.files_read  # never forced to read
+    assert "greeter.py" in result.files_modified
+
+
+def test_modify_without_read_fails_stale_then_recovers(git_repo):
+    # Inspect-before-edit EMERGES from clean-apply: a stale modify-hunk fails (model-correctable),
+    # then a correct patch (after a read) applies and verifies. No read-counter is consulted.
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    stale = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-return a * b\n+return a + b\n"
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": stale})),  # fails stale
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),  # then inspects
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),  # correct patch
+        ModelDecision(action=FinalAnswer(answer="fixed the sign error in calc.py add()")),
+    ]
+    state = TaskState(goal="fix add()", task_kind="edit")
+    result = _runner(git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="").run(state)
+    assert result.outcome == "success"
+    assert "calc.py" in result.files_modified
+
+
+def test_phase_changed_emitted_on_transition(git_repo):
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="fixed the sign error in calc.py add()")),
+    ]
+    events: list = []
+    emitter = Emitter()
+    emitter.subscribe(events.append)
+    state = TaskState(goal="fix add()", task_kind="edit")
+    _runner(
+        git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="", emitter=emitter
+    ).run(state)
+    changes = [e for e in events if e["type"] == "phase_changed"]
+    assert changes  # at least one transition emitted
+    assert {e["new"] for e in changes} >= {"editing"}  # advanced into editing
+    assert any(e["old"] == "investigating" and e["new"] == "editing" for e in changes)
+
+
+def test_out_of_phase_tool_call_is_model_correctable(git_repo):
+    # run_tests is active only in `editing`/`verifying`; calling it while still
+    # investigating is WORKFLOW feedback (model-correctable), not a crash or block.
+    decisions = [
+        ModelDecision(action=ToolCall(name="run_tests", input={})),  # out of phase
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="the bug is in calc.py")),
+    ]
+    state = TaskState(goal="inspect calc.py", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions).run(state)
+    assert any(e.kind == "out_of_phase" for e in result.evidence)  # fed back, not fatal
+    assert result.outcome == "success"  # loop continued past the out-of-phase call
+
+
+def test_repair_falls_back_to_editing(git_repo):
+    # A failed verification returns the agent from `verifying` to `editing` for repair.
+    failing = 'python -c "import sys; sys.exit(1)"'
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="I believe this is fixed")),
+    ]
+    events: list = []
+    emitter = Emitter()
+    emitter.subscribe(events.append)
+    state = TaskState(goal="fix add()", task_kind="edit")
+    _runner(
+        git_repo,
+        _edit_registry(),
+        decisions,
+        test_command=failing,
+        lint_command="",
+        max_repair_attempts=2,
+        emitter=emitter,
+    ).run(state)
+    assert any(
+        e["old"] == "verifying" and e["new"] == "editing" for e in events if e["type"] == "phase_changed"
+    )
+
+
+def test_wall_clock_budget_yields_incomplete(git_repo):
+    # A zero wall-clock budget trips the bound before any turn runs → incomplete.
+    decisions = [ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"}))]
+    state = TaskState(goal="look around", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions, max_wall_clock_seconds=0).run(state)
+    assert result.outcome == "incomplete"
+    assert result.iterations == 0  # the wall-clock bound short-circuits, not iteration exhaustion
+
+
+def test_context_budget_yields_incomplete(git_repo):
+    # A tiny context-token budget is exceeded immediately → incomplete (not failed).
+    decisions = [ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"}))]
+    state = TaskState(goal="look around", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions, max_context_tokens=0).run(state)
+    assert result.outcome == "incomplete"
+    assert result.iterations == 0  # the context bound short-circuits, not iteration exhaustion
+
+
+def test_cancellation_observed_yields_incomplete(git_repo):
+    # A pre-tripped cancellation token stops the loop with an `incomplete` outcome.
+    decisions = [ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"}))]
+    token = CancellationToken(cancelled=True)
+    state = TaskState(goal="look around", task_kind="investigate")
+    result = _runner_with_token(git_repo, _edit_registry(), decisions, token).run(state)
+    assert result.outcome == "incomplete"
+    assert result.iterations == 0  # cancellation observed before any turn ran
+
+
+def test_cancellation_records_feedback(git_repo):
+    # Cancellation is recorded as feedback so the trajectory shows why the run stopped.
+    decisions = [ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"}))]
+    token = CancellationToken(cancelled=True)
+    state = TaskState(goal="look around", task_kind="investigate")
+    result = _runner_with_token(git_repo, _edit_registry(), decisions, token).run(state)
+    assert any(e.kind == "cancelled" for e in result.evidence)

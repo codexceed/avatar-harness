@@ -6,10 +6,11 @@ gate (every tool is tier 0), and the minimal `investigate` verifier. The loop is
 deliberately a near-verbatim transcription of the §5 pseudocode.
 """
 
+import time
 from typing import Literal
 
 from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
+from avatar_harness.context import ContextBuilder, ContextPacket
 from avatar_harness.deps import RunDeps
 from avatar_harness.events import Emitter
 from avatar_harness.model_client import (
@@ -21,9 +22,20 @@ from avatar_harness.model_client import (
 )
 from avatar_harness.permission import PermissionPolicy
 from avatar_harness.state import CommandRecord, DecisionRecord, TaskState
-from avatar_harness.tools.base import ToolRegistry, ToolResult, ToolRuntime
+from avatar_harness.tools.base import (
+    ToolDefinition,
+    ToolRegistry,
+    ToolResult,
+    ToolRuntime,
+    is_edit_intent,
+    phase_admits_tool,
+)
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
+
+# Rough chars-per-token estimate for the context-budget bound; the harness has no
+# tokenizer dependency, and an over-estimate fails safe (stops earlier, not later).
+_CHARS_PER_TOKEN = 4
 
 
 def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
@@ -93,12 +105,19 @@ class AgentRunner:
         """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
+        deadline = time.monotonic() + self.config.max_wall_clock_seconds
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
 
-        while not state.terminal and self._within_budget(state):
+        while not state.terminal and self._within_budget(state, deadline):
+            if self.deps.cancellation.cancelled:
+                self._stop_incomplete(state, "run cancelled", kind="cancelled")
+                break
+            context = self.context_builder.build(state, ws, self.registry)
+            if self._context_over_budget(context):
+                self._stop_incomplete(state, "context budget exceeded", kind="budget")
+                break
             state.iterations += 1
             self.emitter.emit("turn_start", task_id=state.task_id, iteration=state.iterations)
-            context = self.context_builder.build(state, ws, self.registry)
             try:
                 decision = self.model_client.decide(context)
             except DecisionParseError as exc:
@@ -163,6 +182,35 @@ class AgentRunner:
             for i, out in enumerate(ws.command_log, start=1)
         ]
 
+    def _set_phase(self, state: TaskState, new: Literal["investigating", "editing", "verifying"]) -> None:
+        """Advance the control phase and announce the transition (§7, §13).
+
+        Phase is capability-exposure, not security; this only mutates `state.phase`
+        and emits an observation event — the security boundary is the permission
+        gate + workspace chokepoint + `task_kind` gate.
+
+        Args:
+            state: The task state whose phase is advanced.
+            new: The phase to move into.
+        """
+        if state.phase == new:
+            return
+        old = state.phase
+        state.phase = new
+        self.emitter.emit("phase_changed", old=old, new=new, task_id=state.task_id)
+
+    def _stop_incomplete(self, state: TaskState, reason: str, *, kind: str) -> None:
+        """Record a stop reason and end the run as `incomplete` (budgets/cancellation, §5).
+
+        Args:
+            state: The task state to terminate.
+            reason: The human-readable stop reason, surfaced as feedback.
+            kind: The evidence kind (`cancelled` or `budget`).
+        """
+        state.add_feedback(reason, kind=kind)
+        state.latest_error = reason
+        state.outcome = "incomplete"
+
     def _run_tool_call(
         self,
         state: TaskState,
@@ -188,6 +236,20 @@ class AgentRunner:
                 kind="repeat",
             )
         tool = self.registry.get(action.name)
+        # Phase enforcement (§2.6): a tool not active in the current phase is WORKFLOW
+        # feedback (model-correctable), not a security control — security is the gate +
+        # workspace chokepoint + task_kind. The bootstrap exception: an edit-intent tool
+        # (tier 1) is reachable from `investigating` on edit-shaped tasks, and expressing
+        # that intent advances the phase to `editing` (avoids a pure-creation deadlock).
+        if tool is not None and not self._phase_admits(state, tool):
+            record.outcome = "out of phase"
+            msg = f"'{action.name}' is not available in the {state.phase} phase."
+            state.latest_error = msg
+            state.add_feedback(msg, kind="out_of_phase")
+            self.emitter.emit("out_of_phase", tool=action.name, phase=state.phase)
+            return
+        if tool is not None and self._is_edit_intent(state, tool) and state.phase == "investigating":
+            self._set_phase(state, "editing")
         # Consult the control gate before execution (§11). A block redirects the loop —
         # the action never runs — and the reason is fed back as evidence.
         permission = self.policy.check(tool, action.input, state, ws) if tool is not None else None
@@ -209,6 +271,38 @@ class AgentRunner:
             content=result.content if result.success else (result.error or ""),
         )
 
+    def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
+        """Whether a tool call is the model's edit intent (the mutating tier on an edit task).
+
+        Delegates to the shared `is_edit_intent` predicate so the runner's bootstrap and
+        the `ContextBuilder`'s advertised tool set never drift apart.
+
+        Args:
+            state: The task state (for `task_kind`).
+            tool: The resolved tool definition.
+
+        Returns:
+            True when `tool` is the mutating tool (tier 1) and the task kind permits edits.
+        """
+        return is_edit_intent(state.task_kind, tool)
+
+    def _phase_admits(self, state: TaskState, tool: ToolDefinition) -> bool:
+        """Whether `tool` may run in the current phase (with the edit-intent bootstrap).
+
+        Delegates to the shared `phase_admits_tool` predicate — the same one the
+        `ContextBuilder` advertises through — so what the model is *told* it may call
+        matches what the gate will *let* it call.
+
+        Args:
+            state: The task state (current `phase` and `task_kind`).
+            tool: The resolved tool definition.
+
+        Returns:
+            True if the current phase is in the tool's phases, or it is an edit-intent
+            tool reachable from `investigating` on an edit-shaped task.
+        """
+        return phase_admits_tool(state.phase, state.task_kind, tool)
+
     # --- state mutation (runner-owned) -----------------------------------
 
     def _apply_tool_result(self, state: TaskState, result: ToolResult) -> None:
@@ -229,6 +323,8 @@ class AgentRunner:
             state.consecutive_failures += 1
 
     def _verify(self, state: TaskState, ws: Workspace) -> None:
+        # Running the verifier is the move into the `verifying` phase (§7).
+        self._set_phase(state, "verifying")
         self.emitter.emit("verification_start")
         report = self.verifier.verify(state, ws)
         self.emitter.emit(
@@ -245,15 +341,33 @@ class AgentRunner:
             state.add_feedback(report.summary, kind="verification")
             if report.recommended_next_action:
                 state.add_feedback(report.recommended_next_action, kind="repair_hint")
+            # A rejected "done" sends the agent back to `editing` to repair (§5 repair loop).
+            self._set_phase(state, "editing")
 
     # --- bounding (§5) ---------------------------------------------------
 
-    def _within_budget(self, state: TaskState) -> bool:
+    def _within_budget(self, state: TaskState, deadline: float) -> bool:
         return (
             state.iterations < self.config.max_iterations
             and state.consecutive_failures < self.config.max_consecutive_failures
             and state.repair_failures < self.config.max_repair_attempts
+            and time.monotonic() < deadline
         )
+
+    def _context_over_budget(self, context: ContextPacket) -> bool:
+        """Whether the assembled context exceeds the configured token budget (§5, §9).
+
+        The harness carries no tokenizer; it estimates from the serialized packet at
+        ~`_CHARS_PER_TOKEN` chars/token. An over-estimate fails safe (stops earlier).
+
+        Args:
+            context: The per-turn context packet (serialized to size it).
+
+        Returns:
+            True when the estimated token count exceeds `config.max_context_tokens`.
+        """
+        estimated_tokens = len(context.model_dump_json()) // _CHARS_PER_TOKEN
+        return estimated_tokens > self.config.max_context_tokens
 
     def _exit_reason(self, state: TaskState) -> Literal["failed", "incomplete"]:
         if state.repair_failures >= self.config.max_repair_attempts:
