@@ -20,6 +20,7 @@ from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.filesystem import read_file
+from avatar_harness.tui.app import CockpitApp
 
 
 def _read_registry() -> ToolRegistry:
@@ -74,9 +75,7 @@ async def test_repl_goals_share_one_journal_file(tmp_path):
 async def test_harness_session_accepts_journal(tmp_path):
     (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
     journal = JsonlEventJournal(tmp_path / "events.jsonl")
-    session = _harness(tmp_path, _investigate_decisions()).session(
-        "explain x in app.py", journal=journal
-    )
+    session = _harness(tmp_path, _investigate_decisions()).session("explain x in app.py", journal=journal)
     assert session.bus.journal is journal
     await session.run()
     assert [e.type for e in load_events(journal.path)][-1] == "agent_end"
@@ -87,8 +86,6 @@ async def test_harness_session_accepts_journal(tmp_path):
 
 def _launch_interactive(git_repo, monkeypatch, argv: list[str]) -> ReplSession:
     """Run `cli.main` with a stubbed (non-blocking) cockpit; return the launched ReplSession."""
-    from avatar_harness.tui.app import CockpitApp
-
     launched: dict = {}
 
     def _fake_run(self, *args, **kwargs):
@@ -104,7 +101,8 @@ def test_main_interactive_wires_journal_at_default_path(git_repo, monkeypatch, t
     monkeypatch.chdir(tmp_path)  # the default events/ dir is cwd-relative
     repl = _launch_interactive(git_repo, monkeypatch, ["--interactive"])
     assert repl.journal is not None
-    assert repl.journal.path == tmp_path / "events" / f"{repl.state.session_id}.jsonl"
+    expected = tmp_path / "events" / f"{repl.state.session_id}.jsonl"
+    assert repl.journal.path.resolve() == expected.resolve()  # cwd-relative, like batch mode
     assert repl.journal.path.exists()  # the flight recorder exists from launch
 
 

@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
+from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.session import ApprovalGrant, Session
 from avatar_harness.state import TaskState
 from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathError, Workspace
@@ -169,11 +170,24 @@ class ReplSession:
             *conversational* — the verifier runs + reports but is advisory, the reply is
             delivered without repair, and the human is terminal authority. `auto=True`
             restores the strict §12 gate (the `--auto` flag, wired by the CLI in 3.2e).
+        journal: One write-ahead `JsonlEventJournal` for the whole sitting, threaded into
+            every per-goal `Session` (shared by reference, like `grants`) so the multi-turn
+            conversation lands in one durable file. Each goal's `bus.close()` closes the
+            handle; `append` reopens it for the next goal. `None` (default) keeps the
+            interactive stream in memory only.
     """
 
-    def __init__(self, harness: Harness, *, session_id: str | None = None, auto: bool = False) -> None:
+    def __init__(
+        self,
+        harness: Harness,
+        *,
+        session_id: str | None = None,
+        auto: bool = False,
+        journal: JsonlEventJournal | None = None,
+    ) -> None:
         self.harness = harness
         self.auto = auto
+        self.journal = journal
         self.state = SessionState(
             session_id=session_id or uuid4().hex,
             workspace_root=str(harness.config.workspace_root),
@@ -286,7 +300,7 @@ class ReplSession:
             self.state.history.append(Turn(role="user", text=prompt))
         # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.
         runner = self.harness._build_runner(allow_dirty=False, conversational=not self.auto)
-        return Session(runner, task, grants=self.state.grants)
+        return Session(runner, task, grants=self.state.grants, journal=self.journal)
 
     def record(self, state: TaskState) -> None:
         """Record a finished goal: append the terminal task and the agent's reply turn.
