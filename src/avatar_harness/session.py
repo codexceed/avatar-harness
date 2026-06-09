@@ -104,6 +104,9 @@ class Session:
         session_id: Stable id stamped on events; generated if omitted.
         journal: The privileged write-ahead sink for this run's events; `None` (default)
             keeps the in-memory `history` only. `run()` closes it when the run ends.
+        grants: The standing-approval list to consult and append to. Pass the multi-turn
+            `SessionState.grants` (by reference) so a `[a] always` granted in one task
+            persists to later tasks in the conversation; omit for a fresh per-run list.
     """
 
     def __init__(
@@ -113,13 +116,15 @@ class Session:
         *,
         session_id: str | None = None,
         journal: JsonlEventJournal | None = None,
+        grants: list[ApprovalGrant] | None = None,
     ) -> None:
         self.runner = runner
         self.state = state
         self.session_id = session_id or uuid4().hex
         self.bus = EventBus(self.session_id, journal=journal)
         self._pending: dict[str, _Pending] = {}
-        self._grants: list[ApprovalGrant] = []  # standing approvals from `[a] always` (this run only)
+        # Shared by reference with the session scope when seeded, so grants persist across tasks.
+        self._grants: list[ApprovalGrant] = grants if grants is not None else []
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:

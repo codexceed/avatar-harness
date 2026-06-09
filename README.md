@@ -152,7 +152,7 @@ async def main():
 asyncio.run(main())
 ```
 
-**Public exports** (`avatar_harness.__all__`): the core entry points (`Harness`, `HarnessConfig`, `TaskState`, `Workspace`, `RunDeps`), decision types, tool contracts, the **two-plane surface** (`Session`, `EventBus`, `JsonlEventJournal`, `EventSink`, `ApprovalController`, `ApprovalGrant`), and the typed lifecycle events (`HarnessEvent` + `ApprovalRequested`, `ToolStart`/`ToolEnd`, `PhaseChanged`, …). Build on these rather than deep-importing internals.
+**Public exports** (`avatar_harness.__all__`): the core entry points (`Harness`, `HarnessConfig`, `TaskState`, `Workspace`, `RunDeps`), decision types, tool contracts, the **two-plane surface** (`Session`, `EventBus`, `JsonlEventJournal`, `EventSink`, `ApprovalController`, `ApprovalGrant`), the **multi-turn session scope** (`ReplSession`, `SessionState`, `Turn`), and the typed lifecycle events (`HarnessEvent` + `ApprovalRequested`, `ToolStart`/`ToolEnd`, `PhaseChanged`, …). Build on these rather than deep-importing internals.
 
 ## Development
 
