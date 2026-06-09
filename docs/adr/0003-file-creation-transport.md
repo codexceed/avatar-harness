@@ -1,6 +1,6 @@
 # ADR 0003 — A robust transport for file creation (and large mutations)
 
-- **Status:** Accepted — **Option A implemented 2026-06-09** (maintainer call: A taken *first*, inverting the recommendation's ordering); Option B (`write_file`) remains open as a complementary follow-up; Option C rejected
+- **Status:** Accepted — **Options A and B both implemented 2026-06-09** (maintainer call: A taken first, then B as the complementary half); Option C rejected
 - **Date:** 2026-06-09
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — incident analysis and option design
@@ -42,13 +42,16 @@ The decision JSON carries only metadata (`apply_patch`, target paths); the harne
 
 ## Recommendation
 
-> **Outcome (2026-06-09):** the maintainer took **A first**. Implemented as the default
-> transport in `OpenAIModelClient` (`AVATAR_NATIVE_TOOL_CALLS`, default on): tool schemas
+> **Outcome (2026-06-09):** the maintainer took **A first**, then **B**. A: the default
+> transport in `OpenAIModelClient` (`AVATAR_NATIVE_TOOL_CALLS`, default on) — tool schemas
 > ride `tools=` (from each tool's real pydantic `input_schema`), `final_answer`/`ask_user`
 > are functions, malformed-argument retries keep §18 `tool_call_id` pairing + the
 > `retry_trace`, and a content-only reply falls back to the legacy `parse_decision` path
-> (endpoints without tool-call support keep working). **B stays open** — still worth
-> taking for the no-anchor case, but no longer the urgent half.
+> (endpoints without tool-call support keep working). B: `write_file(path, content,
+> overwrite=False)` — tier-1 alongside `apply_patch`, declared-path gated (confinement +
+> denylist for free), staged into the diff via a new `Workspace.write_file` chokepoint
+> method; an existing target is refused toward `apply_patch` unless `overwrite=true`, so
+> modification stays diff-anchored (the clean-apply staleness invariant is untouched).
 
 **B now, A later — they compose.** *(Superseded by the outcome above — kept for the record.)*
 
