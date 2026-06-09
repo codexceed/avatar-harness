@@ -175,6 +175,12 @@ class ReplSession:
             conversation lands in one durable file. Each goal's `bus.close()` closes the
             handle; `append` reopens it for the next goal. `None` (default) keeps the
             interactive stream in memory only.
+        allow_dirty: `True` acknowledges a dirty tree at the *start* of the sitting
+            (the `--allow-dirty` flag). Regardless of this, **session-owned dirt is
+            always tolerated**: the §15 clean-start check applies to the sitting's first
+            goal only — after that, uncommitted changes are the session's own work
+            product, and a follow-up goal must not be refused because the previous one
+            succeeded.
     """
 
     def __init__(
@@ -184,10 +190,15 @@ class ReplSession:
         session_id: str | None = None,
         auto: bool = False,
         journal: JsonlEventJournal | None = None,
+        allow_dirty: bool = False,
     ) -> None:
         self.harness = harness
         self.auto = auto
         self.journal = journal
+        self.allow_dirty = allow_dirty
+        # Flipped once the first per-goal workspace opens successfully: from then on the
+        # sitting owns its tree, and later goals open `allow_dirty` (multi-turn §15).
+        self._tree_claimed = False
         self.state = SessionState(
             session_id=session_id or uuid4().hex,
             workspace_root=str(harness.config.workspace_root),
@@ -299,7 +310,13 @@ class ReplSession:
         if append_turn:
             self.state.history.append(Turn(role="user", text=prompt))
         # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.
-        runner = self.harness._build_runner(allow_dirty=False, conversational=not self.auto)
+        # Strict clean-start applies to the sitting's FIRST goal only: once a workspace has
+        # opened, later dirt is the session's own work product (or deliberate user edits
+        # with the human in the loop) — never grounds to refuse a follow-up.
+        runner = self.harness._build_runner(
+            allow_dirty=self.allow_dirty or self._tree_claimed, conversational=not self.auto
+        )
+        self._tree_claimed = True  # only reached when the workspace opened (no DirtyWorkspaceError)
         return Session(runner, task, grants=self.state.grants, journal=self.journal)
 
     def record(self, state: TaskState) -> None:

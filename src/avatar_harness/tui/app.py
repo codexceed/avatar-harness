@@ -34,6 +34,7 @@ from avatar_harness.session import Session
 from avatar_harness.session_state import ReplSession
 from avatar_harness.state import TaskState
 from avatar_harness.tui.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
+from avatar_harness.workspace import DirtyWorkspaceError
 
 
 class CockpitApp(App):
@@ -259,17 +260,32 @@ class CockpitApp(App):
     async def _run_goal(self, text: str) -> None:
         """Run one non-meta goal: plan mode routes through the plan flow, else a direct run.
 
+        A failed goal renders as a transcript line and leaves the REPL alive — an
+        exception escaping a Textual worker would tear down the whole app (the dogfood
+        crash: a `DirtyWorkspaceError` on a follow-up goal killed the TUI mid-session).
+
         Args:
             text: The user's goal.
         """
         if self.repl is None:
             return
-        if self.repl.resolve_mode(text) == "plan":
-            await self._run_plan_goal(text)
-        else:
-            session = self.repl.start(text)
-            state = await self._observe(session)
-            self.repl.record(state)
+        try:
+            if self.repl.resolve_mode(text) == "plan":
+                await self._run_plan_goal(text)
+            else:
+                session = self.repl.start(text)
+                state = await self._observe(session)
+                self.repl.record(state)
+        except DirtyWorkspaceError as exc:
+            self._write(
+                f"✗ DirtyWorkspaceError: the tree at {exc} has uncommitted tracked changes — "
+                "commit/stash them, or relaunch with --allow-dirty to acknowledge them"
+            )
+        except Exception as exc:
+            self._write(f"✗ goal failed — {type(exc).__name__}: {exc}")
+        finally:
+            self.query_one("#prompt", Input).disabled = False  # the REPL stays usable
+            self.query_one("#status", Static).update(self._status_text())
 
     async def _run_plan_goal(self, text: str) -> None:
         """Plan mode: stream the read-only plan → `PlanModal` → (on approve) stream the build.
