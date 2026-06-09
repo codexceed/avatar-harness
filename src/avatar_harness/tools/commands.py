@@ -84,3 +84,42 @@ run_linter = ToolDefinition(
     phases=_VERIFY_PHASES,
     permission_tier=2,
 )
+
+
+# run_command is active in every phase — it is gated by tier-3 approval, not by phase
+# (the human at the prompt is the backstop, §11/ADR-0002 D4), so phase need not restrict it.
+_ANY_PHASE = frozenset({"investigating", "editing", "verifying"})
+
+
+class RunCommandInput(BaseModel):
+    """Input for `run_command`: one project command (run as an argv, no shell metacharacters)."""
+
+    command: str
+
+
+def _run_command(args: RunCommandInput, deps: RunDeps) -> ToolResult:
+    out = deps.workspace.run(args.command, timeout=deps.config.command_timeout_seconds)
+    if out.timed_out:
+        # A timeout is a SYSTEM failure: surface it, never auto-retry (§16).
+        return ToolResult(
+            tool_name="run_command", success=False, error=f"command timed out: {args.command!r}"
+        )
+    return ToolResult(
+        tool_name="run_command",
+        success=True,  # the command RAN; pass/fail lives in content/exit, not the flag — evidence (§12)
+        content=_excerpt(out),
+        summary=f"`{args.command}` exit={out.exit_code}",
+    )
+
+
+run_command = ToolDefinition(
+    name="run_command",
+    description=(
+        "Run a project command (build, codegen, migration, a specific test target, ...) as an argv "
+        "(no shell metacharacters). Approval-gated: default-blocked in batch, asks in the REPL."
+    ),
+    input_model=RunCommandInput,
+    handler=_run_command,
+    phases=_ANY_PHASE,
+    permission_tier=3,
+)
