@@ -1,0 +1,87 @@
+---
+title: avatar_harness.harness
+---
+
+Harness — the importable facade over the agent loop (§20, Phase 2.6).
+
+`Harness` performs the default collaborator wiring the CLI used to hardcode in
+`run_agent`: the tool registry, model client, context builder, verifier, and
+permission policy. Every seam is overridable via a constructor kwarg, so a
+downstream user can swap a provider, a tool set, the verification contract, or
+the permission gate without touching the core. `from_env` builds a
+`HarnessConfig` from the environment (the same `AVATAR_*` settings the CLI uses)
+and applies the same defaults.
+
+The facade only *assembles* the run; the `AgentRunner` still owns all state
+mutation (invariant #2). `run` returns the terminal `TaskState`, identical to
+what `cli.run_agent` returns, so the CLI can delegate straight through.
+
+## Classes
+### `Harness`
+
+The importable facade: default wiring with every collaborator overridable.
+
+Each collaborator defaults to the standard MVP wiring (the same the CLI used to
+construct inline) and is replaceable via its kwarg — the Principle-A seam. The
+facade constructs nothing on the run's behalf that the runner should own; it only
+assembles the collaborators.
+
+Args:
+    config: Harness config (budgets, workspace root, commands, denylist).
+    model: Model client; a default `OpenAIModelClient(config)` if omitted.
+    tools: The active `ToolRegistry`; `default_registry()` if omitted.
+    verifier: The completion verifier; `Verifier(config)` if omitted.
+    policy: The before-tool-call permission gate; the standard tier policy
+        (threaded with `config.sensitive_path_globs`) if omitted.
+    context_builder: The per-turn context assembler; `ContextBuilder()` if omitted.
+    emitter: The observation-only event emitter; a fresh `Emitter()` if omitted.
+
+```python
+Harness(*, config: HarnessConfig, model: ModelClient | None = None, tools: ToolRegistry | None = None, verifier: Verifier | None = None, policy: PermissionPolicy | None = None, context_builder: ContextBuilder | None = None, emitter: Emitter | None = None) -> None
+```
+
+#### `Harness.arun(self, task: str, *, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate', allow_dirty: bool = False) -> TaskState`
+
+Async twin of `run` — the bare loop, for callers already on an event loop.
+
+Use `session` instead when you also want the typed event stream + approval/cancel
+controls; `arun` returns only the terminal state.
+
+Args:
+    task: The natural-language task to run.
+    task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+    allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+
+Returns:
+    The terminal `TaskState` after the loop settles.
+
+#### `Harness.run(self, task: str, *, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate', allow_dirty: bool = False) -> TaskState`
+
+Run the agent loop over `task` synchronously and return the terminal `TaskState`.
+
+The batch/library entry point; for an interactive UI use `session` (observation +
+control) or `arun` (the bare async loop).
+
+Args:
+    task: The natural-language task to run.
+    task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+    allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+
+Returns:
+    The terminal `TaskState` after the loop settles.
+
+#### `Harness.session(self, task: str, *, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate', allow_dirty: bool = False) -> Session`
+
+Open an interactive `Session` over `task` — the two-plane SDK surface (§13, §23).
+
+Returns a not-yet-started session: drive it with `await session.run()` while
+consuming `session.events()` (observation) and calling `session.resolve_approval()`
+/ `session.cancel()` (control). This is the shape a TUI or autonomous wrapper binds to.
+
+Args:
+    task: The natural-language task to run.
+    task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+    allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+
+Returns:
+    A `Session` wrapping the run — observation out, control in.

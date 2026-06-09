@@ -1,0 +1,59 @@
+---
+title: avatar_harness.artifact
+---
+
+ArtifactManager — the final task summary (§14).
+
+The artifact reports, never re-derives: `status` is exactly `state.outcome`, and
+the rest is read off `TaskState` plus the workspace diff (the deliverable — the
+harness never commits, §15). Keeping `status` a copy of `outcome` is what lets a
+caller distinguish "give me more budget" (`incomplete`) from "this can't be
+verified" (`failed`) from "I need input" (`blocked`).
+
+## Classes
+### `Artifact`
+
+The structured final summary of one task (§14).
+
+```python
+Artifact(*, status: str, summary: str, files_changed: list[str] = <factory>, commands_run: list[str] = <factory>, verification: list[str] = <factory>, diff_ref: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `status` | `str` | yes |
+| `summary` | `str` | yes |
+| `files_changed` | `list[str]` | no |
+| `commands_run` | `list[str]` | no |
+| `verification` | `list[str]` | no |
+| `diff_ref` | `str` | no |
+### `ArtifactManager`
+
+Builds and renders the terminal artifact from `TaskState` (§14).
+
+```python
+ArtifactManager()
+```
+
+#### `ArtifactManager.build(self, state: TaskState, ws: Workspace) -> Artifact`
+
+Assemble the artifact for a terminal `state`; `status` mirrors `outcome`.
+
+Args:
+    state: The terminal task state to report from.
+    ws: The workspace, queried for the deliverable diff.
+
+Returns:
+    The assembled `Artifact`.
+
+#### `ArtifactManager.render(self, artifact: Artifact) -> str`
+
+Render the artifact as the plain-text summary block (§14).
+
+Args:
+    artifact: The artifact to render.
+
+Returns:
+    The plain-text summary block.

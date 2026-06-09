@@ -14,19 +14,40 @@ receives the whole repository by default.
 
 Builds the per-turn `ContextPacket` from `TaskState` under a fixed budget (§9).
 
+Evidence is compacted *less-lossily* (Phase 2.5): recent items keep full detail
+until a char budget is spent, older items degrade to their summary line (not
+dropped), the latest verifier output is pinned verbatim, and adjacent duplicates
+collapse to one `... (xN)` line. Action history is cheap (one line each) so it is
+kept on a longer horizon than evidence.
+
+Args:
+    detail_char_budget: Total chars of evidence *detail* shown verbatim before
+        older items degrade to summary-only.
+    max_detail_chars: Per-item detail truncation budget.
+    max_evidence_lines: Hard cap on rendered evidence lines (newest kept).
+    max_actions: Max prior-action lines to surface.
+
 ```python
-ContextBuilder(max_evidence: int = 5, max_detail_chars: int = 1500) -> None
+ContextBuilder(detail_char_budget: int = 6000, max_detail_chars: int = 1500, max_evidence_lines: int = 40, max_actions: int = 25) -> None
 ```
 
 #### `ContextBuilder.build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket`
 
 Assemble the working packet for the current turn from `state` (§9).
+
+Args:
+    state: The task state, source of truth for the packet.
+    ws: The run-scoped `Workspace` handle.
+    registry: The `ToolRegistry`, for phase-active tools.
+
+Returns:
+    The `ContextPacket` for this turn.
 ### `ContextPacket`
 
 The compact, per-turn working set assembled for one model decision (§9).
 
 ```python
-ContextPacket(*, goal: str, constraints: list[str] = <factory>, phase: str, plan: list[str] = <factory>, files_read: list[str] = <factory>, files_modified: list[str] = <factory>, recent_evidence: list[str] = <factory>, allowed_tools: list[ToolSummary] = <factory>, latest_error: str | None = None, has_uncommitted_changes: bool = False) -> None
+ContextPacket(*, goal: str, constraints: list[str] = <factory>, phase: str, task_kind: str = 'investigate', plan: list[str] = <factory>, files_read: list[str] = <factory>, files_modified: list[str] = <factory>, prior_actions: list[str] = <factory>, recent_evidence: list[str] = <factory>, allowed_tools: list[ToolSummary] = <factory>, latest_error: str | None = None, has_uncommitted_changes: bool = False) -> None
 ```
 
 **Fields**
@@ -36,9 +57,11 @@ ContextPacket(*, goal: str, constraints: list[str] = <factory>, phase: str, plan
 | `goal` | `str` | yes |
 | `constraints` | `list[str]` | no |
 | `phase` | `str` | yes |
+| `task_kind` | `str` | no |
 | `plan` | `list[str]` | no |
 | `files_read` | `list[str]` | no |
 | `files_modified` | `list[str]` | no |
+| `prior_actions` | `list[str]` | no |
 | `recent_evidence` | `list[str]` | no |
 | `allowed_tools` | `list[ToolSummary]` | no |
 | `latest_error` | `str | None` | no |

@@ -11,25 +11,153 @@ the working tree against that pinned baseline (not the git index), so the task's
 delta is well-defined and the harness never needs to commit (§15).
 
 ## Classes
+### `CommandOutput`
+
+The captured result of one command run through the workspace.
+
+```python
+CommandOutput(command: str, stdout: str, stderr: str, exit_code: int | None, timed_out: bool = False) -> None
+```
+### `DirtyWorkspaceError`
+
+The workspace has uncommitted changes at open and they were not acknowledged (§15).
+### `PatchError`
+
+A patch failed to apply cleanly (stale context) — model-correctable (§10).
+
+Application is all-or-nothing: when this is raised, nothing was written.
 ### `PathOutsideWorkspaceError`
 
 Raised when a requested path resolves outside the workspace root.
+### `SensitivePathError`
+
+Raised when a *resolved* path matches the sensitive-path denylist (§11, Phase 2.5).
+
+Enforced at the workspace chokepoint (not just the permission gate), so the
+check sees the symlink-resolved target — an innocuously-named symlink cannot
+launder a secret — and a non-gated caller still cannot read/patch it.
 ### `Workspace`
 
 A tracked, path-confined handle to the repo; tools reach the FS only here (§8, §15).
 
+Args:
+    root: The workspace root all paths are confined to.
+    allow_dirty: When `True`, skip the clean-tree check at open (§15).
+    sensitive_path_globs: The denylist refused on read/patch (resolved-path check,
+        §11). Defaults to the built-in set (secure by default); the runner threads
+        `HarnessConfig.sensitive_path_globs` through to match the permission gate.
+
 ```python
-Workspace(root: Path | str) -> None
+Workspace(root: Path | str, *, allow_dirty: bool = False, sensitive_path_globs: Sequence[str] | None = None) -> None
 ```
+
+#### `Workspace.apply_patch(self, diff: str) -> list[str]`
+
+Apply a (possibly multi-file) unified diff atomically; return changed paths.
+
+Confinement first: every target path must resolve inside the root, else
+`PathOutsideWorkspaceError` (nothing written). Then a `git apply --check`
+dry run gates the real apply, so a stale diff raises `PatchError` and the
+workspace is left byte-for-byte unchanged — all-or-nothing (§10).
+
+Args:
+    diff: The unified diff to apply.
+
+Returns:
+    Sorted workspace-relative paths the diff changed.
+
+Raises:
+    PatchError: When the diff names no targets or fails to apply cleanly.
+
+#### `Workspace.contains(self, rel_path: str) -> bool`
+
+Whether `rel_path` resolves inside the root, without raising (for the gate).
+
+Args:
+    rel_path: The path to test.
+
+Returns:
+    `True` if `rel_path` resolves inside the root, else `False`.
 
 #### `Workspace.diff(self) -> str`
 
 Working-tree delta vs. the pinned baseline (empty when no baseline).
 
+Returns:
+    The unified diff against the pinned baseline, empty when none.
+
 #### `Workspace.list_files(self, glob: str) -> list[str]`
 
 Return workspace-relative paths of files matching `glob`, sorted.
 
+A glob that matches a *directory* expands to the files under it (recursively),
+so `list_files("pkg")` lists `pkg/`'s contents rather than silently returning
+nothing — the dogfood gap where `rich*` matched a dir and was dropped.
+
+Args:
+    glob: The glob pattern to match against the root.
+
+Returns:
+    Sorted workspace-relative paths of the matching files (dir matches expanded).
+
 #### `Workspace.read(self, path: str, line_range: tuple[int, int] | None = None) -> str`
 
 Read a workspace file, optionally a 1-indexed inclusive line range.
+
+Args:
+    path: The file to read.
+    line_range: A 1-indexed inclusive `(start, end)` range, or `None` for all.
+
+Returns:
+    The file text, sliced to `line_range` when given.
+
+#### `Workspace.run(self, command: str, timeout: int | None = None) -> CommandOutput`
+
+Run `command` confined to the root, capturing output; bounded by `timeout`.
+
+Args:
+    command: The shell-style command to run.
+    timeout: Seconds before the command is killed, or `None` for no bound.
+
+Returns:
+    The captured stdout, stderr, exit code, and timeout flag.
+
+#### `Workspace.stage(self, paths: list[str]) -> None`
+
+`git add` the given paths so they enter the pinned-HEAD `diff` (§15).
+
+Mirrors `apply_patch`'s `git apply --index`: a command-created (untracked)
+file is invisible to `git diff &lt;baseline>` until staged, so staging is what
+makes codegen/migration output show up in the diff, artifact, and verifier.
+No-op when not a git repo or given no paths.
+
+Args:
+    paths: Workspace-relative paths to stage.
+
+#### `Workspace.status_paths(self) -> set[str]`
+
+Workspace-relative paths git currently sees as changed *or untracked*.
+
+Used to attribute a command's side effects: snapshot before and after a
+`run` and the delta is what the command touched. Includes untracked files
+(unlike `diff`, which is `git diff &lt;baseline>`), so command-created files
+are visible. Empty when not a git repo.
+
+Returns:
+    The set of paths from `git status --porcelain` (rename → its new path).
+
+## Functions
+### `path_is_sensitive(rel_path: str, globs: Sequence[str]) -> bool`
+
+Whether `rel_path` matches any denylist glob (§11, Phase 2.5).
+
+A pattern *without* a slash matches any single path component (gitignore-style
+"match anywhere" — so ``.env`` hits ``a/b/.env`` and ``.ssh`` hits ``.ssh/id_rsa``).
+A pattern *with* a slash is matched against the whole relative path.
+
+Args:
+    rel_path: The workspace-relative path to test.
+    globs: The denylist patterns.
+
+Returns:
+    `True` if any pattern matches, else `False`.

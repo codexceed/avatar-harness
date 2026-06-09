@@ -84,6 +84,10 @@ def _signature(obj: object) -> str:
         sig = str(inspect.signature(obj))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return ""
+    # Strip volatile object addresses (e.g. a lambda default renders as
+    # `<function X.<lambda> at 0x10b8…>`) so the generated output is reproducible —
+    # otherwise every run differs and `--check` can never pass.
+    sig = re.sub(r" at 0x[0-9a-fA-F]+", "", sig)
     return _shorten(sig)  # `avatar_harness.model_client.ModelClient` -> `ModelClient`
 
 

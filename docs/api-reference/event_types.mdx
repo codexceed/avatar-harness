@@ -1,0 +1,420 @@
+---
+title: avatar_harness.event_types
+---
+
+Typed lifecycle events — the `HarnessEvent` discriminated union (ADR-0001/0002, Phase 3.0).
+
+The closed, versioned union the engine *emits* and the cockpit *renders*. Unlike
+the sync `Emitter`'s raw dicts (`events.py`, kept for back-compat + the CLI), these
+are exhaustively matchable and carry a `schema_version` + global `event_id`, so the
+journal can round-trip them verbatim and a renderer can switch on `type` safely.
+
+`event_id` / `session_id` / `ts` are *stamped by the bus at publish* (see
+`session.EventBus`); a freshly built event carries placeholder defaults until then.
+
+## Classes
+### `AgentEnd`
+
+A run has settled to a terminal `outcome` (the stream's end).
+
+```python
+AgentEnd(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['agent_end'] = 'agent_end', outcome: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['agent_end']` | no |
+| `outcome` | `str | None` | no |
+### `AgentStart`
+
+A run has begun on `goal`.
+
+```python
+AgentStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['agent_start'] = 'agent_start', goal: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['agent_start']` | no |
+| `goal` | `str` | no |
+### `ApprovalController`
+
+The awaited control hook the runner consults for a gated (tier-3 `ask`) call.
+
+The controller *announces* the need (an `ApprovalRequested` event) and then blocks
+this run only until a control method resolves it — the §13 two-plane boundary.
+
+```python
+ApprovalController(*args, **kwargs)
+```
+
+#### `ApprovalController.request_approval(self, approval_id: str, tool: str, reason: str, tool_input: dict) -> bool`
+
+Announce the gated call and block this run until a control method resolves it.
+
+Args:
+    approval_id: Correlates the announcement with its resolution.
+    tool: The tool name awaiting approval.
+    reason: The gate's reason, shown to the human.
+    tool_input: The proposed call arguments.
+
+Returns:
+    True iff the call was allowed.
+### `ApprovalRequested`
+
+A gated (tier-3 `ask`) call awaits a human decision — announce only (§13).
+
+```python
+ApprovalRequested(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['approval_requested'] = 'approval_requested', approval_id: str, tool: str, reason: str = '', input: dict = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['approval_requested']` | no |
+| `approval_id` | `str` | yes |
+| `tool` | `str` | yes |
+| `reason` | `str` | no |
+| `input` | `dict` | no |
+### `ApprovalResolved`
+
+A pending approval (`approval_id`) was decided via the control plane.
+
+`via` records who decided: `"human"` answered a prompt, `"grant"` was auto-allowed
+by a session-scoped `ApprovalGrant` with no prompt (still observable, invariant #5).
+
+```python
+ApprovalResolved(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['approval_resolved'] = 'approval_resolved', approval_id: str, allowed: bool, via: Literal['human', 'grant'] = 'human') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['approval_resolved']` | no |
+| `approval_id` | `str` | yes |
+| `allowed` | `bool` | yes |
+| `via` | `Literal['human', 'grant']` | no |
+### `CancellationObserved`
+
+The loop observed a tripped cancellation token and is stopping (§8).
+
+```python
+CancellationObserved(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['cancellation_observed'] = 'cancellation_observed', reason: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['cancellation_observed']` | no |
+| `reason` | `str` | no |
+### `EventBase`
+
+Fields common to every lifecycle event — the journal's ordering/versioning keys.
+
+The `type` discriminator is declared on each concrete event (not here): it is
+per-event by nature, and a shared mutable base field can't be narrowed to a
+`Literal` soundly. `HarnessEvent` is the discriminated union over the concretes.
+
+```python
+EventBase(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+### `EventSink`
+
+Where the runner publishes typed events (the bus stamps `event_id`/`session_id`/`ts`).
+
+Foundation publishing is fire-and-forget via `publish_nowait` onto an unbounded
+queue; the awaited `emit` is the frozen async interface lane 1 fills in with
+bounded, backpressured fan-out. Both must keep `event_id` monotonic.
+
+```python
+EventSink(*args, **kwargs)
+```
+
+#### `EventSink.emit(self, draft: 'HarnessEvent') -> 'HarnessEvent'`
+
+Awaitable publish — the interface lane 1 fills in with backpressure.
+
+Args:
+    draft: The event to publish.
+
+Returns:
+    The stamped event.
+
+#### `EventSink.publish_nowait(self, draft: 'HarnessEvent') -> 'HarnessEvent'`
+
+Stamp and enqueue `draft` without blocking.
+
+Args:
+    draft: The event to publish.
+
+Returns:
+    The stamped event.
+### `ModelDecisionEvent`
+
+The model chose an action this turn (thought + a one-line brief).
+
+```python
+ModelDecisionEvent(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['model_decision'] = 'model_decision', thought: str = '', action_type: str = '', action: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['model_decision']` | no |
+| `thought` | `str` | no |
+| `action_type` | `str` | no |
+| `action` | `str` | no |
+### `ModelUpdate`
+
+A streamed model-output delta — display only; never private chain-of-thought (ADR-0001 D6).
+
+```python
+ModelUpdate(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['model_update'] = 'model_update', delta: str = '', channel: Literal['display'] = 'display') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['model_update']` | no |
+| `delta` | `str` | no |
+| `channel` | `Literal['display']` | no |
+### `PhaseChanged`
+
+The control phase advanced from `old` to `new` (§7).
+
+```python
+PhaseChanged(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['phase_changed'] = 'phase_changed', old: str, new: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['phase_changed']` | no |
+| `old` | `str` | yes |
+| `new` | `str` | yes |
+### `ToolEnd`
+
+A tool call finished — `success` plus its summary/content (§10).
+
+```python
+ToolEnd(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['tool_end'] = 'tool_end', call_id: str = '', tool: str, success: bool, summary: str = '', content: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['tool_end']` | no |
+| `call_id` | `str` | no |
+| `tool` | `str` | yes |
+| `success` | `bool` | yes |
+| `summary` | `str` | no |
+| `content` | `str` | no |
+### `ToolStart`
+
+A tool call (`call_id`) is about to execute.
+
+```python
+ToolStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['tool_start'] = 'tool_start', call_id: str = '', tool: str, input: dict = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['tool_start']` | no |
+| `call_id` | `str` | no |
+| `tool` | `str` | yes |
+| `input` | `dict` | no |
+### `TurnEnd`
+
+The current loop iteration has finished.
+
+```python
+TurnEnd(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['turn_end'] = 'turn_end') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['turn_end']` | no |
+### `TurnStart`
+
+A new loop iteration (`iteration`) has begun.
+
+```python
+TurnStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['turn_start'] = 'turn_start', iteration: int = 0) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['turn_start']` | no |
+| `iteration` | `int` | no |
+### `VerificationEnd`
+
+The verifier returned a verdict — `passed` plus its summary (§12).
+
+```python
+VerificationEnd(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['verification_end'] = 'verification_end', passed: bool, summary: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['verification_end']` | no |
+| `passed` | `bool` | yes |
+| `summary` | `str` | no |
+### `VerificationStart`
+
+The harness-owned verifier has begun (§12).
+
+```python
+VerificationStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['verification_start'] = 'verification_start') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['verification_start']` | no |
+
+## Functions
+### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
+
+Serialize an event to one JSON line for the journal.
+
+Args:
+    event: The event to serialize.
+
+Returns:
+    Its compact JSON representation.
+### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+
+Reload a JSONL journal back into typed events, in file order.
+
+Args:
+    path: The JSONL journal written via `dump_event` / a typed `EventLog`.
+
+Returns:
+    The events, one per non-blank line, validated through the union.
+### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
+
+Validate a dict / JSON string into the right `HarnessEvent` variant.
+
+Raises `pydantic.ValidationError` if `type` is unknown (the union is closed) or
+fields are invalid.
+
+Args:
+    data: A mapping or JSON text carrying a known `type` discriminator.
+
+Returns:
+    The validated event.

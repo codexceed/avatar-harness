@@ -14,9 +14,18 @@ model, never an exception thrown at the loop (§10 retry semantics).
 
 A registered tool: its schema, handler, the phases it is active in, and tier (§10).
 
+`paths` self-declares which of the tool's *validated* inputs are filesystem
+paths (§11, Phase 2.5). The permission gate runs confinement + the sensitive-path
+denylist over them centrally, so the policy can't drift across tools. The default
+is a pass-through (no paths) — only path-bearing tools override it.
+
 ```python
-ToolDefinition(name: str, description: str, input_model: type[BaseModel], handler: Callable[[Any, RunDeps], ToolResult], phases: frozenset[str], permission_tier: int = 0) -> None
+ToolDefinition(name: str, description: str, input_model: type[BaseModel], handler: Callable[[Any, RunDeps], ToolResult], phases: frozenset[str], permission_tier: int = 0, paths: Callable[[Any], Sequence[str]] = <function ToolDefinition.<lambda>>) -> None
 ```
+
+#### `ToolDefinition.paths(_args)`
+
+_No description._
 ### `ToolRegistry`
 
 The set of available tools, queryable by name and by active phase (§10).
@@ -29,13 +38,43 @@ ToolRegistry() -> None
 
 Return the tools enabled in the given phase (§10/§21 capability groups).
 
+Args:
+    phase: The phase to filter active tools by.
+
+Returns:
+    The tool definitions whose `phases` include `phase`.
+
+#### `ToolRegistry.admitted_for(self, phase: str, task_kind: str) -> list[ToolDefinition]`
+
+Return the tools the runner will admit in `phase` for `task_kind` (§2.6).
+
+Like `active_for_phase`, but also includes the edit-intent bootstrap, so the
+model is advertised *exactly* what the runner's gate would let it execute —
+notably `apply_patch` from `investigating` on an edit task.
+
+Args:
+    phase: The phase to filter by.
+    task_kind: The task's kind, gating the edit-intent bootstrap.
+
+Returns:
+    The tool definitions admitted in `phase` for `task_kind`.
+
 #### `ToolRegistry.get(self, name: str) -> ToolDefinition | None`
 
 Return the tool registered under `name`, or None if unknown.
 
+Args:
+    name: The tool name to look up.
+
+Returns:
+    The matching `ToolDefinition`, or None if no tool is registered under `name`.
+
 #### `ToolRegistry.register(self, tool: ToolDefinition) -> None`
 
 Add (or replace) a tool definition by name.
+
+Args:
+    tool: The tool definition to register, keyed by its `name`.
 ### `ToolResult`
 
 The typed outcome of one tool call; the model only ever sees `content` (§10).
@@ -60,6 +99,10 @@ ToolResult(*, tool_name: str, success: bool, content: str = '', summary: str = '
 
 Validates and dispatches tool calls; never raises into the loop (§10).
 
+Args:
+    registry: The registry to resolve tool calls against.
+    deps: The run-scoped `RunDeps` passed to every handler.
+
 ```python
 ToolRuntime(registry: ToolRegistry, deps: RunDeps) -> None
 ```
@@ -67,3 +110,41 @@ ToolRuntime(registry: ToolRegistry, deps: RunDeps) -> None
 #### `ToolRuntime.execute(self, name: str, raw_input: dict) -> ToolResult`
 
 Resolve, validate, and run a tool call; errors return as a failed `ToolResult`.
+
+Args:
+    name: The registered name of the tool to invoke.
+    raw_input: The unvalidated call arguments, validated against the tool's input model.
+
+Returns:
+    The handler's `ToolResult`, or a failed one for an unknown name, invalid input,
+    or a handler that raised (isolated so a buggy tool never crashes the run).
+
+## Functions
+### `is_edit_intent(task_kind: str, tool: ToolDefinition) -> bool`
+
+Whether `tool` is the model's edit intent: the mutating tier on an edit-shaped task.
+
+Args:
+    task_kind: The task's kind (only `edit`/`test_only` permit mutation, §7).
+    tool: The resolved tool definition.
+
+Returns:
+    True when `tool` is the mutating tool (tier 1) and the task kind permits edits.
+### `phase_admits_tool(phase: str, task_kind: str, tool: ToolDefinition) -> bool`
+
+Whether `tool` may run *and* be advertised in `phase` for `task_kind` (§2.6).
+
+The single source of truth shared by the runner's gate (what may execute) and the
+`ContextBuilder` (what the model is told it may call) — keeping them in lockstep so
+the model never loops blind on a tool the runner would have admitted. True when the
+tool is active in the phase, or it is the edit-intent tool reachable from
+`investigating` via the bootstrap exception.
+
+Args:
+    phase: The current control phase.
+    task_kind: The task's kind, gating the edit-intent bootstrap.
+    tool: The resolved tool definition.
+
+Returns:
+    True if `phase` is in the tool's phases, or `tool` is an edit-intent tool on an
+    edit-shaped task (the bootstrap that surfaces `apply_patch` from `investigating`).

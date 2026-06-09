@@ -1,0 +1,291 @@
+---
+title: avatar_harness.session_state
+---
+
+SessionState + ReplSession — the multi-turn scope above one task (§23, Phase 3.1 Lane 2a).
+
+`TaskState` (§7) is per-goal and unchanged. `SessionState` is the scope *above* it: the
+conversation `history`, the sequence of per-goal `tasks`, the session-scoped approval
+`grants`, and the current `mode`. `ReplSession` is the thin driver: each goal becomes one
+fresh `TaskState` run through the existing single-task `Session` (one code path — batch is
+the degenerate one-`submit` case, §23.2), seeded with prior history and carrying grants
+forward. The Textual cockpit (Lane 2b) renders this; here it stays pure logic.
+
+Mode routing is a **visible heuristic default + explicit override** (ADR-0002 D3): a
+lightweight rule seeds `task_kind`, and `set_mode` overrides it — never a hidden
+per-prompt classifier. **Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
+a read-only plan task → human approve/revise → the approved plan seeds the edit task as a
+constraint; `submit_plan` drives that flow. Local **meta commands** (`/help` `/quit` `/state`
+`/mode` `/plan` `/diff` `/permissions`) are handled by `run_meta` and never reach the
+model (§23.2).
+
+## Classes
+### `MetaResult`
+
+The outcome of a local meta command — the cockpit interprets `kind`, displays `text`.
+
+`kind`: `message` (show text) · `mode_set` (mode changed) · `state` (session summary) ·
+`diff` (text is a unified diff → the diff modal) · `quit` (end the session).
+
+```python
+MetaResult(kind: Literal['message', 'mode_set', 'state', 'diff', 'quit'], text: str) -> None
+```
+### `PlanDecision`
+
+The human's verdict on a proposed plan — the `PlanModal` choice, decoupled from Textual.
+
+`approved`: build with this plan (transition into editing). `text`: the (possibly edited)
+plan — on approval an empty `text` keeps the proposed plan; on revise it is the revision
+request fed back into the re-planning turn.
+
+```python
+PlanDecision(approved: bool, text: str) -> None
+```
+### `ReplSession`
+
+Drives a multi-turn conversation over the unchanged single-task engine (§23.2).
+
+Each goal runs as one fresh `TaskState` through a per-goal `Session`; history seeds the
+next task and grants persist across tasks. `submit` is the simple run-to-completion
+path; `start`/`record` are the lower-level pair the cockpit uses so it can observe the
+per-task event stream and answer approvals between them.
+
+Args:
+    harness: The configured `Harness`; supplies the per-goal run wiring.
+    session_id: Stable conversation id; generated if omitted.
+    auto: Verification authority (§23.5, ADR-0002 D7). The default (`False`) is
+        *conversational* — the verifier runs + reports but is advisory, the reply is
+        delivered without repair, and the human is terminal authority. `auto=True`
+        restores the strict §12 gate (the `--auto` flag, wired by the CLI in 3.2e).
+
+```python
+ReplSession(harness: Harness, *, session_id: str | None = None, auto: bool = False) -> None
+```
+
+#### `ReplSession.extract_plan(state: TaskState) -> str`
+
+The proposed plan text from a plan task: its `final_answer`, else its `current_plan`.
+
+Args:
+    state: A terminal plan `TaskState`.
+
+Returns:
+    The plan text (possibly empty when the run produced nothing).
+
+#### `ReplSession.is_meta(self, text: str) -> bool`
+
+Whether `text` is a meta command (handled locally, never run as a goal).
+
+Args:
+    text: The raw user input.
+
+Returns:
+    True iff the input begins with `/`.
+
+#### `ReplSession.mode`
+
+The explicit mode override (incl. `plan`), or `None` when the heuristic decides.
+
+#### `ReplSession.plan_is_approvable(state: TaskState) -> bool`
+
+Whether a finished plan run may be offered to the human for approval (§23.5).
+
+False for an empty plan (you can't approve `""`) or one that terminated abnormally
+(`blocked`/`incomplete`); a non-empty verifier-rejected (`failed`) plan is approvable
+— the human, not the structural gate, is the authority.
+
+Args:
+    state: A terminal plan `TaskState`.
+
+Returns:
+    True iff the plan is non-empty and did not terminate abnormally.
+
+#### `ReplSession.record(self, state: TaskState) -> None`
+
+Record a finished goal: append the terminal task and the agent's reply turn.
+
+Args:
+    state: The terminal `TaskState` returned by `session.run()`.
+
+#### `ReplSession.record_goal(self, prompt: str, state: TaskState) -> TaskState`
+
+Record one plan-flow goal: append its user turn (once) and the terminal task.
+
+Used by the plan flow (`submit_plan` and the cockpit), whose plan/build sessions are
+built with `append_turn=False` — the goal's user turn is recorded here, *after* they
+run, so neither echoes the current goal into its own history evidence (matching `start`).
+
+Args:
+    prompt: The user's goal.
+    state: The terminal task to record (a build, or a surfaced planning state).
+
+Returns:
+    The recorded terminal `TaskState`.
+
+#### `ReplSession.resolve_mode(self, prompt: str) -> Literal['edit', 'investigate', 'test_only', 'plan']`
+
+The mode for `prompt`: the explicit override if set, else the heuristic.
+
+Args:
+    prompt: The user's goal.
+
+Returns:
+    The resolved mode. The heuristic only ever yields a `task_kind`; `plan` is
+    opt-in (set explicitly), never inferred.
+
+#### `ReplSession.run_meta(self, text: str) -> MetaResult`
+
+Handle a `/command` locally and return a result the cockpit renders/routes (§23.2).
+
+Args:
+    text: The raw `/command [arg]` input.
+
+Returns:
+    The `MetaResult` for the command (unknown commands are reported, never run).
+
+#### `ReplSession.set_mode(self, mode: Literal['edit', 'investigate', 'test_only', 'plan']) -> None`
+
+Pin the mode for subsequent goals (the `/mode` override; overrides the heuristic).
+
+Args:
+    mode: The mode to force on later goals until changed (a `task_kind`, or `plan`).
+
+#### `ReplSession.start(self, prompt: str) -> Session`
+
+Build (but don't run) the next per-goal `Session`: resolve mode, seed history + the turn.
+
+In `plan` mode this is the read-only **plan task** (`task_kind="investigate"` with the
+planning directive) — the first step of the plan flow the cockpit drives; otherwise it
+is a direct run of the resolved `task_kind`. The returned session is wired with the
+session-scoped grant list (shared by reference), so a `[a] always` persists across goals.
+
+Args:
+    prompt: The user's goal.
+
+Returns:
+    A not-yet-started `Session` for this goal.
+
+#### `ReplSession.start_build(self, prompt: str, plan: str) -> Session`
+
+Build the edit task for an approved plan: the plan rides as a `constraint` (§12, D5).
+
+The build is a normal `edit` task — it rides the `investigating → editing` gate; the
+approved plan is surfaced to the model as a constraint. No user turn is appended: the
+goal's turn was recorded when planning began (this is the same goal, continued).
+
+Args:
+    prompt: The user's goal.
+    plan: The approved plan text to seed as a constraint.
+
+Returns:
+    A not-yet-started edit `Session`.
+
+#### `ReplSession.start_plan(self, prompt: str, *, revision: str | None = None) -> Session`
+
+Build the read-only plan `Session` for `prompt` (observable; the cockpit streams it).
+
+A read-only `investigate` task seeded with the planning directive (and, on a revise,
+the revision note so the model refines). No user turn is appended — the plan flow
+records the goal's turn once via `record_goal`, so plan and build don't double it.
+
+Args:
+    prompt: The user's goal.
+    revision: A prior revision request to fold in, or `None` for the first plan.
+
+Returns:
+    A not-yet-started read-only plan `Session`.
+
+#### `ReplSession.submit(self, prompt: str) -> TaskState`
+
+Run one goal to completion and record it — the simple (batch-shaped) path.
+
+Args:
+    prompt: The user's goal.
+
+Returns:
+    The terminal `TaskState`.
+
+Raises:
+    ValueError: In `plan` mode — planning is interactive (approve/revise), so it has
+        no run-to-completion path; use `submit_plan`, or `set_mode` to switch modes.
+
+#### `ReplSession.submit_plan(self, prompt: str, decide: Callable[[str], PlanDecision]) -> TaskState`
+
+Drive the plan flow: read-only plan → approve/revise → build (ADR-0002 D5, §23).
+
+Proposes a plan with a read-only task, then calls `decide` (the `PlanModal` in the
+cockpit; an injected callback in tests). On revise it re-runs the plan task with the
+revision fed back so the model refines it; on approval it runs the edit task seeded
+with the approved plan as a constraint and returns its terminal state.
+
+A plan run that produced nothing usable — empty, or terminated as
+`blocked`/`incomplete` — is never offered for approval: its terminal planning state is
+recorded and returned instead (you can't approve `""`). A non-empty verifier-rejected
+plan *is* shown to the human (the human is the authority, not the structural gate). A
+`decide` that never approves stops at the revision budget and returns `incomplete`.
+
+Args:
+    prompt: The user's goal.
+    decide: Called with each proposed plan; returns the human's `PlanDecision`.
+
+Returns:
+    The terminal `TaskState` — the build (edit) task on approval, else the terminal
+    planning state when there was nothing approvable or the revision budget was hit.
+### `SessionState`
+
+The scope above `TaskState`: what the user and agent have discussed/done (§23.1).
+
+Args:
+    session_id: Stable id for the whole conversation.
+    workspace_root: The repo the session operates on.
+    config: The harness config in effect for the session.
+    history: Conversational turns, carried across goals as context.
+    tasks: One terminal `TaskState` per goal run so far.
+    grants: Session-scoped standing approvals (`[a] always`); never cross-session.
+    mode: The explicit mode override (incl. `plan`), or `None` for the per-prompt heuristic.
+
+```python
+SessionState(*, session_id: str, workspace_root: str, config: HarnessConfig, history: list[Turn] = <factory>, tasks: list[TaskState] = <factory>, grants: list[ApprovalGrant] = <factory>, mode: Literal['edit', 'investigate', 'test_only', 'plan'] | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `session_id` | `str` | yes |
+| `workspace_root` | `str` | yes |
+| `config` | `HarnessConfig` | yes |
+| `history` | `list[Turn]` | no |
+| `tasks` | `list[TaskState]` | no |
+| `grants` | `list[ApprovalGrant]` | no |
+| `mode` | `Literal['edit', 'investigate', 'test_only', 'plan'] | None` | no |
+### `Turn`
+
+One conversational turn — a user prompt or an agent reply (§23.1).
+
+```python
+Turn(*, role: Literal['user', 'agent'], text: str, task_id: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `role` | `Literal['user', 'agent']` | yes |
+| `text` | `str` | yes |
+| `task_id` | `str | None` | no |
+
+## Functions
+### `default_mode(prompt: str) -> Literal['edit', 'investigate', 'test_only']`
+
+Heuristically route a free-form prompt to an initial mode (`task_kind`).
+
+A first-word imperative (`fix …`, `add …`) reads as an edit goal; anything else
+(questions, "explain …", "why …") defaults to read-only investigation. This is the
+*visible* default the status bar shows and the user can override — not a classifier.
+
+Args:
+    prompt: The user's natural-language goal.
+
+Returns:
+    `"edit"` for an edit-shaped prompt, otherwise `"investigate"`.

@@ -1,0 +1,56 @@
+---
+title: avatar_harness.permission
+---
+
+PermissionPolicy — the before-tool-call control gate (§11).
+
+An *awaited control hook*, not an observation event (§13): the runner calls it
+before every execution and acts on the `ToolPermission` it returns (allow /
+block / ask). It can block and redirect control flow; the event emitter cannot.
+Keeping it a direct call — never an emitter subscriber — is the whole point.
+
+Tiers (§11): 0 reads (allow) · 1 apply_patch (allow iff every target path
+resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
+(blocked by default in the non-interactive MVP; `ask` lands with the Phase 3 REPL).
+
+## Classes
+### `PermissionPolicy`
+
+Evaluates a tool call against the §11 tier table before it runs.
+
+Args:
+    sensitive_path_globs: The denylist enforced over every tool's declared paths.
+        Defaults to the built-in set (secure by default); the runner threads the
+        configured `HarnessConfig.sensitive_path_globs` through.
+
+```python
+PermissionPolicy(sensitive_path_globs: Sequence[str] | None = None) -> None
+```
+
+#### `PermissionPolicy.check(self, tool: ToolDefinition, raw_input: dict, state: TaskState, ws: Workspace) -> ToolPermission`
+
+Return the control decision for `tool` with `raw_input` (allow / block / ask).
+
+Args:
+    tool: The tool definition, carrying its `permission_tier` and declared paths.
+    raw_input: The proposed tool arguments.
+    state: The current task state; its `task_kind` gates mutation.
+    ws: The run-scoped workspace, used for path confinement.
+
+Returns:
+    The `ToolPermission` the runner acts on.
+### `ToolPermission`
+
+The gate's decision for one tool call — the runner acts on this (§11).
+
+```python
+ToolPermission(*, blocked: bool, reason: str = '', ask: bool = False) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `blocked` | `bool` | yes |
+| `reason` | `str` | no |
+| `ask` | `bool` | no |

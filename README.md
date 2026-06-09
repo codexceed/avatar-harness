@@ -179,6 +179,12 @@ make check        # lint + typecheck + test — run before committing
 uv run pytest tests/test_x.py::test_name   # run a single test
 ```
 
+The API reference under [`docs/api-reference/`](docs/api-reference) is generated from docstrings (the code is the source of truth). When you change a public module/class/function signature or docstring, regenerate and commit it:
+
+```bash
+make docs-api      # regenerate the MDX pages + docs.json nav from docstrings
+```
+
 Contribution conventions (commit format, branch names, PR sections) are in [`CLAUDE.md`](CLAUDE.md).
 
 ## License

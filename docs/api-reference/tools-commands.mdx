@@ -1,0 +1,46 @@
+---
+title: avatar_harness.tools.commands
+---
+
+Command tools: run_tests, run_linter (§10, tier 2).
+
+These let the model *investigate* by running the configured test/lint commands.
+They are complementary to — never a substitute for — the harness-owned verifier,
+which runs its own command to set the success outcome (§5). A command that runs
+and reports failures is DATA (`success=True`, failures in `content`); only a
+command that could not run (timeout, target not found) is a failed `ToolResult`.
+
+## Classes
+### `RunCommandInput`
+
+Input for `run_command`: one project command (run as an argv, no shell metacharacters).
+
+```python
+RunCommandInput(*, command: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `command` | `str` | yes |
+### `RunLinterInput`
+
+Input for `run_linter`: none — it runs the configured lint command.
+
+```python
+RunLinterInput() -> None
+```
+### `RunTestsInput`
+
+Input for `run_tests`: an optional target appended to the configured command.
+
+```python
+RunTestsInput(*, target: str | None = None) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `target` | `str | None` | no |

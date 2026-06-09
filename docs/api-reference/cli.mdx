@@ -8,9 +8,29 @@ CLI entry point.
 loop — wiring components and event subscribers, nothing more.
 
 ## Functions
-### `main(argv: list[str] | None = None) -> int`
+### `main(argv: list[str] | None = None, *, config: HarnessConfig | None = None, model_client: ModelClient | None = None, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate') -> int`
 
-CLI entry point: parse args, wire the loop, run the task, render the result.
-### `run_agent(task: str, *, config: HarnessConfig, emitter: Emitter, model_client: ModelClient | None = None) -> TaskState`
+CLI entry point: parse args, wire the loop, run the task, render the artifact.
 
-Run the read-only investigate loop over `task` (Phase 1).
+Args:
+    argv: Argument vector; falls back to `sys.argv` when omitted.
+    config: Harness config; constructed from the environment when omitted.
+    model_client: Model client; a default `OpenAIModelClient` if omitted (injectable for tests).
+    task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+
+Returns:
+    Process exit code: `0` on `success`, `2` on a dirty workspace, `1` otherwise.
+### `run_agent(task: str, *, config: HarnessConfig, emitter: Emitter, model_client: ModelClient | None = None, allow_dirty: bool = False, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate') -> TaskState`
+
+Run the agent loop over `task`.
+
+Args:
+    task: The natural-language task to run.
+    config: Harness config wiring the loop.
+    emitter: Sink for observation events.
+    model_client: Model client; a default `OpenAIModelClient` if omitted.
+    allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+    task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
+
+Returns:
+    The terminal `TaskState` after the loop settles.
