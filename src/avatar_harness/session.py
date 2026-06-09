@@ -11,9 +11,13 @@ per-subscriber queues + the privileged write-ahead journal, behind this same API
 """
 
 import asyncio
+import shlex
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
+
+from pydantic import BaseModel
 
 from avatar_harness.event_types import (
     ApprovalRequested,
@@ -22,6 +26,72 @@ from avatar_harness.event_types import (
 )
 from avatar_harness.runner import AgentRunner
 from avatar_harness.state import TaskState
+
+# Grants never auto-allow tier-4+ (ADR-0002): destructive/external stays human-gated.
+_GRANT_MAX_TIER = 4
+
+
+def _grant_prefix(tool: str, tool_input: dict) -> str:
+    """The grant key for a call: a command's program (`argv[0]`), else the tool name.
+
+    For a command tool the standing-approval unit is the *program* — approving
+    `pytest -q` grants `pytest …`, not every command (mirrors `Bash(pytest:*)`). A blank
+    or unparseable command yields `""`, which `ApprovalGrant.matches` never matches, so a
+    "remember" on it stores nothing global. A non-command tier-3 tool grants on its name.
+
+    Args:
+        tool: The tool name awaiting approval.
+        tool_input: The proposed call arguments.
+
+    Returns:
+        The program prefix to grant/match on (possibly `""`).
+    """
+    if "command" in tool_input:
+        try:
+            tokens = shlex.split(str(tool_input["command"]))
+        except ValueError:
+            tokens = []
+        return tokens[0] if tokens else ""
+    return tool
+
+
+class ApprovalGrant(BaseModel):
+    """A session-scoped standing approval: auto-allow one tool's calls sharing a program.
+
+    Stored when a human approves a tier-3 call with `[a] always`. Scoped to a `(tool,
+    prefix, tier)` triple — never global (an empty `prefix` matches nothing) and never
+    tier-4 (destructive actions always re-prompt).
+    """
+
+    tool: str
+    prefix: str  # the command program (argv[0]); a non-command tool grants on its name
+    tier: int
+
+    def matches(self, tool: str, program: str, tier: int) -> bool:
+        """Whether this grant auto-allows a call to `tool`/`program` at `tier`.
+
+        Args:
+            tool: The tool name of the incoming call.
+            program: The incoming call's program prefix (see `_grant_prefix`).
+            tier: The incoming call's permission tier.
+
+        Returns:
+            True iff the grant covers the call (same tool + program, at or below the
+            granted tier, and below the tier-4 ceiling). A blank prefix never matches.
+        """
+        if tier >= _GRANT_MAX_TIER:
+            return False
+        return self.tool == tool and self.tier >= tier and bool(self.prefix) and self.prefix == program
+
+
+@dataclass
+class _Pending:
+    """An in-flight approval awaiting the control plane (retained so a grant can derive)."""
+
+    future: "asyncio.Future[bool]"
+    tool: str
+    program: str
+    tier: int
 
 
 class EventBus:
@@ -110,7 +180,8 @@ class Session:
         self.state = state
         self.session_id = session_id or uuid4().hex
         self.bus = EventBus(self.session_id)
-        self._pending: dict[str, asyncio.Future[bool]] = {}
+        self._pending: dict[str, _Pending] = {}
+        self._grants: list[ApprovalGrant] = []  # standing approvals from `[a] always` (this run only)
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
@@ -160,6 +231,10 @@ class Session:
         *this run only* until `resolve_approval` completes the future — the decision
         never returns through the event stream (§13).
 
+        A standing `ApprovalGrant` from an earlier `[a] always` short-circuits the human:
+        the call is auto-allowed and recorded as `ApprovalResolved(via="grant")` with **no**
+        `ApprovalRequested` (that event means "a human must decide"; a grant skips the human).
+
         Args:
             approval_id: Correlates the announcement with its resolution.
             tool: The tool name awaiting approval.
@@ -169,8 +244,17 @@ class Session:
         Returns:
             True iff the call was allowed.
         """
+        program = _grant_prefix(tool, tool_input)
+        tier = self._tier_of(tool)
+        if any(grant.matches(tool, program, tier) for grant in self._grants):
+            self.bus.publish_nowait(
+                ApprovalResolved(
+                    task_id=self.state.task_id, approval_id=approval_id, allowed=True, via="grant"
+                )
+            )
+            return True
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        self._pending[approval_id] = future
+        self._pending[approval_id] = _Pending(future=future, tool=tool, program=program, tier=tier)
         self.bus.publish_nowait(
             ApprovalRequested(
                 task_id=self.state.task_id,
@@ -182,25 +266,49 @@ class Session:
         )
         allowed = await future
         self.bus.publish_nowait(
-            ApprovalResolved(task_id=self.state.task_id, approval_id=approval_id, allowed=allowed)
+            ApprovalResolved(
+                task_id=self.state.task_id, approval_id=approval_id, allowed=allowed, via="human"
+            )
         )
         return allowed
 
-    async def resolve_approval(self, approval_id: str, *, allow: bool) -> None:
+    def _tier_of(self, tool: str) -> int:
+        """The permission tier of `tool`, or the tier-4 ceiling if it is unknown.
+
+        Looked up from the runner's registry so the grant logic stays out of the gate.
+        An unknown tool defaults to the ceiling, so a grant can never auto-allow it.
+
+        Args:
+            tool: The tool name to look up.
+
+        Returns:
+            The tool's `permission_tier`, or `_GRANT_MAX_TIER` when not registered.
+        """
+        definition = self.runner.registry.get(tool)
+        return _GRANT_MAX_TIER if definition is None else definition.permission_tier
+
+    async def resolve_approval(self, approval_id: str, *, allow: bool, remember: bool = False) -> None:
         """Control plane: resolve a pending approval (the decision the event announced).
 
         Tolerant of an unknown id (resolves the sole pending request if there is exactly
-        one) so a caller that didn't capture the id can still unblock the run.
+        one) so a caller that didn't capture the id can still unblock the run. With
+        `allow` and `remember` both set (the `[a] always` choice), stores a session-scoped
+        `ApprovalGrant` for the call's program prefix so matching calls auto-allow later.
+        `remember` is ignored on a denial (there is no "always deny") and on a blank prefix.
 
         Args:
             approval_id: The id from the `ApprovalRequested` event.
             allow: Whether to permit the gated call.
+            remember: Whether to store a standing grant (only meaningful with `allow`).
         """
-        future = self._pending.get(approval_id)
-        if future is None and len(self._pending) == 1:
-            future = next(iter(self._pending.values()))
-        if future is not None and not future.done():
-            future.set_result(allow)
+        pending = self._pending.get(approval_id)
+        if pending is None and len(self._pending) == 1:
+            pending = next(iter(self._pending.values()))
+        if pending is None or pending.future.done():
+            return
+        if allow and remember and pending.program and pending.tier < _GRANT_MAX_TIER:
+            self._grants.append(ApprovalGrant(tool=pending.tool, prefix=pending.program, tier=pending.tier))
+        pending.future.set_result(allow)
 
     async def cancel(self, reason: str = "cancelled") -> None:
         """Control plane: trip the cancellation token; the loop observes it at the next turn.
@@ -214,6 +322,6 @@ class Session:
         """
         self.cancel_reason = reason
         self.runner.deps.cancellation.cancel()
-        for future in self._pending.values():
-            if not future.done():
-                future.set_result(False)
+        for pending in self._pending.values():
+            if not pending.future.done():
+                pending.future.set_result(False)

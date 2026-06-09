@@ -102,7 +102,7 @@ async def test_grant_auto_allows_matching_prefix(tmp_path):
     # Approve `python …` with remember=True; a second `python …` (different args) auto-allows
     # with NO second human prompt.
     session = _session(tmp_path, [_PY_A, _PY_B])
-    requested, resolved = await _drive(session, remember_first=True)
+    requested, _ = await _drive(session, remember_first=True)
     assert len(requested) == 1  # only the first call prompted a human
     assert (tmp_path / "a").exists() and (tmp_path / "b").exists()  # both commands ran
 
