@@ -13,6 +13,7 @@ per-prompt classifier. Local **meta commands** (`/help` `/quit` `/state` `/mode`
 `/permissions`) are handled by `run_meta` and never reach the model (§23.2).
 """
 
+import re
 from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import uuid4
@@ -23,10 +24,13 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
 from avatar_harness.session import ApprovalGrant, Session
 from avatar_harness.state import TaskState
-from avatar_harness.workspace import Workspace
+from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathError, Workspace
 
 TaskKind = Literal["edit", "investigate", "test_only"]
 _TASK_KINDS: tuple[TaskKind, ...] = ("edit", "investigate", "test_only")
+
+_AT_PATH = re.compile(r"@(\S+)")  # `@path/to/file` grounding references in a goal
+_GROUND_BUDGET = 2000  # per-file content cap — grounding is a hint, not a dump
 
 _META_HELP = "commands: /help · /quit · /state · /mode <edit|investigate|test_only> · /diff · /permissions"
 
@@ -173,6 +177,7 @@ class ReplSession:
         """
         task = TaskState(goal=prompt, task_kind=self.resolve_mode(prompt))
         self._seed_history(task)  # prior turns become initial evidence (before this turn is added)
+        self._ground_paths(task, prompt)  # @path references seed the named files as context
         self.state.history.append(Turn(role="user", text=prompt))
         runner = self.harness._build_runner(allow_dirty=False)
         return Session(runner, task, grants=self.state.grants)
@@ -288,3 +293,31 @@ class ReplSession:
         """
         for turn in self.state.history:
             task.add_feedback(f"{turn.role}: {turn.text}", kind="history")
+
+    def _ground_paths(self, task: TaskState, prompt: str) -> None:
+        """Seed any `@path` references in `prompt` as `grounding` evidence on `task`.
+
+        Files are read through the `Workspace`, so the sensitive-path denylist and
+        confinement apply — a refused, missing, or out-of-root path becomes a short note
+        rather than a crash or a leaked secret.
+
+        Args:
+            task: The fresh per-goal `TaskState` to seed.
+            prompt: The user's goal, scanned for `@path` references.
+        """
+        refs = _AT_PATH.findall(prompt)
+        if not refs:
+            return
+        ws = Workspace(
+            self.harness.config.workspace_root,
+            allow_dirty=True,  # grounding is a read-only inspection — tolerate a dirty tree
+            sensitive_path_globs=self.harness.config.sensitive_path_globs,
+        )
+        for path in refs:
+            try:
+                content = ws.read(path)
+            except (SensitivePathError, PathOutsideWorkspaceError, OSError) as exc:
+                note = f"could not ground: {type(exc).__name__}"
+                task.add_feedback(f"@{path}", detail=note, kind="grounding")
+            else:
+                task.add_feedback(f"@{path}", detail=content[:_GROUND_BUDGET], kind="grounding")
