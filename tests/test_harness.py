@@ -109,6 +109,21 @@ def test_public_api_exports_stable_surface():
         assert getattr(avatar_harness, name, None) is not None
 
 
+def test_core_imports_without_textual():
+    # The TUI cockpit is behind the optional [textual] extra: importing the core
+    # package must not pull in textual (or the tui package). Checked in a fresh
+    # interpreter so it is independent of whatever other tests have imported.
+    import subprocess
+    import sys
+
+    code = (
+        "import avatar_harness, sys; "
+        "assert 'textual' not in sys.modules, sorted(m for m in sys.modules if 'textual' in m); "
+        "assert 'avatar_harness.tui' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
 async def test_harness_arun_runs_investigate_end_to_end(git_repo):
     # The async entry point: `await harness.arun(...)` drives the same loop as run().
     harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=_read_then_answer())
