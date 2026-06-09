@@ -17,6 +17,7 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.eventlog import EventLog
 from avatar_harness.events import Emitter, Event
 from avatar_harness.harness import Harness
+from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.model_client import ModelClient
 from avatar_harness.session_state import ReplSession
 from avatar_harness.state import TaskState
@@ -135,21 +136,36 @@ def _update_latest_pointer(log_path: Path) -> None:
         pointer.symlink_to(log_path.name)
 
 
-def _launch_cockpit(*, config: HarnessConfig, model_client: ModelClient | None, auto: bool) -> int:
+def _launch_cockpit(
+    *, config: HarnessConfig, model_client: ModelClient | None, auto: bool, log_arg: str | None
+) -> int:
     """Build a `ReplSession` over the cockpit and run it to exit (the `--interactive` path).
+
+    The whole sitting is journaled to one write-ahead `events/<session_id>.jsonl` (or
+    `--log`), so an interactive run is as replayable as a batch one — events are committed
+    to disk *before* the TUI renders them, and a cockpit crash loses nothing journaled.
 
     Args:
         config: Harness config for the session.
         model_client: Model client; a default `OpenAIModelClient` if omitted.
         auto: `True` keeps the strict §12 gate; `False` (default) is conversational (§23.5).
+        log_arg: The `--log` value, or `None` for the managed per-session layout.
 
     Returns:
         Process exit code (`0` once the cockpit is dismissed).
     """
+    session_id = uuid4().hex
+    log_path = _resolve_log_path(log_arg, session_id)
+    journal = JsonlEventJournal(log_path)
     harness = Harness(config=config, model=model_client)
-    repl = ReplSession(harness, auto=auto)
+    repl = ReplSession(harness, session_id=session_id, auto=auto, journal=journal)
     cockpit_cls = load_cockpit()  # guarded import — clear hint if the [textual] extra is absent
-    cockpit_cls(repl=repl).run()
+    try:
+        cockpit_cls(repl=repl).run()
+    finally:
+        journal.close()
+        if log_arg is None:  # only the managed per-session layout maintains the pointer
+            _update_latest_pointer(log_path)
     return 0
 
 
@@ -200,7 +216,7 @@ def main(
 
     config = config or HarnessConfig()
     if args.interactive:
-        return _launch_cockpit(config=config, model_client=model_client, auto=args.auto)
+        return _launch_cockpit(config=config, model_client=model_client, auto=args.auto, log_arg=args.log)
     if args.task is None:
         parser.error("a task is required (or pass --interactive for the cockpit)")
 
