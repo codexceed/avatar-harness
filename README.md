@@ -144,13 +144,15 @@ async def main():
         render(event)                                   # your UI
         if isinstance(event, ApprovalRequested):        # control: explicit, awaited
             await session.resolve_approval(event.approval_id, allow=ask_user(event))
+            # `[a] always`: remember=True stores a session-scoped ApprovalGrant so later
+            # commands sharing that program (argv[0]) auto-allow without re-prompting.
     state = await run_task
     # session.cancel("user pressed esc") interrupts from anywhere
 
 asyncio.run(main())
 ```
 
-**Public exports** (`avatar_harness.__all__`): the core entry points (`Harness`, `HarnessConfig`, `TaskState`, `Workspace`, `RunDeps`), decision types, tool contracts, the **two-plane surface** (`Session`, `EventBus`, `EventSink`, `ApprovalController`), and the typed lifecycle events (`HarnessEvent` + `ApprovalRequested`, `ToolStart`/`ToolEnd`, `PhaseChanged`, …). Build on these rather than deep-importing internals.
+**Public exports** (`avatar_harness.__all__`): the core entry points (`Harness`, `HarnessConfig`, `TaskState`, `Workspace`, `RunDeps`), decision types, tool contracts, the **two-plane surface** (`Session`, `EventBus`, `EventSink`, `ApprovalController`, `ApprovalGrant`), and the typed lifecycle events (`HarnessEvent` + `ApprovalRequested`, `ToolStart`/`ToolEnd`, `PhaseChanged`, …). Build on these rather than deep-importing internals.
 
 ## Development
 

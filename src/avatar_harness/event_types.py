@@ -117,11 +117,16 @@ class ApprovalRequested(EventBase):
 
 
 class ApprovalResolved(EventBase):
-    """A pending approval (`approval_id`) was decided via the control plane."""
+    """A pending approval (`approval_id`) was decided via the control plane.
+
+    `via` records who decided: `"human"` answered a prompt, `"grant"` was auto-allowed
+    by a session-scoped `ApprovalGrant` with no prompt (still observable, invariant #5).
+    """
 
     type: Literal["approval_resolved"] = "approval_resolved"
     approval_id: str
     allowed: bool
+    via: Literal["human", "grant"] = "human"
 
 
 class VerificationStart(EventBase):
