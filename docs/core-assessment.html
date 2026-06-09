@@ -104,6 +104,11 @@
   .pill.partial { color: var(--amber); background: rgba(251,191,72,0.12); border-color: rgba(251,191,72,0.3); }
   .pill.gap { color: var(--rose); background: rgba(251,113,133,0.12); border-color: rgba(251,113,133,0.3); }
   .pill.dead { color: var(--violet); background: rgba(167,139,250,0.13); border-color: rgba(167,139,250,0.32); }
+  .pill.shipped { color: #0a0e16; background: var(--green); border-color: var(--green); }
+  .card.done { border-color: rgba(74,222,128,0.4); background: linear-gradient(180deg, rgba(74,222,128,0.07), #101826); }
+  .shipbanner { border: 1px solid rgba(74,222,128,0.4); background: rgba(74,222,128,0.07); border-radius: 12px; padding: 14px 18px; margin: 0 0 24px; font-size: 15px; color: var(--ink); }
+  .shipbanner b { color: var(--green); }
+  .effort.done { color: #0a0e16; background: var(--green); border-color: var(--green); }
 
   /* ---------- strength/gap cards ---------- */
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
@@ -214,14 +219,14 @@
       <i>outside</i> that boundary and build atop it. This page maps where the code stands today and what
       "robust core" requires next.
     </p>
-    <div class="thesis">The hard part is done; the easy-sounding part isn't. <b>The abstractions are ahead of the runtime enforcement</b> — though Phase 2.5 shows enforcement <i>can</i> catch up (secret-safety is now solid).</div>
+    <div class="thesis">The hard part was done; <b>Phase 2.6 closed the enforcement gap</b> — phase, budgets, cancellation, and tool-failure isolation are now <i>live</i>, the model boundary is neutralized, and a public <code>Harness</code> facade ships. The abstractions are no longer ahead of the runtime.</div>
     <div class="meta">
       <span class="chip">Updated for <b>Phase 2.5 · PR #5</b> (context &amp; secret hardening)</span>
       <span class="chip"><b>Phase 2.5</b> complete · 115 tests green</span>
       <span class="chip">Engine I/O boundary: <b>clean</b></span>
       <span class="chip">Model boundary: <b>leaks</b></span>
       <span class="chip">Secret-safety: <b>enforced</b></span>
-      <span class="chip">Control-axis enforcement: <b>still partial</b></span>
+      <span class="chip">Control-axis enforcement: <b>shipped (Phase 2.6)</b></span>
       <span class="chip">SOTA frontier: <b>durable execution</b></span>
       <span class="chip">Assessed by <b>Claude</b>, cross-validated by <b>Codex gpt-5.4 / xhigh</b></span>
     </div>
@@ -292,11 +297,14 @@
     </p>
 
     <div class="legend">
+      <span class="pill shipped">SHIPPED — landed in Phase 2.6</span>
       <span class="pill strong">STRONG — true today</span>
       <span class="pill partial">PARTIAL — true but leaks</span>
       <span class="pill gap">GAP — missing for the vision</span>
       <span class="pill dead">DEAD-WIRED — declared, not enforced</span>
     </div>
+
+    <div class="shipbanner"><b>Phase 2.6 shipped (2026-06-09, 136/136 green).</b> Five of the items below flipped from GAP/DEAD-WIRED to <b>SHIPPED</b>: phase advancement+enforcement, tool-failure isolation, honored budgets &amp; cancellation, the public <code class="mono">Harness</code> facade, and a neutralized + kind-aware model boundary. Still open: the closed verifier contract, the git-only workspace, and the <code class="mono">search_repo</code>/raw-event consistency items.</div>
 
     <div class="grid">
       <div class="card">
@@ -324,35 +332,35 @@
         <p>The model where enforcement <i>did</i> catch up: a sensitive-path denylist refused on read &amp; patch and excluded from search — two-layer (gate up front + workspace re-check on the <b>resolved</b> path, so a symlink can't launder a secret).</p>
         <div class="ev">canonical <b>path_is_sensitive()</b> at all 3 sites (gate · workspace backstop · <b>search_repo</b> filter) — can't drift per tool · overridable <b>sensitive_path_globs</b></div>
       </div>
-      <div class="card">
-        <h3><span class="pill partial">PARTIAL</span> Model behind an interface</h3>
-        <p>The ABC is real, but model concerns live inside the core and the default prompt isn't neutral.</p>
-        <div class="ev"><b>ModelClient</b> ABC ✓ · but <b>openai</b> is a hard dep, <b>_SYSTEM_TEMPLATE</b> in core, prompt hardcodes "READ-ONLY"</div>
+      <div class="card done">
+        <h3><span class="pill shipped">SHIPPED</span> Model boundary neutralized</h3>
+        <p>Default prompt is now kind-aware (no hardcoded "READ-ONLY"); <code>openai</code> is an optional extra with a lazy guarded import. (Prompt assembly still lives in core — acceptable.)</p>
+        <div class="ev">Phase 2.6 Lane D + addendum · <b>openai</b> optional · <b>task_kind</b> on the ContextPacket drives framing</div>
       </div>
       <div class="card">
         <h3><span class="pill partial">PARTIAL</span> Constructor DI</h3>
         <p>All collaborators injected — but most seams are concrete classes, not protocols. Swapping = subclassing.</p>
         <div class="ev"><b>AgentRunner.__init__</b> kw-only · only <b>ModelClient</b> is abstract; ContextBuilder/Verifier/Policy/Emitter are concrete</div>
       </div>
-      <div class="card">
-        <h3><span class="pill gap">GAP</span> No public API / facade</h3>
-        <p>Package root exports only <code>__version__</code> (+ a stale "not started" docstring). Consumers deep-import internals; no <code>__all__</code>. The only assembler is the CLI.</p>
-        <div class="ev"><b>__init__.py</b> bare · embedders <i>can</i> build <b>AgentRunner</b> directly — what's missing is curation, not capability</div>
+      <div class="card done">
+        <h3><span class="pill shipped">SHIPPED</span> Public API + facade</h3>
+        <p>Curated <code>__all__</code> at the package root and a core <code>Harness</code> facade (<code>from_env()</code>/<code>run()</code>, every seam overridable); the CLI now delegates to it.</p>
+        <div class="ev">Phase 2.6 Lane C · new <b>harness.py</b> · <b>from avatar_harness import Harness</b></div>
       </div>
-      <div class="card">
-        <h3><span class="pill dead">DEAD-WIRED</span> Phase gating</h3>
-        <p>Phase advertises a tool subset to the model but is never enforced — and never even advances.</p>
-        <div class="ev"><b>state.phase</b> is never assigned in src/ · <b>ToolRuntime.execute</b> does no phase check</div>
+      <div class="card done">
+        <h3><span class="pill shipped">SHIPPED</span> Phase gating</h3>
+        <p>The runner now advances <code>investigating → editing → verifying</code> (edit-intent by tier), emits <code>phase_changed</code>, and refuses out-of-phase calls (model-correctable).</p>
+        <div class="ev">Phase 2.6 Lane A · advance + enforce in <b>runner.py</b> · creation-from-bare-workspace works</div>
       </div>
-      <div class="card">
-        <h3><span class="pill gap">GAP</span> Tool-failure isolation</h3>
-        <p>A third-party tool that raises crashes the whole run — the handler call is unguarded.</p>
-        <div class="ev"><b>ToolRuntime.execute</b> catches input <i>validation</i> only; <b>tool.handler(...)</b> is uncaught</div>
+      <div class="card done">
+        <h3><span class="pill shipped">SHIPPED</span> Tool-failure isolation</h3>
+        <p>A raising tool can no longer crash the run — <code>ToolRuntime.execute</code> wraps the handler and returns a failed <code>ToolResult</code>.</p>
+        <div class="ev">Phase 2.6 Lane B · handler wrapped in <b>tools/base.py</b></div>
       </div>
-      <div class="card">
-        <h3><span class="pill dead">DEAD-WIRED</span> Budgets &amp; cancellation</h3>
-        <p>Config advertises wall-clock / context budgets and a cancellation token the loop never honors.</p>
-        <div class="ev"><b>max_wall_clock_seconds</b>/<b>max_context_tokens</b> unreferenced · <b>CancellationToken</b> created, never consumed</div>
+      <div class="card done">
+        <h3><span class="pill shipped">SHIPPED</span> Budgets &amp; cancellation</h3>
+        <p>The loop now honors wall-clock + context budgets and consumes the cancellation token → <code>incomplete</code>.</p>
+        <div class="ev">Phase 2.6 Lane A · <b>runner.py</b> checks deadline, context size, and <b>cancellation.cancelled</b></div>
       </div>
       <div class="card">
         <h3><span class="pill gap">GAP</span> Closed verification contract</h3>
@@ -780,27 +788,27 @@ artifact = <span class="k">await</span> session.run()                    <span c
       <div class="step">
         <div class="num"></div>
         <div class="body"><h4>Isolate tool failures</h4><p>Wrap <code>tool.handler</code> in <code>ToolRuntime.execute</code>; map exceptions to a failed <code>ToolResult</code> with the model-correctable / system split. The seam every third-party tool hits first.</p></div>
-        <span class="effort s">small · high value</span>
+        <span class="effort done">✓ shipped (2.6)</span>
       </div>
       <div class="step">
         <div class="num"></div>
         <div class="body"><h4>Make phase gating real</h4><p>Advance <code>state.phase</code> in the runner and enforce the active toolset at execution — turn the advertised control axis into an enforced one.</p></div>
-        <span class="effort m">medium</span>
+        <span class="effort done">✓ shipped (2.6)</span>
       </div>
       <div class="step">
         <div class="num"></div>
         <div class="body"><h4>Honor budgets &amp; cancellation</h4><p>Wire wall-clock / context budgets to <code>incomplete</code>; consume the <code>CancellationToken</code> at turn/tool boundaries. Stop advertising unkept capabilities.</p></div>
-        <span class="effort m">medium</span>
+        <span class="effort done">✓ shipped (2.6)</span>
       </div>
       <div class="step">
         <div class="num"></div>
         <div class="body"><h4>Public API + <code>Harness</code> facade</h4><p>Curate <code>__all__</code>; lift assembly out of the CLI into a core facade. Forces the boundary into code and gives the CLI as the first real consumer of your own API.</p></div>
-        <span class="effort m">medium</span>
+        <span class="effort done">✓ shipped (2.6)</span>
       </div>
       <div class="step">
         <div class="num"></div>
         <div class="body"><h4>Neutralize the model boundary</h4><p>Move the prompt contract behind the adapter; make <code>openai</code> an optional extra; drop the hardcoded "READ-ONLY" default. Puts the model genuinely outside the core.</p></div>
-        <span class="effort m">medium</span>
+        <span class="effort done">✓ shipped (2.6)</span>
       </div>
       <div class="step">
         <div class="num"></div>
