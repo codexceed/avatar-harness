@@ -142,7 +142,7 @@ class ContextBuilder:
                     description=t.description,
                     input_schema=t.input_model.model_json_schema(),
                 )
-                for t in registry.active_for_phase(state.phase)
+                for t in registry.admitted_for(state.phase, state.task_kind)
             ],
             latest_error=state.latest_error,
             has_uncommitted_changes=bool(ws.diff()),

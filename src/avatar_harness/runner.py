@@ -22,21 +22,20 @@ from avatar_harness.model_client import (
 )
 from avatar_harness.permission import PermissionPolicy
 from avatar_harness.state import CommandRecord, DecisionRecord, TaskState
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult, ToolRuntime
+from avatar_harness.tools.base import (
+    ToolDefinition,
+    ToolRegistry,
+    ToolResult,
+    ToolRuntime,
+    is_edit_intent,
+    phase_admits_tool,
+)
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
-
-# The mutating tier (apply_patch). A tier-1 call is the model's *edit intent*: it
-# advances the phase to `editing` and is reachable from `investigating` on edit-shaped
-# tasks (the bootstrap exception that avoids a deadlock on pure-creation, §2.6).
-_EDIT_INTENT_TIER = 1
 
 # Rough chars-per-token estimate for the context-budget bound; the harness has no
 # tokenizer dependency, and an over-estimate fails safe (stops earlier, not later).
 _CHARS_PER_TOKEN = 4
-
-# Phases that allow edit-intent tools — the kinds whose contract permits mutation (§7).
-_EDIT_KINDS = frozenset({"edit", "test_only"})
 
 
 def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
@@ -275,6 +274,9 @@ class AgentRunner:
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).
 
+        Delegates to the shared `is_edit_intent` predicate so the runner's bootstrap and
+        the `ContextBuilder`'s advertised tool set never drift apart.
+
         Args:
             state: The task state (for `task_kind`).
             tool: The resolved tool definition.
@@ -282,10 +284,14 @@ class AgentRunner:
         Returns:
             True when `tool` is the mutating tool (tier 1) and the task kind permits edits.
         """
-        return tool.permission_tier == _EDIT_INTENT_TIER and state.task_kind in _EDIT_KINDS
+        return is_edit_intent(state.task_kind, tool)
 
     def _phase_admits(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether `tool` may run in the current phase (with the edit-intent bootstrap).
+
+        Delegates to the shared `phase_admits_tool` predicate — the same one the
+        `ContextBuilder` advertises through — so what the model is *told* it may call
+        matches what the gate will *let* it call.
 
         Args:
             state: The task state (current `phase` and `task_kind`).
@@ -295,7 +301,7 @@ class AgentRunner:
             True if the current phase is in the tool's phases, or it is an edit-intent
             tool reachable from `investigating` on an edit-shaped task.
         """
-        return state.phase in tool.phases or self._is_edit_intent(state, tool)
+        return phase_admits_tool(state.phase, state.task_kind, tool)
 
     # --- state mutation (runner-owned) -----------------------------------
 
