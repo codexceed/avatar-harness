@@ -165,10 +165,15 @@ class ReplSession:
     Args:
         harness: The configured `Harness`; supplies the per-goal run wiring.
         session_id: Stable conversation id; generated if omitted.
+        auto: Verification authority (§23.5, ADR-0002 D7). The default (`False`) is
+            *conversational* — the verifier runs + reports but is advisory, the reply is
+            delivered without repair, and the human is terminal authority. `auto=True`
+            restores the strict §12 gate (the `--auto` flag, wired by the CLI in 3.2e).
     """
 
-    def __init__(self, harness: Harness, *, session_id: str | None = None) -> None:
+    def __init__(self, harness: Harness, *, session_id: str | None = None, auto: bool = False) -> None:
         self.harness = harness
+        self.auto = auto
         self.state = SessionState(
             session_id=session_id or uuid4().hex,
             workspace_root=str(harness.config.workspace_root),
@@ -260,7 +265,8 @@ class ReplSession:
         self._ground_paths(task, prompt)  # @path references seed the named files as context
         if append_turn:
             self.state.history.append(Turn(role="user", text=prompt))
-        runner = self.harness._build_runner(allow_dirty=False)
+        # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.
+        runner = self.harness._build_runner(allow_dirty=False, conversational=not self.auto)
         return Session(runner, task, grants=self.state.grants)
 
     def record(self, state: TaskState) -> None:

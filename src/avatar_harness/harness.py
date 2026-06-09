@@ -105,7 +105,7 @@ class Harness:
             emitter=emitter,
         )
 
-    def _build_runner(self, allow_dirty: bool) -> AgentRunner:
+    def _build_runner(self, allow_dirty: bool, *, conversational: bool = False) -> AgentRunner:
         """Assemble a run-scoped `AgentRunner` (shared by `run`/`arun`/`session`).
 
         Constructs the `Workspace`/`RunDeps` the same way `cli.run_agent` did — threading
@@ -113,6 +113,9 @@ class Harness:
 
         Args:
             allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+            conversational: Verification authority (§23.5). `False` (default) is the strict §12
+                gate (sets `outcome`, repairs); `True` runs the verifier as advisory and delivers
+                the reply without repairing (the interactive `ReplSession` default).
 
         Returns:
             A fresh `AgentRunner` wired with this facade's collaborators.
@@ -135,6 +138,7 @@ class Harness:
             emitter=self.emitter,
             config=self.config,
             policy=self.policy,
+            conversational=conversational,
         )
 
     def run(
