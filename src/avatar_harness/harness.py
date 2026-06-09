@@ -19,6 +19,7 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.events import Emitter
+from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.model_client import ModelClient, OpenAIModelClient
 from avatar_harness.permission import PermissionPolicy
 from avatar_harness.runner import AgentRunner
@@ -191,6 +192,7 @@ class Harness:
         *,
         task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
         allow_dirty: bool = False,
+        journal: JsonlEventJournal | None = None,
     ) -> Session:
         """Open an interactive `Session` over `task` — the two-plane SDK surface (§13, §23).
 
@@ -202,9 +204,11 @@ class Harness:
             task: The natural-language task to run.
             task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
             allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+            journal: The write-ahead `JsonlEventJournal` for the run's typed events; `None`
+                (default) keeps the stream in memory only.
 
         Returns:
             A `Session` wrapping the run — observation out, control in.
         """
         runner = self._build_runner(allow_dirty)
-        return Session(runner, TaskState(goal=task, task_kind=task_kind))
+        return Session(runner, TaskState(goal=task, task_kind=task_kind), journal=journal)
