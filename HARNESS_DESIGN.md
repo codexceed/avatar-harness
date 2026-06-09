@@ -1,10 +1,10 @@
 # Coding Agent Harness — Design
 
-> **Status:** Living design spec. The non-interactive MVP engine is implemented through Phase 2; Phase 3 interactive session work and §21 extensions remain designed, not built.
+> **Status:** Living design spec. The engine is implemented through Phase 2.6 (hardening) and the **Phase 3.0 foundation** (async `arun()` core, typed event bus, two-plane session) is built; the Phase 3.1+ cockpit and §21 extensions remain designed. Phase 3 design now lives in [ADR-0001](docs/adr/0001-async-event-bus-and-durable-execution.md) and [ADR-0002](docs/adr/0002-interactive-tui-cockpit-and-mvp-feature-set.md), which supersede the forward-looking detail in §13/§23 below.
 > **Scope:** A ground-up, minimally functional but correctly shaped coding agent harness — a new standalone Python project, not an extension of the current CLI chat app.
 > **Posture:** Build the *shape* completely (loop, structured state, permission gate, verification, event log, reversibility); keep each component's *implementation* thin. A shallow-but-complete harness beats a deep-but-partial one, because the shape is what's expensive to change later.
 
-This document is the canonical design/rationale spec. `PROGRESS.md` is the authoritative build ledger; `ARCHITECTURE.md` is the current system map with implementation-status markers; `README.md` is user-facing usage documentation. When the code and this document diverge, treat that as design drift to resolve explicitly, not as an implicit code change.
+This document is the canonical design/rationale spec. `PROGRESS.md` is the authoritative build ledger; `ARCHITECTURE.md` is the current system map with implementation-status markers; `README.md` is user-facing usage documentation. When the code and this document diverge, treat that as design drift to resolve explicitly, not as an implicit code change. Major decisions taken *after* this spec are recorded in `DECISIONS.md` and, for Phase 3, in `docs/adr/` (ADR-0001, ADR-0002); where an ADR and this spec disagree, the ADR is newer and wins for that decision.
 
 ## 1. Purpose
 
@@ -81,6 +81,8 @@ graph TD
 
 The defining departure from a chat app: the loop terminates on **verification**, not on a text reply.
 
+> **Implementation note (Phase 3.0):** the canonical loop is now **async** — `AgentRunner.arun()` is the real loop and sync `run()` wraps it via `asyncio.run()`. The pseudocode below is the unchanged *shape*; the async engine, typed event bus, and two-plane session are specified in ADR-0001.
+
 ```python
 state = TaskState(goal=..., constraints=[...])
 ws    = Workspace(root, allow_dirty=...)   # asserts clean-or-acknowledged tracked git state (§15)
@@ -152,7 +154,7 @@ Two *different kinds* of bound exist, and they map to different outcomes — thi
 - Maximum context size.
 - Maximum *consecutive failed actions* — tool/action errors in a row (catches thrashing).
 
-Current MVP enforcement is narrower than the full target: the runner enforces maximum iterations, maximum consecutive failed actions, and repair attempts; command execution enforces per-command timeout. Wall-clock and context-token budgets are configured but not yet enforced by the loop.
+Current enforcement (through Phase 2.6): the runner enforces maximum iterations, maximum consecutive failed actions, repair attempts, **wall-clock timeout, and context-token budget** (the last two landed in Phase 2.6); command execution enforces per-command timeout.
 
 **Repair budget → `failed`** (the run *did* converge on a completion claim, but it can't be verified):
 
@@ -305,7 +307,7 @@ class TaskState(BaseModel):
 
 Good state answers: What is the goal? What kind of task is it? What constraints are active? What has been inspected? What has been changed? What evidence exists? What has failed? What still needs verification?
 
-**`phase` and `outcome` are deliberately separate.** `phase` is a *control* axis — it gates which tools are available (§10) and how context is assembled. The target design advances it through `investigating → editing → verifying`; the current MVP stores the axis and uses it for tool exposure, but does not yet auto-advance phases. `outcome` is the *terminal result* axis — `None` while the run is live, then exactly one of `success` / `incomplete` / `blocked` / `failed`, which is what `ArtifactManager.status` reports (§14). Conflating the two (e.g. a single `phase` that also holds `done`/`failed`) is what leaves budget-exhaustion and verification-failure underspecified, so we keep them apart.
+**`phase` and `outcome` are deliberately separate.** `phase` is a *control* axis — it gates which tools are available (§10) and how context is assembled. It advances through `investigating → editing → verifying` — the runner auto-advances on the first edit intent and on verify, emitting a `phase_changed` event (Phase 2.6). `outcome` is the *terminal result* axis — `None` while the run is live, then exactly one of `success` / `incomplete` / `blocked` / `failed`, which is what `ArtifactManager.status` reports (§14). Conflating the two (e.g. a single `phase` that also holds `done`/`failed`) is what leaves budget-exhaustion and verification-failure underspecified, so we keep them apart.
 
 **`task_kind` selects the verification contract** (§12). It is classified at intake (or inferred from the goal) and prevents edit-shaped verification ("a diff must exist") from being forced onto read-only tasks (investigation, explanation, or, once narrow command tools exist for it, running a command to report its output). It is a taxonomy of *verification contracts*, not of user intents — which is why there are only three (§12).
 
@@ -397,7 +399,7 @@ The model sees only tools allowed for the current phase; the runner re-validates
 
 Implemented MVP surface: `search_repo`, `list_files`, `read_file`, `apply_patch`, `run_tests`, and `run_linter`. `git_status` and `git_diff` remain part of the intended narrow tool surface, but the current engine gets diff/status evidence directly through `Workspace` and artifacts rather than exposing those as model-callable tools yet.
 
-Avoid a general `run_shell(command)` in v1. If included later, restrict it by allowlist, timeout, working directory, and permission policy.
+Avoid a general `run_shell(command)` in v1. **Revised by ADR-0002:** Phase 3.1 adds a *constrained* `run_command` — a model-chosen command run through `Workspace.run` (no shell metacharacters), at **tier 3** so it is default-blocked in batch and approval-gated + prefix-scoped in the REPL. This earns command parity (build/codegen/migrations/custom targets) without an always-on raw shell; the human approval gate is the backstop and the verifier still owns `outcome`. A general `run_shell` stays out.
 
 #### Patch application
 
@@ -468,6 +470,8 @@ def check(tool: ToolDefinition, raw_input: dict, state: TaskState, ws: Workspace
 ```
 
 This follows Pi's extension-hook shape while keeping the policy built into the harness rather than exposed as a plugin API. A `--trusted` / autonomous mode may promote `ask → auto` for unattended runs; irreversible or external actions stay gated.
+
+The synchronous direct call is the right model for the batch engine. The **async two-plane approval** for the interactive cockpit is already built at the Phase 3.0 foundation: `Session.request_approval` / `resolve_approval` (ADR-0001). The gate *announces* a tier-3 `ask` via an event; the human decides via a control method; the run blocks only itself until then. An event can never silently approve a call (§13).
 
 ## 12. Verification
 
@@ -547,9 +551,11 @@ MVP event types:
 | `decision_error`                               | A malformed model decision was fed back for repair. |
 | `permission_blocked`                           | A proposed call was denied by the permission gate (carries the reason). |
 | `tool_execution_end`                           | Tool execution result, including input, summary, and bounded content/error. |
+| `phase_changed`                                | The control phase advanced (`investigating`/`editing`/`verifying`) — Phase 2.6. |
+| `out_of_phase`                                 | A tool call not active in the current phase was fed back as model-correctable — Phase 2.6. |
 | `verification_start` / `verification_end`      | Verifier checks ran.                             |
 
-Streaming lifecycle events (`message_start` / `message_update` / `message_end`) and progress updates (`tool_execution_start` / `_update`) are Phase 3 UI work, not current MVP behavior.
+The Phase 3.0 foundation adds a **typed, versioned `HarnessEvent` discriminated union** (`event_types.py`) alongside the raw-dict emitter, with `*_start`/`*_end` granularity, `phase_changed`, approval (`approval_requested`/`_resolved`), and `model_update(channel="display")` events — fanned out by the async bus to independent subscribers, with the journal a privileged lossless sink (ADR-0001). Full streaming *render* (the cockpit) is Phase 3.1 work.
 
 Keep the emitter deliberately small: synchronous handlers, a fixed event list, no dynamic plugin loading. The goal is decoupling, not a general extension framework. The JSONL event log is the machine trace; a separate human-readable session log is optional later UI work.
 
@@ -614,17 +620,20 @@ Agents fail constantly; the harness expects it.
 
 ```text
 src/avatar_harness/
-  __init__.py
+  __init__.py        # curated public SDK surface (Harness, Session, event types, …)
   cli.py
   config.py
-  runner.py          # AgentRunner: the loop, budgets, gate consult
+  harness.py         # Harness facade: default wiring, run()/arun()/session() (Phase 2.6/3.0)
+  runner.py          # AgentRunner: the async arun() loop (sync run() wraps it), budgets, gate consult
   state.py           # TaskState, Evidence, DecisionRecord
   context.py         # ContextBuilder compact per-turn packet
   model_client.py    # constrained decision protocol, OpenAI-compatible client
   permission.py      # tiers + before-tool-call hook
   verifier.py        # composite gate + checks
-  events.py          # lifecycle emitter
-  eventlog.py        # JSONL subscriber
+  events.py          # raw-dict lifecycle emitter (sync path / CLI back-compat)
+  event_types.py     # typed HarnessEvent union + EventSink/ApprovalController protocols (Phase 3.0)
+  session.py         # two-plane Session + EventBus (Phase 3.0)
+  eventlog.py        # JSONL subscriber (raw-dict + typed events)
   artifact.py        # ArtifactManager
   deps.py            # RunDeps, CancellationToken
   workspace.py       # tracked workspace, path confinement, diff, atomic patching
@@ -684,7 +693,7 @@ Order chosen so each step plugs into the previous:
 
 ### MVP success criteria
 
-The first useful version can: accept a natural-language task; inspect relevant files; apply a small patch; run at least one verifier command; stop after bounded attempts; produce a clear summary with changed files and evidence; and leave an event log that explains what happened. This engine is now implemented through Phase 2; CLI intake still defaults to `investigate` until interactive/edit classification work lands.
+The first useful version can: accept a natural-language task; inspect relevant files; apply a small patch; run at least one verifier command; stop after bounded attempts; produce a clear summary with changed files and evidence; and leave an event log that explains what happened. This engine is implemented through Phase 2.6, plus the Phase 3.0 async foundation. CLI intake still defaults to `investigate`; ADR-0002 replaces goal *classification* with **visible, correctable modes** (set the initial contract, shown and overridable) for the cockpit.
 
 > The 12 steps above order the *engine* components. The interactive terminal session that wraps them (§23) is built as a later phase. `PROGRESS.md` holds the authoritative phased build plan — grouped into demonstrable, test-gated milestones — and the live status; this section is the component-level decomposition it draws from.
 
@@ -713,6 +722,8 @@ Harness design balances autonomy ↔ control, speed ↔ reliability, power ↔ s
 The useful first product is not a fully autonomous engineer. It is a bounded assistant that can inspect, edit, verify, and explain its work — with enough structure that failures are observable and recoverable.
 
 ## 23. Interaction layer — the interactive terminal session
+
+> **Superseded in part by [ADR-0002].** This section's *shape* stands — one code path, `SessionState` above `TaskState`, the three UX surfaces mapped to existing mechanisms — but the concrete MVP has moved on: the cockpit is a **Textual full-screen app** (not the `RichRenderer` sketched below), approval is the **async two-plane round-trip** (ADR-0001, not a synchronous hook return), and the feature set adds **plan mode** and **visible modes** over a hidden classifier. ADR-0002 is the current interaction design; the detail below is the originating rationale.
 
 §1–22 specify the **engine**: `run(goal) → Artifact`, a task executor that hands off, runs to a terminal outcome, and returns. The end goal — a terminal coding agent in the shape of a conversational assistant — is a **persistent session** that wraps that engine in a REPL. This section adds the session; **the engine is unchanged.** The interaction layer is purely additive, and it reuses three mechanisms the harness already owns rather than introducing new control paths.
 
@@ -776,8 +787,8 @@ The interaction layer introduces **no new control plane**. Each surface is a thi
 
 | UX surface | Built on | How |
 | --- | --- | --- |
-| Live streaming of thoughts, tool calls, and output | **event emitter (§13)** — observation only | A `RichRenderer` subscribes to the same events the `EventLog` does and paints the terminal. Streaming is just another subscriber; it cannot alter the loop. |
-| Real-time tool approval | **`before_tool_call` control hook (§11)** | In interactive mode the hook, instead of auto-deciding, surfaces the proposed call to the user and returns *their* decision. The hook already returns a `ToolPermission` the runner acts on — the human is simply the decider. |
+| Live streaming of thoughts, tool calls, and output | **event bus (§13, ADR-0001)** — observation only | The renderer (the **Textual cockpit**, ADR-0002) subscribes via `session.events()` and paints the terminal. Streaming is just another subscriber; it cannot alter the loop. |
+| Real-time tool approval | **two-plane control (ADR-0001)** | A tier-3 `ask` is *announced* by an `approval_requested` event; the human decides via the `session.resolve_approval()` control method (built at Phase 3.0). The decision returns through the control plane, never the event stream. |
 | Interrupt & steer mid-task | **cancellation token (§8) + `add_feedback` (§5)** | ESC/Ctrl-C trips the existing `CancellationToken`; the in-flight tool aborts via the `FIRST_COMPLETED` race (§18). The runner catches the cancellation, records the user's interjection as `add_feedback`, and returns control — to the model next turn, or to the prompt. A mid-task message is feedback, **not** a new task. |
 
 Approval UX (the hook rendering itself):
