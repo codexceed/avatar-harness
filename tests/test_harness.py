@@ -8,6 +8,8 @@ re-deriving the wiring.
 """
 
 import asyncio
+import subprocess
+import sys
 from typing import Any
 from unittest.mock import patch
 
@@ -113,9 +115,6 @@ def test_core_imports_without_textual():
     # The TUI cockpit is behind the optional [textual] extra: importing the core
     # package must not pull in textual (or the tui package). Checked in a fresh
     # interpreter so it is independent of whatever other tests have imported.
-    import subprocess
-    import sys
-
     code = (
         "import avatar_harness, sys; "
         "assert 'textual' not in sys.modules, sorted(m for m in sys.modules if 'textual' in m); "
