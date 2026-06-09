@@ -40,11 +40,29 @@ class AskUser(BaseModel):
     question: str
 
 
+class DecisionRetryNote(BaseModel):
+    """One malformed in-client attempt: what was wrong, and a capped raw excerpt."""
+
+    error: str
+    raw: str = ""
+
+
 class ModelDecision(BaseModel):
-    """One validated model decision: a thought plus exactly one action (§6)."""
+    """One validated model decision: a thought plus exactly one action (§6).
+
+    `retry_trace` is a **harness-owned diagnostics channel**: the model client annotates
+    the decision with any malformed attempts it recovered from in-client, so the runner
+    can record them as evidence and journal them (invariant #5). It is never accepted
+    from raw model output — `parse_decision` clears it.
+    """
 
     thought_summary: str = ""  # for logging/context only — never control flow
     action: ToolCall | FinalAnswer | AskUser = Field(discriminator="type")
+    retry_trace: list[DecisionRetryNote] = Field(default_factory=list)
+
+
+# Cap on the raw-reply excerpt kept per malformed attempt (journal/evidence detail).
+_RAW_EXCERPT_CAP = 2000
 
 
 class DecisionParseError(Exception):
@@ -68,9 +86,12 @@ def parse_decision(raw: str) -> ModelDecision:
     except json.JSONDecodeError as exc:
         raise DecisionParseError(f"not valid JSON: {exc}") from exc
     try:
-        return ModelDecision.model_validate(data)
+        decision = ModelDecision.model_validate(data)
     except ValidationError as exc:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
+    # `retry_trace` is harness-owned: a model emitting the field must not plant history.
+    decision.retry_trace = []
+    return decision
 
 
 class ModelClient(ABC):
@@ -233,6 +254,7 @@ class OpenAIModelClient(ModelClient):
         messages = build_messages(context)
         client = self._ensure_client()
         last_error: DecisionParseError | None = None
+        trace: list[DecisionRetryNote] = []
         for _ in range(self.max_parse_retries + 1):
             response = client.chat.completions.create(
                 model=self.config.model,
@@ -242,15 +264,24 @@ class OpenAIModelClient(ModelClient):
             )
             raw = response.choices[0].message.content or ""
             try:
-                return parse_decision(raw)
+                decision = parse_decision(raw)
             except DecisionParseError as exc:
                 last_error = exc
-                retry = f"That was not a valid decision ({exc}). Reply with one valid JSON decision."
+                # Annotate, don't swallow: the runner records each note as evidence and
+                # journals it, so a failed (e.g. truncated-patch) attempt stays visible.
+                trace.append(DecisionRetryNote(error=str(exc), raw=raw[:_RAW_EXCERPT_CAP]))
+                retry = (
+                    f"That was not a valid decision ({exc}). Re-send the SAME intended "
+                    "action as one valid JSON decision — do not switch to a different action."
+                )
                 messages = [
                     *messages,
                     {"role": "assistant", "content": raw},
                     {"role": "user", "content": retry},
                 ]
+            else:
+                decision.retry_trace = trace
+                return decision
         # The loop only exits without returning via the except branch, which always
         # sets last_error; the fallback keeps this total without an (O-stripped) assert.
         message = str(last_error) if last_error else "model returned no valid decision"

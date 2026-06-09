@@ -19,6 +19,7 @@ from avatar_harness.event_types import (
     AgentStart,
     ApprovalController,
     CancellationObserved,
+    DecisionError,
     EventSink,
     HarnessEvent,
     ModelDecisionEvent,
@@ -195,9 +196,34 @@ class AgentRunner:
                 state.add_feedback(f"invalid decision: {exc}", kind="decision_error")
                 state.consecutive_failures += 1
                 self.emitter.emit("decision_error", error=str(exc))
+                self._publish(
+                    DecisionError(
+                        task_id=state.task_id, turn=state.iterations, error=str(exc), recovered=False
+                    )
+                )
                 self.emitter.emit("turn_end", task_id=state.task_id)
                 self._publish(TurnEnd(task_id=state.task_id, turn=state.iterations))
                 continue
+
+            # Malformed attempts the client recovered from in-flight: record each as
+            # evidence (the model sees its own failed attempts next turn) and journal it
+            # (a struggling run is legible, invariant #5) — then clear the channel.
+            for note in decision.retry_trace:
+                state.add_feedback(
+                    f"malformed decision attempt (recovered): {note.error}",
+                    detail=note.raw,
+                    kind="decision_error",
+                )
+                self.emitter.emit("decision_error", error=note.error, recovered=True)
+                self._publish(
+                    DecisionError(
+                        task_id=state.task_id,
+                        turn=state.iterations,
+                        error=note.error,
+                        raw=note.raw,
+                        recovered=True,
+                    )
+                )
 
             action = decision.action
             brief = _action_brief(action)

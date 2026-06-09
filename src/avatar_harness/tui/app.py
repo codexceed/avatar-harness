@@ -22,11 +22,13 @@ from avatar_harness.event_types import (
     AgentEnd,
     AgentStart,
     ApprovalRequested,
+    DecisionError,
     HarnessEvent,
     ModelUpdate,
     PhaseChanged,
     ToolEnd,
     ToolStart,
+    VerificationEnd,
 )
 from avatar_harness.session import Session
 from avatar_harness.session_state import ReplSession
@@ -75,6 +77,7 @@ class CockpitApp(App):
         self.mode = (repl.mode or mode) if repl is not None else mode
         self.phase = "investigating"
         self.outcome: str | None = None
+        self.verdict: bool | None = None  # the verifier's real verdict (advisory in chat mode)
         self._on_submit = on_submit or (lambda _prompt: None)
         self.rendered: list[str] = []  # mirror of transcript lines, for headless assertions
 
@@ -110,9 +113,12 @@ class CockpitApp(App):
         """
         if isinstance(event, AgentStart):
             self.outcome = None
+            self.verdict = None
             self.query_one("#prompt", Input).disabled = True  # a run is active
         elif isinstance(event, PhaseChanged):
             self.phase = event.new
+        elif isinstance(event, VerificationEnd):
+            self.verdict = event.passed
         elif isinstance(event, ApprovalRequested):
             self._prompt_approval(event)  # announce → modal → resolve_approval (control plane)
         elif isinstance(event, AgentEnd):
@@ -172,17 +178,33 @@ class CockpitApp(App):
             return event.delta
         if isinstance(event, ApprovalRequested):
             return f"⏸ approval needed: {event.tool}"
+        if isinstance(event, DecisionError):
+            kind = "retried" if event.recovered else "turn lost"
+            return f"↩ malformed decision ({kind}): {event.error}"
+        if isinstance(event, VerificationEnd):
+            # The real verdict, always — in conversational mode the outcome alone would
+            # read "success" even when verification failed (§23.5: the human decides).
+            mark = "✓" if event.passed else "⚠"
+            verb = "passed" if event.passed else "failed"
+            return (
+                f"{mark} verification {verb}: {event.summary}"
+                if event.summary
+                else f"{mark} verification {verb}"
+            )
         if isinstance(event, AgentEnd):
             return f"■ {event.outcome}"
         return None
 
     def _status_text(self) -> str:
-        """The status-bar line: mode · phase · outcome.
+        """The status-bar line: mode · phase · outcome (· the verifier's verdict, once known).
 
         Returns:
             The formatted status string.
         """
-        return f"mode: {self.mode} · phase: {self.phase} · outcome: {self.outcome or 'running'}"
+        line = f"mode: {self.mode} · phase: {self.phase} · outcome: {self.outcome or 'running'}"
+        if self.verdict is not None:
+            line += f" · verify: {'✓' if self.verdict else '⚠ failed'}"
+        return line
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Route a submitted prompt: drive the REPL (drive mode) or the observe-mode callback.

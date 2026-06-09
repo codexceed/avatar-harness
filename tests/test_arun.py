@@ -20,6 +20,7 @@ from avatar_harness.model_client import (
     DecisionParseError,
     DecisionRetryNote,
     FinalAnswer,
+    ModelClient,
     ModelDecision,
     ToolCall,
 )
@@ -138,7 +139,9 @@ async def test_recovered_parse_retries_recorded_and_published(tmp_path):
     (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
     annotated = ModelDecision(
         action=FinalAnswer(answer="done"),
-        retry_trace=[DecisionRetryNote(error="not valid JSON: truncated", raw='{"action": {"type": "apply_pat')],
+        retry_trace=[
+            DecisionRetryNote(error="not valid JSON: truncated", raw='{"action": {"type": "apply_pat')
+        ],
     )
     bus = EventBus(session_id="sess")
     runner = _runner(tmp_path, _read_registry(tmp_path), [annotated], event_sink=bus)
@@ -155,7 +158,7 @@ async def test_recovered_parse_retries_recorded_and_published(tmp_path):
 async def test_exhausted_parse_failure_publishes_typed_event(tmp_path):
     # When every in-client attempt is malformed, the runner already records feedback —
     # but the typed stream (the journal) said nothing. The lost turn must be journaled.
-    class _AlwaysMalformed:
+    class _AlwaysMalformed(ModelClient):
         def decide(self, context):
             raise DecisionParseError("no valid decision after retries")
 

@@ -129,6 +129,21 @@ class ApprovalResolved(EventBase):
     via: Literal["human", "grant"] = "human"
 
 
+class DecisionError(EventBase):
+    """A malformed model reply — either recovered by an in-client retry or a lost turn (§6).
+
+    Closes the observability gap where a failed decision attempt (e.g. a truncated
+    `apply_patch` emission) left no trace: every malformed attempt is journaled with
+    its error and a capped excerpt of the raw reply, so a struggling run is legible
+    live and debuggable after the fact (invariant #5).
+    """
+
+    type: Literal["decision_error"] = "decision_error"
+    error: str = ""
+    raw: str = ""  # capped excerpt of the malformed reply
+    recovered: bool = True  # True: a later in-client attempt parsed; False: the turn was lost
+
+
 class VerificationStart(EventBase):
     """The harness-owned verifier has begun (§12)."""
 
@@ -162,6 +177,7 @@ HarnessEvent = Annotated[
     | ToolEnd
     | ApprovalRequested
     | ApprovalResolved
+    | DecisionError
     | VerificationStart
     | VerificationEnd
     | CancellationObserved,
