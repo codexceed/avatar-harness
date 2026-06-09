@@ -12,7 +12,7 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
 from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
 from avatar_harness.session import ApprovalGrant
-from avatar_harness.session_state import MetaResult, ReplSession
+from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.filesystem import read_file
 

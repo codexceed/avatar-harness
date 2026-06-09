@@ -9,10 +9,12 @@ forward. The Textual cockpit (Lane 2b) renders this; here it stays pure logic.
 
 Mode routing is a **visible heuristic default + explicit override** (ADR-0002 D3): a
 lightweight rule seeds `task_kind`, and `set_mode` overrides it — never a hidden
-per-prompt classifier. The `/mode` meta-command that drives `set_mode` is the 3.2 tail.
+per-prompt classifier. Local **meta commands** (`/help` `/quit` `/state` `/mode` `/diff`
+`/permissions`) are handled by `run_meta` and never reach the model (§23.2).
 """
 
-from typing import Literal
+from dataclasses import dataclass
+from typing import Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -21,8 +23,25 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
 from avatar_harness.session import ApprovalGrant, Session
 from avatar_harness.state import TaskState
+from avatar_harness.workspace import Workspace
 
 TaskKind = Literal["edit", "investigate", "test_only"]
+_TASK_KINDS: tuple[TaskKind, ...] = ("edit", "investigate", "test_only")
+
+_META_HELP = "commands: /help · /quit · /state · /mode <edit|investigate|test_only> · /diff · /permissions"
+
+
+@dataclass(frozen=True)
+class MetaResult:
+    """The outcome of a local meta command — the cockpit interprets `kind`, displays `text`.
+
+    `kind`: `message` (show text) · `mode_set` (mode changed) · `state` (session summary) ·
+    `diff` (text is a unified diff → the diff modal) · `quit` (end the session).
+    """
+
+    kind: Literal["message", "mode_set", "state", "diff", "quit"]
+    text: str
+
 
 # First-word imperatives that signal an edit goal; everything else defaults to investigate.
 _EDIT_VERBS = frozenset(
@@ -181,6 +200,85 @@ class ReplSession:
         state = await session.run()
         self.record(state)
         return state
+
+    def is_meta(self, text: str) -> bool:
+        """Whether `text` is a meta command (handled locally, never run as a goal).
+
+        Args:
+            text: The raw user input.
+
+        Returns:
+            True iff the input begins with `/`.
+        """
+        return text.lstrip().startswith("/")
+
+    def run_meta(self, text: str) -> MetaResult:  # noqa: PLR0911 — a flat per-command switch
+        """Handle a `/command` locally and return a result the cockpit renders/routes (§23.2).
+
+        Args:
+            text: The raw `/command [arg]` input.
+
+        Returns:
+            The `MetaResult` for the command (unknown commands are reported, never run).
+        """
+        parts = text.strip().lstrip("/").split(maxsplit=1)
+        cmd = parts[0].lower() if parts else ""
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        if cmd in {"help", ""}:
+            return MetaResult(kind="message", text=_META_HELP)
+        if cmd in {"quit", "exit"}:
+            return MetaResult(kind="quit", text="ending session")
+        if cmd == "mode":
+            return self._meta_mode(arg)
+        if cmd == "state":
+            summary = (
+                f"mode: {self.resolve_mode('')} · "
+                f"tasks: {len(self.state.tasks)} · turns: {len(self.state.history)}"
+            )
+            return MetaResult(kind="state", text=summary)
+        if cmd == "diff":
+            return MetaResult(kind="diff", text=self._workspace_diff())
+        if cmd == "permissions":
+            return self._meta_permissions()
+        return MetaResult(kind="message", text=f"unknown command: /{cmd} — {_META_HELP}")
+
+    def _meta_mode(self, arg: str) -> MetaResult:
+        """Set the mode from `/mode <arg>`, or report an invalid kind.
+
+        Args:
+            arg: The requested mode.
+
+        Returns:
+            A `mode_set` result on success, else a `message` error.
+        """
+        if arg in _TASK_KINDS:
+            self.set_mode(cast(TaskKind, arg))
+            return MetaResult(kind="mode_set", text=f"mode set to {arg}")
+        return MetaResult(kind="message", text=f"unknown mode: {arg} (use edit | investigate | test_only)")
+
+    def _meta_permissions(self) -> MetaResult:
+        """List the session-scoped standing grants.
+
+        Returns:
+            A `message` result naming each granted tool/prefix, or noting there are none.
+        """
+        if not self.state.grants:
+            return MetaResult(kind="message", text="no standing approvals this session")
+        lines = "\n".join(f"{g.tool} {g.prefix} (tier {g.tier})" for g in self.state.grants)
+        return MetaResult(kind="message", text=f"standing approvals:\n{lines}")
+
+    def _workspace_diff(self) -> str:
+        """The current uncommitted diff vs the pinned baseline (read-only; tolerates a dirty tree).
+
+        Returns:
+            The unified-diff text (empty when there are no changes).
+        """
+        ws = Workspace(
+            self.harness.config.workspace_root,
+            allow_dirty=True,  # /diff is a read-only inspection — never refuse on a dirty tree
+            sensitive_path_globs=self.harness.config.sensitive_path_globs,
+        )
+        return ws.diff()
 
     def _seed_history(self, task: TaskState) -> None:
         """Seed prior conversation into `task` as initial `history` evidence (not transcript bleed).
