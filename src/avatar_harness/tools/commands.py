@@ -86,11 +86,6 @@ run_linter = ToolDefinition(
 )
 
 
-# run_command is active in every phase — it is gated by tier-3 approval, not by phase
-# (the human at the prompt is the backstop, §11/ADR-0002 D4), so phase need not restrict it.
-_ANY_PHASE = frozenset({"investigating", "editing", "verifying"})
-
-
 class RunCommandInput(BaseModel):
     """Input for `run_command`: one project command (run as an argv, no shell metacharacters)."""
 
@@ -98,17 +93,29 @@ class RunCommandInput(BaseModel):
 
 
 def _run_command(args: RunCommandInput, deps: RunDeps) -> ToolResult:
-    out = deps.workspace.run(args.command, timeout=deps.config.command_timeout_seconds)
+    # Empty input would shlex.split to [] → subprocess.run([]) raises; treat as
+    # model-correctable rather than a system error surfaced from the runtime.
+    if not args.command.strip():
+        return ToolResult(tool_name="run_command", success=False, error="empty command")
+    ws = deps.workspace
+    # Attribute the command's side effects: the paths git sees as changed/untracked
+    # AFTER minus those already changed BEFORE (§8/§15). This is what makes codegen,
+    # migrations, and formatters participate in the diff/artifact/verifier path.
+    before = ws.status_paths()
+    out = ws.run(args.command, timeout=deps.config.command_timeout_seconds)
     if out.timed_out:
         # A timeout is a SYSTEM failure: surface it, never auto-retry (§16).
         return ToolResult(
             tool_name="run_command", success=False, error=f"command timed out: {args.command!r}"
         )
+    changed = sorted(ws.status_paths() - before)
+    ws.stage(changed)  # untracked output is invisible to `git diff <baseline>` until staged
     return ToolResult(
         tool_name="run_command",
         success=True,  # the command RAN; pass/fail lives in content/exit, not the flag — evidence (§12)
         content=_excerpt(out),
         summary=f"`{args.command}` exit={out.exit_code}",
+        files_changed=changed,  # flows into state.files_modified → diff → artifact → verifier
     )
 
 
@@ -120,6 +127,10 @@ run_command = ToolDefinition(
     ),
     input_model=RunCommandInput,
     handler=_run_command,
-    phases=_ANY_PHASE,
+    # editing/verifying only (ADR-0002): phase governs the *workflow contract* even though
+    # tier-3 is the security boundary — keeping it out of `investigating` keeps read-only
+    # planning read-only and avoids an investigate task reaching the (command-ungrounded)
+    # verifier dead-end. A pure-execution task is a later, explicit mode, not this tool.
+    phases=_VERIFY_PHASES,
     permission_tier=3,
 )

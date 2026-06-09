@@ -77,6 +77,8 @@ Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, 
 
 **Secret safety.** Files matching a sensitive-path denylist (`.env`, `*.pem`, SSH/AWS/GnuPG dirs, `.netrc`, …) are refused for read and patch, and excluded from `search_repo` results, so a task can't read your secrets into the model context or the event log. Enforcement is two-layer: the permission gate blocks the call up front, and the workspace re-checks the **resolved** path (so an innocuously-named symlink can't launder a secret, and the refusal holds even for a non-gated caller). Override the patterns with `AVATAR_SENSITIVE_PATH_GLOBS` (a JSON list, e.g. `'["*.secret", ".env"]'`); the value *replaces* the default set. This is prevention by path-matching, not content secret-detection — a secret reachable through some other channel (e.g. a command's stdout) is not scrubbed.
 
+**`run_command` (a trust-widening capability).** The agent can run a model-chosen project command (build, codegen, migration, a scoped test target) via the tier-3 `run_command` tool. Unlike `apply_patch`, a command is **opaque to the path denylist** — its backstop is the **human approval prompt**, not path-matching — so it is **default-blocked in non-interactive runs** and only reachable, with per-call approval, through the interactive session (Phase 3.1+). It runs as an argv (no shell metacharacters: no pipes, `&&`, redirection) and its file mutations are captured into the workspace diff like any edit. The verifier still owns the success outcome; a command never self-certifies.
+
 ## Usage
 
 Ask the harness a question about the repo it's pointed at:

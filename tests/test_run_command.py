@@ -58,6 +58,40 @@ def test_run_command_is_tier_3():
     assert run_command.permission_tier == 3  # default-blocked in batch; approval-gated in the REPL
 
 
+def test_run_command_is_editing_verifying_only():
+    # ADR-0002: not advertised during read-only `investigating`, so an investigate task
+    # can't reach it (and the command-ungrounded verifier dead-end it would cause).
+    assert run_command.phases == frozenset({"editing", "verifying"})
+
+
+def test_run_command_ran_but_failed_is_success(tmp_path):
+    # A nonzero exit is DATA, not a tool failure — success=True, like run_tests.
+    result = run_command.handler(
+        run_command.input_model(command='python -c "import sys; sys.exit(1)"'), _deps(tmp_path)
+    )
+    assert result.success
+    assert "exit=1" in result.summary
+
+
+def test_run_command_empty_is_model_correctable(tmp_path):
+    # shlex.split("") → [] → subprocess.run([]) would raise; guard it as model-correctable.
+    result = run_command.handler(run_command.input_model(command="   "), _deps(tmp_path))
+    assert not result.success
+    assert result.error == "empty command"
+
+
+def test_run_command_created_file_flows_into_diff(git_repo):
+    # A command that creates a file must participate in the existing path: attributed in
+    # files_changed AND staged so it shows in the pinned-HEAD diff (→ artifact, verifier).
+    deps = _deps(git_repo)
+    result = run_command.handler(
+        run_command.input_model(command="python -c \"open('gen.py','w').write('X = 1\\n')\""), deps
+    )
+    assert result.success
+    assert "gen.py" in result.files_changed  # the command's mutation is attributed
+    assert "gen.py" in deps.workspace.diff()  # staged → visible in the diff/artifact/verifier
+
+
 def test_run_command_blocked_in_batch(tmp_path):
     # tier-3 → the gate asks; with no approval controller (batch) that is a block.
     perm = PermissionPolicy().check(
@@ -104,7 +138,8 @@ async def test_run_command_approved_executes(tmp_path):
         emitter=Emitter(),
         config=HarnessConfig(),
     )
-    session = Session(runner, TaskState(goal="run it", task_kind="investigate"))
+    # edit task already in `editing` (run_command isn't advertised in `investigating`).
+    session = Session(runner, TaskState(goal="run it", task_kind="edit", phase="editing"))
     run_task = asyncio.create_task(session.run())
     async for ev in session.events():
         if ev.type == "approval_requested":
