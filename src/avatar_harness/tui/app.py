@@ -113,8 +113,12 @@ class CockpitApp(App):
             event: The lifecycle event to render.
         """
         if isinstance(event, AgentStart):
+            # Reset ALL per-goal display state: a follow-up goal must not wear the
+            # previous goal's phase/verdict (dogfood `events/04849a5a…jsonl` showed
+            # `phase: verifying · verify: ✓` on an unverified, incomplete goal 2).
             self.outcome = None
             self.verdict = None
+            self.phase = "investigating"
             self.query_one("#prompt", Input).disabled = True  # a run is active
         elif isinstance(event, PhaseChanged):
             self.phase = event.new
@@ -269,6 +273,11 @@ class CockpitApp(App):
         """
         if self.repl is None:
             return
+        # Belt-and-braces: clear per-goal display state before the stream starts, so the
+        # bar can never wear a previous goal's verdict even if an early event were lost.
+        self.outcome = None
+        self.verdict = None
+        self.phase = "investigating"
         try:
             if self.repl.resolve_mode(text) == "plan":
                 await self._run_plan_goal(text)
