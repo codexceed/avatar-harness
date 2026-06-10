@@ -74,7 +74,7 @@ AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); change fo
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 ```
 
-Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`. See `src/avatar_harness/config.py` for the full list.
+Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`, `AVATAR_CONTEXT_MAX_DETAIL_CHARS` / `AVATAR_CONTEXT_DETAIL_CHAR_BUDGET` (how much verbatim tool output the model's context retains per item / in total). See `src/avatar_harness/config.py` for the full list.
 
 **Mode routing (cockpit).** Each goal's `task_kind` is classified by one cheap, schema-constrained call on `AVATAR_CLASSIFIER_MODEL` (default `openai/gpt-5-nano`; same endpoint/key as the main model). The verdict is announced in the transcript (`▶ mode: edit (classifier) — /mode to change`) and always overridable with `/mode`; set the variable empty to disable classification (a word heuristic takes over).
 
