@@ -8,6 +8,10 @@ receives the whole repository by default.
 
 from pydantic import BaseModel, Field
 
+from avatar_harness.config import (
+    DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET,
+    DEFAULT_CONTEXT_MAX_DETAIL_CHARS,
+)
 from avatar_harness.state import Evidence, TaskState
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.workspace import Workspace
@@ -61,8 +65,8 @@ class ContextBuilder:
 
     def __init__(
         self,
-        detail_char_budget: int = 48_000,
-        max_detail_chars: int = 16_000,
+        detail_char_budget: int = DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET,
+        max_detail_chars: int = DEFAULT_CONTEXT_MAX_DETAIL_CHARS,
         max_evidence_lines: int = 40,
         max_actions: int = 25,
     ) -> None:
@@ -107,19 +111,24 @@ class ContextBuilder:
             pin = item.kind in _VERIFIER_KINDS and not pinned_verifier
             if item.detail and (spent < self.detail_char_budget or pin):
                 detail = item.detail[: self.max_detail_chars]
+                # The marker chars are not charged to the budget, and the pre-spend check
+                # can overshoot by up to one item's detail — harmless at these sizes; the
+                # packet-level max_context_tokens guard is the hard bound.
                 spent += len(detail)
                 if len(detail) < len(item.detail):
                     # Never cut silently: an unmarked truncation reads as "the file ends
                     # here" and sends the model into a re-read loop (2026-06-10 dogfood).
-                    detail += (
-                        f"\n… [truncated: {len(detail)}/{len(item.detail)} chars — "
-                        "re-read with a narrower line_range to see the rest]"
-                    )
+                    # Wording is neutral — detail also comes from commands/search/verifier,
+                    # where tool-specific advice ("re-read with line_range") would mislead.
+                    detail += f"\n… [truncated: {len(detail)}/{len(item.detail)} chars shown]"
                 if item.kind in _VERIFIER_KINDS:
                     pinned_verifier = True
                 lines_newest_first.append(f"{item.summary}{suffix}\n{detail}")
             else:
-                lines_newest_first.append(f"{item.summary}{suffix}")
+                # Degrade is loud too: a summary-only line that HAD detail says so, or the
+                # model can't tell "summary-only result" from "content aged out".
+                elided = f" [detail elided: {len(item.detail)} chars]" if item.detail else ""
+                lines_newest_first.append(f"{item.summary}{suffix}{elided}")
         return list(reversed(lines_newest_first))
 
     def build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket:

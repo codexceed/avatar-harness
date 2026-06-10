@@ -46,7 +46,8 @@ class Harness:
         verifier: The completion verifier; `Verifier(config)` if omitted.
         policy: The before-tool-call permission gate; the standard tier policy
             (threaded with `config.sensitive_path_globs`) if omitted.
-        context_builder: The per-turn context assembler; `ContextBuilder()` if omitted.
+        context_builder: The per-turn context assembler; if omitted, a `ContextBuilder`
+            budgeted from the config's `AVATAR_CONTEXT_*` compaction fields.
         emitter: The observation-only event emitter; a fresh `Emitter()` if omitted.
     """
 
@@ -95,7 +96,7 @@ class Harness:
             tools: Tool registry override; `default_registry()` if omitted.
             verifier: Verifier override; `Verifier(config)` if omitted.
             policy: Permission policy override; the standard tier policy if omitted.
-            context_builder: Context builder override; `ContextBuilder()` if omitted.
+            context_builder: Context builder override; a config-budgeted `ContextBuilder` if omitted.
             emitter: Event emitter override; a fresh `Emitter()` if omitted.
 
         Returns:
