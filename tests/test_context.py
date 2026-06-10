@@ -133,33 +133,86 @@ def test_context_respects_char_budget(tmp_path, read_registry):
 
 
 # --- truncation visibility + realistic budgets (dogfood `events/63bced3f…jsonl`) -----------
-#
-# The old 1500-chars-per-item silent cut made "modify an existing file" unwinnable: the
-# model saw a file that simply ended mid-function, with no hint anything was missing, and
-# burned a 50-turn budget re-reading it (42/50 turns). Truncation must be LOUD, and the
-# defaults must let an ordinary source file fit whole.
 
 
 def test_truncated_detail_is_marked(tmp_path, read_registry):
+    """A cut detail carries a visible, quantified marker — never a silent slice.
+
+    Dogfood context: the model saw a 3,548-char file silently cut at 1,500 chars — it
+    appeared to end mid-function — and burned 42 of 50 turns re-reading it. The wording
+    is deliberately neutral: evidence detail also comes from run_tests/run_linter/
+    search_repo (all `kind="tool_result"`), where a "re-read with line_range" hint would
+    itself be a misleading signal (PR-#29 review).
+    """
     state = TaskState(goal="x", task_kind="investigate")
     state.add_feedback("read big.py", detail="X" * 300)
     packet = ContextBuilder(max_detail_chars=100).build(state, Workspace(tmp_path), read_registry)
     blob = "\n".join(packet.recent_evidence)
     assert "[truncated" in blob  # the cut is visible...
     assert "100/300" in blob  # ...and quantified (shown/total)
-    assert "line_range" in blob  # ...with the actionable next step
+    assert "line_range" not in blob  # neutral wording — no tool-specific advice that may not apply
 
 
 def test_untruncated_detail_has_no_marker(tmp_path, read_registry):
+    """Detail that fits whole renders unmarked — the marker means exactly one thing."""
     state = TaskState(goal="x", task_kind="investigate")
     state.add_feedback("read small.py", detail="Y" * 50)
     packet = ContextBuilder(max_detail_chars=100).build(state, Workspace(tmp_path), read_registry)
     assert "[truncated" not in "\n".join(packet.recent_evidence)
 
 
+def test_pinned_verifier_detail_truncation_is_marked(tmp_path, read_registry):
+    """The verifier pin shows detail past the spent budget — but a cut is still marked.
+
+    The pin (§9) guarantees the latest verifier output detail survives compaction; if
+    that detail itself exceeds the per-item cap, the cut must be as loud as anywhere else.
+    """
+    state = TaskState(goal="x", task_kind="investigate")
+    state.add_feedback("filler", detail="F" * 200)
+    state.add_feedback("verification failed: ['tests']", detail="V" * 300, kind="verification")
+    packet = ContextBuilder(max_detail_chars=100, detail_char_budget=100).build(
+        state, Workspace(tmp_path), read_registry
+    )
+    blob = "\n".join(packet.recent_evidence)
+    assert "V" * 100 in blob  # the pin held: verifier detail shown despite the spent budget
+    assert "100/300" in blob  # and its truncation is marked
+
+
+def test_degraded_detail_is_marked_as_elided(tmp_path, read_registry):
+    """An over-budget item degraded to summary-only says so — degrade is not silent either.
+
+    Same failure mode as silent truncation, one tier up: a summary-only line that *had*
+    detail must say the detail was elided (and how much), or the model can't tell "this
+    tool returned only a summary" from "the harness aged the content out".
+    """
+    state = TaskState(goal="x", task_kind="investigate")
+    state.add_feedback("OLD", detail="D" * 80)
+    state.add_feedback("NEW", detail="E" * 80)
+    packet = ContextBuilder(max_detail_chars=100, detail_char_budget=80).build(
+        state, Workspace(tmp_path), read_registry
+    )
+    old_line = next(line for line in packet.recent_evidence if line.startswith("OLD"))
+    assert "[detail elided: 80 chars]" in old_line  # degraded, and says so
+    assert "D" * 80 not in old_line  # the detail itself is genuinely gone
+    new_line = next(line for line in packet.recent_evidence if line.startswith("NEW"))
+    assert "elided" not in new_line  # the in-budget item is unmarked
+
+
+def test_summary_only_evidence_never_marked_elided(tmp_path, read_registry):
+    """Evidence that never had detail renders bare — elision marks loss, not absence."""
+    state = TaskState(goal="x", task_kind="investigate")
+    state.add_feedback("plain note")
+    packet = ContextBuilder(detail_char_budget=0).build(state, Workspace(tmp_path), read_registry)
+    assert "elided" not in "\n".join(packet.recent_evidence)
+
+
 def test_default_budgets_fit_an_ordinary_source_file(tmp_path, read_registry):
-    # A ~4k-char file (the dogfood chatbot.py was 3,548) must survive whole under the
-    # defaults — modification requires seeing the entire file at once.
+    """The defaults must let a whole source file survive into context unmarked.
+
+    Modification structurally requires seeing the entire file at once (a unified diff's
+    exact context lines, or a full `write_file(overwrite)` rewrite); the dogfood file was
+    3,548 chars, so a ~4k detail is the floor the defaults must clear per item.
+    """
     state = TaskState(goal="x", task_kind="investigate")
     content = "line\n" * 800  # 4000 chars
     state.add_feedback("read scripts/chatbot.py", detail=content)
