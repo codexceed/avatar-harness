@@ -74,7 +74,20 @@ _RAW_EXCERPT_CAP = 2000
 
 
 class DecisionParseError(Exception):
-    """Malformed model output — recoverable; fed back to the model (§6), never fatal."""
+    """Malformed model output — recoverable; fed back to the model (§6), never fatal.
+
+    Carries `usage` when the client exhausts its in-client retries, so a lost turn is
+    still billed — the expensive failure mode is exactly the one that must not be
+    undercounted (PR-#31 review).
+
+    Args:
+        message: The parse-failure description fed back to the model.
+        usage: Tokens spent across the failed attempts, or `None` if unreported.
+    """
+
+    def __init__(self, message: str = "", usage: "DecisionUsage | None" = None) -> None:
+        super().__init__(message)
+        self.usage = usage
 
 
 def parse_decision(raw: str) -> ModelDecision:
@@ -520,7 +533,7 @@ class OpenAIModelClient(ModelClient):
             decision.usage = tally.total()
             return decision
         text = str(last_error) if last_error else "model returned no valid decision"
-        raise DecisionParseError(text) from last_error
+        raise DecisionParseError(text, usage=tally.total()) from last_error
 
     def _decide_json(self, client: Any, context: ContextPacket) -> ModelDecision:
         """One decision over the legacy single-JSON-object protocol (the escape hatch).
@@ -571,4 +584,4 @@ class OpenAIModelClient(ModelClient):
         # The loop only exits without returning via the except branch, which always
         # sets last_error; the fallback keeps this total without an (O-stripped) assert.
         message = str(last_error) if last_error else "model returned no valid decision"
-        raise DecisionParseError(message) from last_error
+        raise DecisionParseError(message, usage=tally.total()) from last_error

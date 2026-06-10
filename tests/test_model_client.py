@@ -440,3 +440,21 @@ def test_parse_decision_ignores_model_supplied_usage():
         ' "usage": {"prompt_tokens": 1, "completion_tokens": 1}}'
     )
     assert parse_decision(raw).usage is None
+
+
+def test_exhausted_parse_failure_carries_usage():
+    """A turn lost to malformed output still reports what its attempts cost.
+
+    The expensive failure mode (3 paid attempts, no decision) was exactly the one
+    being silently undercounted (PR-#31 review): the raised error now carries the
+    summed tally for the runner to bill.
+    """
+    bad = _msg_with_usage(content="{not json", prompt=1000, completion=30)
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=_fake_openai_usage([bad, bad, bad]), max_parse_retries=2
+    )
+    with pytest.raises(DecisionParseError) as exc_info:
+        client.decide(_packet())
+    usage = exc_info.value.usage
+    assert usage is not None
+    assert usage.prompt_tokens == 3000 and usage.completion_tokens == 90

@@ -222,3 +222,59 @@ async def test_usage_accumulates_into_state_and_journal(tmp_path):
     assert state.prompt_tokens == 2500 and state.completion_tokens == 50
     usage_events = [e for e in bus.history if e.type == "model_usage"]
     assert [(e.prompt_tokens, e.completion_tokens) for e in usage_events] == [(1000, 20), (1500, 30)]
+
+
+async def test_lost_turn_usage_still_recorded(tmp_path):
+    """A turn that dies in parse retries is still billed into state + the journal."""
+
+    class _MalformedWithUsage(ModelClient):
+        def decide(self, context):
+            raise DecisionParseError(
+                "no valid decision", usage=DecisionUsage(prompt_tokens=900, completion_tokens=12)
+            )
+
+    bus = EventBus(session_id="sess")
+    config = HarnessConfig(max_iterations=1)
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    runner = AgentRunner(
+        model_client=_MalformedWithUsage(),
+        registry=_read_registry(tmp_path),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+        event_sink=bus,
+    )
+    state = await runner.arun(TaskState(goal="g", task_kind="investigate"))
+    assert state.prompt_tokens == 900 and state.completion_tokens == 12
+    assert any(e.type == "model_usage" for e in bus.history)
+
+
+async def test_usage_reaches_legacy_emitter(tmp_path):
+    """Batch runs (legacy Emitter → JSONL EventLog) record usage too — observability
+    must not depend on which path the run took (PR-#31 review)."""
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(
+            action=FinalAnswer(answer="x is set in app.py"),
+            usage=DecisionUsage(prompt_tokens=500, completion_tokens=10),
+        ),
+    ]
+    seen: list[dict] = []
+    emitter = Emitter()
+    emitter.subscribe(seen.append)
+    config = HarnessConfig()
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    runner = AgentRunner(
+        model_client=ScriptedModel(decisions),
+        registry=_read_registry(tmp_path),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=emitter,
+        config=config,
+    )
+    await runner.arun(TaskState(goal="g", task_kind="investigate"))
+    usage_events = [e for e in seen if e.get("type") == "model_usage"]
+    assert usage_events and usage_events[0]["prompt_tokens"] == 500
