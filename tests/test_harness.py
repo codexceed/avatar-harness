@@ -223,3 +223,34 @@ def test_cli_delegates_to_harness_facade(git_repo):
         cli.run_agent("explain add()", config=config, emitter=Emitter(), model_client=_OneShotModel())
 
     assert mock_run.called
+
+
+def test_harness_threads_context_budgets_from_config(tmp_path):
+    """The compaction budgets are config knobs threaded into the default ContextBuilder.
+
+    The Phase-2.5 constants (1,500/6,000 chars) were invisible and unreachable — no env
+    var, no config field — which is how they survived unquestioned until a dogfood burned
+    a 50-turn budget on them (`events/63bced3f…jsonl`). An injected builder keeps its own
+    budgets (the Principle-A seam is unchanged).
+    """
+    config = HarnessConfig(
+        workspace_root=str(tmp_path),
+        context_detail_char_budget=12345,
+        context_max_detail_chars=2345,
+    )
+    harness = Harness(config=config)
+    assert harness.context_builder.detail_char_budget == 12345
+    assert harness.context_builder.max_detail_chars == 2345
+
+
+def test_context_budget_defaults_are_realistic(monkeypatch):
+    """Defaults let an ordinary source file fit whole per item, several files in total.
+
+    Built with `_env_file=None` + env cleared so this asserts the shipped defaults, not
+    whatever a local `.env`/environment happens to override (PR-#29 review).
+    """
+    monkeypatch.delenv("AVATAR_CONTEXT_MAX_DETAIL_CHARS", raising=False)
+    monkeypatch.delenv("AVATAR_CONTEXT_DETAIL_CHAR_BUDGET", raising=False)
+    config = HarnessConfig(_env_file=None)
+    assert config.context_max_detail_chars >= 16_000
+    assert config.context_detail_char_budget >= 48_000

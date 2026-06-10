@@ -12,6 +12,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # (no slash) or against the whole relative path (with a slash, `**` allowed). Reading
 # or patching a matching path is refused at the permission gate — deterministic
 # prevention, never content-level secret detection. Overridable via AVATAR_SENSITIVE_PATH_GLOBS.
+# Context-compaction defaults (§9) — the single source both `HarnessConfig` and
+# `ContextBuilder`'s bare-constructor defaults read, so the two can't drift.
+DEFAULT_CONTEXT_MAX_DETAIL_CHARS = 16_000
+DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET = 48_000
+
 DEFAULT_SENSITIVE_PATH_GLOBS: list[str] = [
     ".env",
     ".env.*",
@@ -75,3 +80,12 @@ class HarnessConfig(BaseSettings):
     # `false` restores the legacy single-JSON-object protocol for endpoints whose
     # tool-call support is broken (content-only replies also fall back automatically).
     native_tool_calls: bool = True
+
+    # Context compaction (§9; the Phase-2.5 budgets made visible + realistic). Per-item
+    # and total caps on verbatim evidence *detail* in the model's context. Sized so an
+    # ordinary source file fits whole per item — modifying a file requires seeing all of
+    # it at once (the 2026-06-10 dogfood burned a 50-turn budget re-reading a file that
+    # was silently cut at 1,500 chars) — with several files' worth of total verbatim
+    # detail. `max_context_tokens` still bounds the whole packet.
+    context_max_detail_chars: int = DEFAULT_CONTEXT_MAX_DETAIL_CHARS
+    context_detail_char_budget: int = DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET

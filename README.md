@@ -74,7 +74,7 @@ AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); change fo
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 ```
 
-Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`. See `src/avatar_harness/config.py` for the full list.
+Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`, `AVATAR_CONTEXT_MAX_DETAIL_CHARS` / `AVATAR_CONTEXT_DETAIL_CHAR_BUDGET` (how much verbatim tool output the model's context retains per item / in total). See `src/avatar_harness/config.py` for the full list.
 
 **Editing tools.** Modification rides `apply_patch` (a unified diff, applied atomically with a clean-apply staleness check); file **creation** rides `write_file` (plain content; refuses an existing target unless `overwrite=true`, steering modification back to the diff-anchored path). Both are tier-1, path-confined, denylist-checked, and staged into the workspace diff the verifier judges.
 
