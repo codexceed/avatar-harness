@@ -75,3 +75,9 @@ class HarnessConfig(BaseSettings):
     # `false` restores the legacy single-JSON-object protocol for endpoints whose
     # tool-call support is broken (content-only replies also fall back automatically).
     native_tool_calls: bool = True
+
+    # Mode routing (revises ADR-0002 D3). The REPL classifies each goal's task_kind with
+    # one cheap, schema-constrained call on this model (same base_url/api_key); the
+    # verdict is displayed and /mode-overridable — visible, never silent control. Empty/
+    # unset disables classification (heuristic-only). ~500 in / ~10 out tokens per goal.
+    classifier_model: str | None = "openai/gpt-5-nano"

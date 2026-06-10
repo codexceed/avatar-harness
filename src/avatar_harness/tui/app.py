@@ -279,10 +279,16 @@ class CockpitApp(App):
         self.verdict = None
         self.phase = "investigating"
         try:
-            if self.repl.resolve_mode(text) == "plan":
+            # Resolve off-loop (classification is a network call) and announce the
+            # verdict + its source before running — visible, correctable routing (D3).
+            resolved = await asyncio.to_thread(self.repl.resolve_mode, text)
+            self.mode = resolved
+            self._write(f"▶ mode: {resolved} ({self.repl.last_mode_source}) — /mode to change")
+            self.query_one("#status", Static).update(self._status_text())
+            if resolved == "plan":
                 await self._run_plan_goal(text)
             else:
-                session = self.repl.start(text)
+                session = self.repl.start(text)  # memoized — no second classification
                 state = await self._observe(session)
                 self.repl.record(state)
         except DirtyWorkspaceError as exc:

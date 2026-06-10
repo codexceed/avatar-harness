@@ -74,7 +74,9 @@ def test_question_words_route_investigate():
 def test_classifier_routes_followup_with_history():
     """The classifier sees the conversation, so a follow-up classifies from context."""
     captured: list[dict] = []
-    clf = ModeClassifier(HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured))
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured)
+    )
     kind = clf.classify(
         "Now make the UI richer with colors.",
         history=["user: Write a python script for a chatbot", "agent: created scripts/chatbot.py"],
@@ -103,7 +105,9 @@ def test_repl_routes_via_classifier_and_memoizes(tmp_path):
     flip) a second classification.
     """
     captured: list[dict] = []
-    clf = ModeClassifier(HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured))
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured)
+    )
     repl = _repl(tmp_path, classifier=clf)
     assert repl.resolve_mode("Now enrich the UI") == "edit"  # classifier verdict, not heuristic's investigate
     assert repl.last_mode_source == "classifier"
@@ -114,7 +118,9 @@ def test_repl_routes_via_classifier_and_memoizes(tmp_path):
 def test_explicit_mode_overrides_classifier(tmp_path):
     """`/mode` always wins; the classifier isn't even consulted."""
     captured: list[dict] = []
-    clf = ModeClassifier(HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured))
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured)
+    )
     repl = _repl(tmp_path, classifier=clf)
     repl.set_mode("investigate")
     assert repl.resolve_mode("add a retry to the client") == "investigate"
@@ -124,7 +130,9 @@ def test_explicit_mode_overrides_classifier(tmp_path):
 
 def test_classifier_failure_falls_back_to_heuristic(tmp_path):
     """A dead classifier endpoint degrades to the heuristic — never blocks a goal."""
-    clf = ModeClassifier(HarnessConfig(classifier_model="tiny"), client=_classifier_transport(None, boom=True))
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport(None, boom=True)
+    )
     repl = _repl(tmp_path, classifier=clf)
     assert repl.resolve_mode("Now make it colorful") == "edit"  # hardened heuristic catches it
     assert repl.last_mode_source == "heuristic"
