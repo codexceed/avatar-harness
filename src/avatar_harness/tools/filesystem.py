@@ -71,7 +71,10 @@ def _list_files(args: ListFilesInput, deps: RunDeps) -> ToolResult:
 
 list_files = ToolDefinition(
     name="list_files",
-    description="List files in the workspace matching a glob pattern.",
+    description=(
+        "List files in the workspace matching a glob pattern. Hidden (dot-prefixed) "
+        "entries are skipped unless the pattern names one (e.g. '.github/**/*')."
+    ),
     input_model=ListFilesInput,
     handler=_list_files,
     phases=_READ_PHASES,

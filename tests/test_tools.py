@@ -78,7 +78,8 @@ def test_list_files_wildcards_skip_hidden(tmp_path):
     runtime = _runtime(tmp_path)
     top = runtime.execute("list_files", {"glob": "*"})
     assert top.success
-    assert top.content == "a.py"  # `*` matched .venv (a dir) before; expansion dumped its tree
+    # `src` (non-hidden dir) still expands per Phase 2.5; `.venv` no longer does.
+    assert top.content.splitlines() == ["a.py", "src/m.py"]
     recursive = runtime.execute("list_files", {"glob": "**/*"})
     assert recursive.success
     assert recursive.content.splitlines() == ["a.py", "src/m.py"]  # nested hidden also skipped
