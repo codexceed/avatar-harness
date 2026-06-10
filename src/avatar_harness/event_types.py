@@ -129,6 +129,18 @@ class ApprovalResolved(EventBase):
     via: Literal["human", "grant"] = "human"
 
 
+class ModelUsage(EventBase):
+    """Provider-reported token usage for one turn (in-client retries summed).
+
+    The journal's per-turn cost record — the eval harness (ADR-0004) sums these for
+    tokens/$ per solved task; without them cost is unmeasurable (invariant #5).
+    """
+
+    type: Literal["model_usage"] = "model_usage"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
 class DecisionError(EventBase):
     """A malformed model reply — either recovered by an in-client retry or a lost turn (§6).
 
@@ -178,6 +190,7 @@ HarnessEvent = Annotated[
     | ApprovalRequested
     | ApprovalResolved
     | DecisionError
+    | ModelUsage
     | VerificationStart
     | VerificationEnd
     | CancellationObserved,

@@ -23,6 +23,7 @@ from avatar_harness.event_types import (
     EventSink,
     HarnessEvent,
     ModelDecisionEvent,
+    ModelUsage,
     PhaseChanged,
     ToolEnd,
     ToolStart,
@@ -35,6 +36,7 @@ from avatar_harness.events import Emitter
 from avatar_harness.model_client import (
     AskUser,
     DecisionParseError,
+    DecisionUsage,
     FinalAnswer,
     ModelClient,
     ToolCall,
@@ -129,6 +131,33 @@ class AgentRunner:
         self.event_sink = event_sink
         self.approval_controller = approval_controller
 
+    def _record_usage(self, state: TaskState, usage: DecisionUsage | None) -> None:
+        """Accumulate provider-reported usage into state and record it per turn.
+
+        The one mutator does the accumulation. Emitted on BOTH channels: the typed
+        bus (Session/journal) and the legacy emitter (the batch CLI's JSONL log) — a
+        run's cost must be observable on whichever path it ran (PR-#31 review).
+
+        Args:
+            state: The live task state to accumulate into.
+            usage: The turn's summed usage, or `None` when the endpoint reported none.
+        """
+        if usage is None:
+            return
+        state.prompt_tokens += usage.prompt_tokens
+        state.completion_tokens += usage.completion_tokens
+        self.emitter.emit(
+            "model_usage", prompt_tokens=usage.prompt_tokens, completion_tokens=usage.completion_tokens
+        )
+        self._publish(
+            ModelUsage(
+                task_id=state.task_id,
+                turn=state.iterations,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+            )
+        )
+
     def _publish(self, draft: HarnessEvent) -> None:
         """Publish a typed event to the sink, if one is wired (fire-and-forget, §13).
 
@@ -192,6 +221,8 @@ class AgentRunner:
                 decision = await asyncio.to_thread(self.model_client.decide, context)
             except DecisionParseError as exc:
                 # A malformed decision is model-correctable: feed it back, don't crash (§6).
+                # The lost turn still cost tokens — bill them (the client sums attempts).
+                self._record_usage(state, getattr(exc, "usage", None))
                 state.latest_error = str(exc)
                 state.add_feedback(f"invalid decision: {exc}", kind="decision_error")
                 state.consecutive_failures += 1
@@ -224,6 +255,8 @@ class AgentRunner:
                         recovered=True,
                     )
                 )
+
+            self._record_usage(state, decision.usage)
 
             action = decision.action
             brief = _action_brief(action)

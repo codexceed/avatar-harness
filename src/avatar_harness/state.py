@@ -87,6 +87,8 @@ class TaskState(BaseModel):
     iterations: int = 0
     consecutive_failures: int = 0  # tool/action errors in a row -> "incomplete" at cap (§5)
     repair_failures: int = 0  # verification rejections in a row -> "failed" at cap (§5)
+    prompt_tokens: int = 0  # provider-reported usage totals (in-client retries included)
+    completion_tokens: int = 0
     files_read: set[str] = Field(default_factory=set)
     files_modified: set[str] = Field(default_factory=set)
     commands_run: list[CommandRecord] = Field(default_factory=list)
