@@ -375,3 +375,72 @@ def test_custom_model_client_runs_end_to_end(tmp_path, read_registry):
     result = runner.run(TaskState(goal="where is the handler?", task_kind="investigate"))
     assert result.outcome == "success"
     assert result.final_answer == "the handler lives in app.py"
+
+
+# --- token-usage capture (eval prerequisite; ADR-0004) -------------------------------------
+
+
+def _msg_with_usage(content=None, tool_calls=None, prompt=0, completion=0):
+    """A reply message namespace whose response carries provider usage."""
+    return SimpleNamespace(content=content, tool_calls=tool_calls), SimpleNamespace(
+        prompt_tokens=prompt, completion_tokens=completion
+    )
+
+
+def _fake_openai_usage(replies: list, captured: list[dict] | None = None):
+    """A transport returning (message, usage) pairs in turn."""
+    seq = iter(replies)
+
+    def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        message, usage = next(seq)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def test_usage_captured_from_provider_reply():
+    """`response.usage` rides the decision as a harness-owned annotation.
+
+    Until now usage was dropped on the floor — no token counts reached state or the
+    journal, so cost-per-solve (the eval harness's key metric) was unmeasurable.
+    """
+    reply = _msg_with_usage(
+        tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=1200, completion=45
+    )
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_usage([reply]))
+    decision = client.decide(_packet())
+    assert decision.usage is not None
+    assert decision.usage.prompt_tokens == 1200
+    assert decision.usage.completion_tokens == 45
+
+
+def test_usage_summed_across_in_client_retries():
+    """Every attempt costs tokens — a retried turn reports the SUM, not the last call."""
+    bad = _msg_with_usage(content="{not json", prompt=1000, completion=30)
+    good = _msg_with_usage(
+        tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=1100, completion=40
+    )
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_usage([bad, good]))
+    decision = client.decide(_packet())
+    assert decision.usage is not None
+    assert decision.usage.prompt_tokens == 2100  # both attempts paid for
+    assert decision.usage.completion_tokens == 70
+
+
+def test_missing_usage_tolerated():
+    """Compat endpoints that omit `usage` yield `None` — never a crash."""
+    reply = _msg(tool_calls=[_tc("read_file", '{"path": "a.py"}')])  # transport without usage attr
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([reply]))
+    decision = client.decide(_packet())
+    assert decision.usage is None
+
+
+def test_parse_decision_ignores_model_supplied_usage():
+    """`usage` is harness-owned, like `retry_trace` — a model can't bill itself kindly."""
+    raw = (
+        '{"thought_summary": "t", "action": {"type": "final_answer", "answer": "a"},'
+        ' "usage": {"prompt_tokens": 1, "completion_tokens": 1}}'
+    )
+    assert parse_decision(raw).usage is None

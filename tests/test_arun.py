@@ -19,6 +19,7 @@ from avatar_harness.events import Emitter
 from avatar_harness.model_client import (
     DecisionParseError,
     DecisionRetryNote,
+    DecisionUsage,
     FinalAnswer,
     ModelClient,
     ModelDecision,
@@ -195,3 +196,29 @@ async def test_arun_emits_typed_events_with_monotonic_ids(tmp_path):
     ids = [e.event_id for e in bus.history]
     assert ids == sorted(ids) and len(set(ids)) == len(ids)  # strictly increasing, unique
     assert {e.type for e in bus.history} >= {"agent_start", "agent_end"}
+
+
+async def test_usage_accumulates_into_state_and_journal(tmp_path):
+    """Per-turn usage lands on `TaskState` totals and as a typed `model_usage` event.
+
+    The eval harness (ADR-0004) sums journal usage for $/solve; the runner — the one
+    mutator — does the accumulation, mirroring how `retry_trace` notes become evidence.
+    """
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(
+            action=ToolCall(name="read_file", input={"path": "app.py"}),
+            usage=DecisionUsage(prompt_tokens=1000, completion_tokens=20),
+        ),
+        ModelDecision(
+            action=FinalAnswer(answer="done"),
+            usage=DecisionUsage(prompt_tokens=1500, completion_tokens=30),
+        ),
+    ]
+    bus = EventBus(session_id="sess")
+    runner = _runner(tmp_path, _read_registry(tmp_path), decisions, event_sink=bus)
+    state = await runner.arun(TaskState(goal="g", task_kind="investigate"))
+
+    assert state.prompt_tokens == 2500 and state.completion_tokens == 50
+    usage_events = [e for e in bus.history if e.type == "model_usage"]
+    assert [(e.prompt_tokens, e.completion_tokens) for e in usage_events] == [(1000, 20), (1500, 30)]
