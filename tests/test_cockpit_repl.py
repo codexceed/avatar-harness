@@ -249,3 +249,23 @@ def test_main_interactive_launches_cockpit(git_repo, monkeypatch):
     assert code == 0
     assert isinstance(launched["repl"], ReplSession)
     assert launched["repl"].auto is True  # --auto threaded into the REPL (strict gate)
+
+
+async def test_observe_renders_leading_events(git_repo):
+    """The per-goal stream is subscribed BEFORE the run starts — no missed AgentStart.
+
+    `arun` publishes AgentStart synchronously before its first await; `_observe` used to
+    create the run task before `session.events()` subscribed, so the cockpit missed each
+    goal's leading events — including the status-reset that AgentStart triggers (the
+    stale `verify: ✓` in dogfood `events/04849a5a…jsonl`).
+    """
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py defines add")),
+    ]
+    repl = _repl(git_repo, decisions)
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain calc.py")
+        await _settle(app, pilot)
+    assert any(line.startswith("▶") for line in app.rendered)  # the AgentStart line rendered
