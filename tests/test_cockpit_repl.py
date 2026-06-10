@@ -1,10 +1,11 @@
-"""Phase 3.2e — the `--interactive` cockpit wired to a live `ReplSession` (§23, ADR-0002).
+"""Phase 3.2e — the cockpit wired to a live `ReplSession` (§23, ADR-0002).
 
 3.2b/2c built the cockpit *shell* + modals against a fixed `ReplaySession`; this wires the
 real multi-turn driver: `CockpitApp(repl=...)` routes input (meta handled locally, goals run
-as observable per-goal `Session`s, plan mode runs plan → `PlanModal` → build), and the CLI
-`--interactive` flag launches it (`--auto` restores the strict §12 gate). Tested headlessly
-with Textual's `Pilot` over a real `ReplSession` (ScriptedModel + a tmp git repo).
+as observable per-goal `Session`s, plan mode runs plan → `PlanModal` → build), and the TUI's
+own `jo-cli` entry point launches it (`--auto` restores the strict §12 gate) — the core CLI
+never imports the TUI. Tested headlessly with Textual's `Pilot` over a real `ReplSession`
+(ScriptedModel + a tmp git repo).
 """
 
 import time
@@ -18,7 +19,6 @@ pytest.importorskip("textual")  # the cockpit lives behind the optional [textual
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
-from avatar_harness import cli
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
 from avatar_harness.intent import ModeClassifier
@@ -27,6 +27,7 @@ from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.tools.edit import apply_patch
 from avatar_harness.tools.filesystem import read_file
+from avatar_harness.tui import cli as jo_cli
 from avatar_harness.tui.app import CockpitApp
 from avatar_harness.tui.modals import ApprovalModal, DiffModal, PlanModal
 
@@ -227,7 +228,7 @@ async def test_goal_error_renders_instead_of_crashing(git_repo):
     # reaching here at all means the app survived the failed goal
 
 
-def test_main_interactive_threads_allow_dirty(git_repo, monkeypatch):
+def test_jo_cli_threads_allow_dirty(git_repo, monkeypatch):
     launched: dict = {}
 
     def _fake_run(self, *args, **kwargs):
@@ -235,12 +236,12 @@ def test_main_interactive_threads_allow_dirty(git_repo, monkeypatch):
 
     monkeypatch.setattr(CockpitApp, "run", _fake_run)
     config = HarnessConfig(workspace_root=str(git_repo))
-    code = cli.main(["--interactive", "--allow-dirty"], config=config, model_client=ScriptedModel([]))
+    code = jo_cli.main(["--allow-dirty"], config=config, model_client=ScriptedModel([]))
     assert code == 0
     assert launched["repl"].allow_dirty is True  # the §15 acknowledgement reaches the REPL
 
 
-def test_main_interactive_launches_cockpit(git_repo, monkeypatch):
+def test_jo_cli_launches_cockpit(git_repo, monkeypatch):
     launched: dict = {}
 
     def _fake_run(self, *args, **kwargs):  # stub replacing the blocking CockpitApp.run
@@ -248,9 +249,7 @@ def test_main_interactive_launches_cockpit(git_repo, monkeypatch):
 
     monkeypatch.setattr(CockpitApp, "run", _fake_run)
     config = HarnessConfig(workspace_root=str(git_repo))
-    code = cli.main(
-        ["fix something", "--interactive", "--auto"], config=config, model_client=ScriptedModel([])
-    )
+    code = jo_cli.main(["--auto"], config=config, model_client=ScriptedModel([]))
     assert code == 0
     assert isinstance(launched["repl"], ReplSession)
     assert launched["repl"].auto is True  # --auto threaded into the REPL (strict gate)
