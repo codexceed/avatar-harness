@@ -137,7 +137,12 @@ def _update_latest_pointer(log_path: Path) -> None:
 
 
 def _launch_cockpit(
-    *, config: HarnessConfig, model_client: ModelClient | None, auto: bool, log_arg: str | None
+    *,
+    config: HarnessConfig,
+    model_client: ModelClient | None,
+    auto: bool,
+    log_arg: str | None,
+    allow_dirty: bool = False,
 ) -> int:
     """Build a `ReplSession` over the cockpit and run it to exit (the `--interactive` path).
 
@@ -150,6 +155,7 @@ def _launch_cockpit(
         model_client: Model client; a default `OpenAIModelClient` if omitted.
         auto: `True` keeps the strict §12 gate; `False` (default) is conversational (§23.5).
         log_arg: The `--log` value, or `None` for the managed per-session layout.
+        allow_dirty: Acknowledge a dirty tree at the start of the sitting (§15).
 
     Returns:
         Process exit code (`0` once the cockpit is dismissed).
@@ -158,7 +164,7 @@ def _launch_cockpit(
     log_path = _resolve_log_path(log_arg, session_id)
     journal = JsonlEventJournal(log_path)
     harness = Harness(config=config, model=model_client)
-    repl = ReplSession(harness, session_id=session_id, auto=auto, journal=journal)
+    repl = ReplSession(harness, session_id=session_id, auto=auto, journal=journal, allow_dirty=allow_dirty)
     cockpit_cls = load_cockpit()  # guarded import — clear hint if the [textual] extra is absent
     try:
         cockpit_cls(repl=repl).run()
@@ -216,7 +222,13 @@ def main(
 
     config = config or HarnessConfig()
     if args.interactive:
-        return _launch_cockpit(config=config, model_client=model_client, auto=args.auto, log_arg=args.log)
+        return _launch_cockpit(
+            config=config,
+            model_client=model_client,
+            auto=args.auto,
+            log_arg=args.log,
+            allow_dirty=args.allow_dirty,
+        )
     if args.task is None:
         parser.error("a task is required (or pass --interactive for the cockpit)")
 

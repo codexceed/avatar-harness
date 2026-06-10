@@ -9,6 +9,7 @@ and carrying grants forward. No TUI here; this is the pure-logic scope the cockp
 
 import asyncio
 
+import pytest
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
@@ -17,7 +18,9 @@ from avatar_harness.harness import Harness
 from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import ReplSession, default_mode
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar_harness.tools.edit import write_file
 from avatar_harness.tools.filesystem import read_file
+from avatar_harness.workspace import DirtyWorkspaceError
 
 
 class _Empty(BaseModel):
@@ -176,6 +179,57 @@ async def test_session_exposes_task_event_stream(tmp_path):
         seen.append(ev.type)
     repl.record(await run_task)
     assert {"agent_start", "tool_end", "agent_end"} <= set(seen)  # cockpit can render the run
+
+
+# --- session-owned dirt (multi-turn §15) ---------------------------------------------------
+#
+# The clean-start check protects the FIRST goal of a sitting (don't conflate pre-existing
+# user changes with agent changes). After that, uncommitted changes are the session's own
+# work product — a follow-up goal must not be refused because the previous goal succeeded
+# (the dogfood crash: goal 1 staged `scripts/chatbot.py`, goal 2 died on DirtyWorkspaceError).
+
+
+def _edit_then_read_registry() -> ToolRegistry:
+    reg = _read_registry()
+    reg.register(write_file)
+    return reg
+
+
+async def test_follow_up_goal_tolerates_session_owned_dirt(git_repo):
+    decisions = [
+        # goal 1 (edit): create a file — leaves the tree dirty (staged, uncommitted)
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "util.py", "content": "x = 1\n"})),
+        ModelDecision(action=FinalAnswer(answer="created util.py")),
+        # goal 2 (investigate): a follow-up against the session's own dirt
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "util.py"})),
+        ModelDecision(action=FinalAnswer(answer="util.py sets x")),
+    ]
+    repl = _repl(git_repo, decisions, registry=_edit_then_read_registry())
+    first = await repl.submit("create util.py with x = 1")
+    assert first.outcome == "success"
+    follow_up = await repl.submit("explain x in util.py")  # must NOT raise DirtyWorkspaceError
+    assert follow_up.outcome is not None
+    assert len(repl.state.tasks) == 2
+
+
+async def test_first_goal_still_refuses_preexisting_dirt(git_repo):
+    (git_repo / "calc.py").write_text("def add(a, b):\n    return a * b\n", encoding="utf-8")
+    repl = _repl(git_repo, [])
+    with pytest.raises(DirtyWorkspaceError):  # §15 intact: the sitting opens on a dirty tree
+        await repl.submit("explain calc.py")
+
+
+async def test_repl_allow_dirty_opt_in(git_repo):
+    (git_repo / "calc.py").write_text("def add(a, b):\n    return a * b\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py multiplies")),
+    ]
+    config = HarnessConfig(workspace_root=str(git_repo))
+    harness = Harness(config=config, model=ScriptedModel(decisions), tools=_read_registry())
+    repl = ReplSession(harness, allow_dirty=True)  # the --allow-dirty acknowledgement
+    state = await repl.submit("explain calc.py")
+    assert state.outcome is not None  # ran; the dirty tree was deliberately acknowledged
 
 
 async def test_batch_is_degenerate_session(tmp_path):
