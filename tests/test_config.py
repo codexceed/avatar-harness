@@ -32,3 +32,14 @@ def test_config_native_tool_calls_defaults_on_and_overrides(monkeypatch):
     assert HarnessConfig().native_tool_calls is True
     monkeypatch.setenv("AVATAR_NATIVE_TOOL_CALLS", "false")
     assert HarnessConfig().native_tool_calls is False
+
+
+def test_config_classifier_model_default_and_override(monkeypatch):
+    """The mode classifier rides a cheap dedicated model; empty disables it.
+
+    Defaults asserted with `_env_file=None` + env cleared (the PR-#29 review pattern).
+    """
+    monkeypatch.delenv("AVATAR_CLASSIFIER_MODEL", raising=False)
+    assert HarnessConfig(_env_file=None).classifier_model == "openai/gpt-5-nano"
+    monkeypatch.setenv("AVATAR_CLASSIFIER_MODEL", "")
+    assert HarnessConfig().classifier_model in (None, "")  # empty = heuristic-only

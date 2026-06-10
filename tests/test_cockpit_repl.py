@@ -269,3 +269,23 @@ async def test_observe_renders_leading_events(git_repo):
         await _type_and_send(pilot, app, "explain calc.py")
         await _settle(app, pilot)
     assert any(line.startswith("▶") for line in app.rendered)  # the AgentStart line rendered
+
+
+async def test_resolved_mode_displayed_before_run(git_repo):
+    """The routing verdict is visible and correctable — never silent control (D3).
+
+    The transcript announces the resolved mode + its source + the `/mode` override
+    before the goal runs, so a misclassification is seeable the moment it happens.
+    """
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py defines add")),
+    ]
+    repl = _repl(git_repo, decisions)  # no classifier wired → heuristic source
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain calc.py")
+        await _settle(app, pilot)
+    mode_lines = [line for line in app.rendered if "mode:" in line and "/mode" in line]
+    assert mode_lines and "investigate" in mode_lines[0]
+    assert "heuristic" in mode_lines[0]  # the source is named
