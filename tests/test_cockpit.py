@@ -151,3 +151,26 @@ async def test_agent_end_marks_run_complete():
         assert app.query_one("#prompt", Input).disabled is False  # re-enabled for the next goal
         assert "success" in app._status_text()
     assert app.outcome == "success"
+
+
+async def test_status_resets_between_goals():
+    """A new goal's AgentStart resets ALL per-goal display state — phase included.
+
+    Dogfood `events/04849a5a…jsonl`: goal 2 (incomplete, never verified) displayed goal
+    1's `phase: verifying · verify: ✓` — `_handle` reset outcome/verdict on AgentStart
+    but never phase, so the bar mixed two goals' states.
+    """
+    events = [
+        AgentStart(goal="g1"),
+        PhaseChanged(old="investigating", new="verifying"),
+        VerificationEnd(passed=True, summary="ok"),
+        AgentEnd(outcome="success"),
+        AgentStart(goal="g2"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert app.phase == "investigating"  # not goal 1's "verifying"
+        assert app.verdict is None  # not goal 1's ✓
+        assert app.outcome is None  # goal 2 is live
+        assert "verify" not in app._status_text()
