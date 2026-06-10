@@ -14,8 +14,14 @@ capability.
 
 ## Step 0 — setup
 
+Not yet on PyPI — install from source (quote the extras; zsh glob-expands the
+brackets otherwise):
+
 ```bash
-pip install avatar-harness[openai]
+# from a clone:
+pip install -e '.[openai]'
+# or straight from GitHub (uses your git credentials while the repo is private):
+pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
 ```
 
 Plus `rg` and `git` on `PATH`, and a `.env` (or exported variables):

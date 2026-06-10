@@ -5,12 +5,27 @@ description: From install to a verifier-checked answer in five minutes.
 
 ## Install
 
-avatar-harness is a Python 3.12+ library with two optional extras:
+avatar-harness is a Python 3.12+ library. It is **not yet published to PyPI** —
+install it from source:
 
 ```bash
-pip install avatar-harness[openai]            # the default OpenAI-compatible model client
-pip install avatar-harness[openai,textual]    # + the bundled Textual cockpit, `jo-cli` (optional)
+# From a clone (editable):
+git clone https://github.com/codexceed/avatar-harness.git
+cd avatar-harness
+pip install -e '.[openai]'            # the default OpenAI-compatible model client
+pip install -e '.[openai,textual]'    # + the bundled Textual cockpit, `jo-cli` (optional)
+
+# Or straight from GitHub into your own project's environment
+# (uses your git credentials while the repo is private):
+pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
+# uv equivalent:
+uv add 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
 ```
+
+<Note>
+  Always **quote the extras** — zsh otherwise glob-expands the brackets and
+  fails with `no matches found: avatar-harness[openai]`.
+</Note>
 
 The core imports without either extra — `openai` is needed only to use the
 default `OpenAIModelClient` (you can inject any `ModelClient` instead), and
@@ -19,7 +34,7 @@ default `OpenAIModelClient` (you can inject any `ModelClient` instead), and
 - **ripgrep** (`rg`) — the `search_repo` tool shells out to it.
 - **git** — patches apply via `git apply`; the workspace pins `HEAD` as its diff baseline.
 
-Working from a clone of this repo, `make install` (a thin `uv sync`) sets up
+Working on this repo itself, `make install` (a thin `uv sync`) sets up
 everything including the dev tools.
 
 ## Configure
