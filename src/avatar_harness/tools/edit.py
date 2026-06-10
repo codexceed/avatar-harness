@@ -23,6 +23,21 @@ from avatar_harness.workspace import (
 # Editing is active only once the agent has moved into the editing phase (§21).
 _EDIT_PHASES = frozenset({"editing"})
 
+# Markers of OpenAI's in-house "apply_patch" dialect, which their models are heavily
+# trained to emit. We don't accept it (rule of three: translate only if better guidance
+# doesn't stop the bleeding) — but a recognized dialect must come back as an error that
+# TEACHES the expected format, not a generic "no file targets found" that burned a whole
+# dogfood budget on blind retries.
+_BEGIN_PATCH_MARKERS = ("*** Begin Patch", "*** Update File:", "*** Add File:", "*** Delete File:")
+
+_DIALECT_GUIDANCE = (
+    "unsupported patch dialect: this looks like the '*** Begin Patch' format. apply_patch "
+    "takes a unified git diff — '--- a/<path>' and '+++ b/<path>' headers with '@@' hunks, "
+    "exactly as `git diff` prints (use '/dev/null' for a created or deleted file). Re-send "
+    "the SAME change as a unified diff, or use write_file with overwrite=true to rewrite "
+    "the whole file."
+)
+
 
 class ApplyPatchInput(BaseModel):
     """Input for `apply_patch`: a unified diff that may span multiple files."""
@@ -31,6 +46,8 @@ class ApplyPatchInput(BaseModel):
 
 
 def _apply_patch(args: ApplyPatchInput, deps: RunDeps) -> ToolResult:
+    if any(marker in args.diff for marker in _BEGIN_PATCH_MARKERS):
+        return ToolResult(tool_name="apply_patch", success=False, error=_DIALECT_GUIDANCE)
     try:
         changed = deps.workspace.apply_patch(args.diff)
     except PathOutsideWorkspaceError as exc:
@@ -53,7 +70,12 @@ def _apply_patch(args: ApplyPatchInput, deps: RunDeps) -> ToolResult:
 
 apply_patch = ToolDefinition(
     name="apply_patch",
-    description="Apply a unified diff (may span multiple files) to the workspace atomically.",
+    description=(
+        "Apply a unified git diff to the workspace atomically (may span multiple files). "
+        "Format: '--- a/<path>' / '+++ b/<path>' headers with '@@' hunks, exactly as "
+        "`git diff` prints; use '/dev/null' for created or deleted files. Other patch "
+        "dialects (e.g. '*** Begin Patch') are not accepted."
+    ),
     input_model=ApplyPatchInput,
     handler=_apply_patch,
     phases=_EDIT_PHASES,

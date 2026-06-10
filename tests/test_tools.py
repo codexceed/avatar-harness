@@ -138,6 +138,29 @@ def test_apply_patch_tool_stale_context_is_model_correctable(git_repo):
     assert "a + b" not in (Workspace(git_repo).read("calc.py"))  # nothing written
 
 
+def test_apply_patch_begin_patch_dialect_gets_format_guidance(git_repo):
+    # OpenAI-family models keep emitting their in-house '*** Begin Patch' dialect (two
+    # dogfood runs in a row); the generic "no file targets found" error corrected nothing
+    # and one run burned its whole budget retrying it. A recognized dialect must come back
+    # as a model-correctable error that TEACHES the expected unified-diff format.
+    dialect = (
+        "*** Begin Patch\n*** Update File: calc.py\n@@\n def add(a, b):\n"
+        "-    return a - b\n+    return a + b\n*** End Patch\n"
+    )
+    result = _edit_runtime(git_repo).execute("apply_patch", {"diff": dialect})
+    assert result.success is False
+    assert "Begin Patch" in (result.error or "")  # names what it saw
+    assert "--- a/" in (result.error or "") and "unified" in (result.error or "")  # teaches the fix
+    assert "return a - b" in Workspace(git_repo).read("calc.py")  # nothing written
+
+
+def test_apply_patch_description_teaches_the_format():
+    # The description IS the function-schema text the provider shows the model (native
+    # tool-calling) — it must spell out the expected markers, not just say "a diff".
+    assert "--- a/" in apply_patch.description
+    assert "git diff" in apply_patch.description
+
+
 # --- write_file (ADR-0003 B): first-class file creation -----------------------------------
 #
 # New-file creation gets a plain-content transport — no diff costume (a new-file hunk has
