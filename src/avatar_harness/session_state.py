@@ -7,9 +7,11 @@ fresh `TaskState` run through the existing single-task `Session` (one code path 
 the degenerate one-`submit` case, §23.2), seeded with prior history and carrying grants
 forward. The Textual cockpit (Lane 2b) renders this; here it stays pure logic.
 
-Mode routing is a **visible heuristic default + explicit override** (ADR-0002 D3): a
-lightweight rule seeds `task_kind`, and `set_mode` overrides it — never a hidden
-per-prompt classifier. **Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
+Mode routing (revised ADR-0002 D3) is **visible and correctable, never hidden**: an
+explicit `set_mode` override wins; else a one-shot LLM classification (`ModeClassifier`,
+when configured) seeds `task_kind` from the prompt + conversation; else the hardened
+word heuristic. The verdict is announced before the run and `/mode` re-routes.
+**Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
 a read-only plan task → human approve/revise → the approved plan seeds the edit task as a
 constraint; `submit_plan` drives that flow. Local **meta commands** (`/help` `/quit` `/state`
 `/mode` `/plan` `/diff` `/permissions`) are handled by `run_meta` and never reach the
@@ -391,6 +393,10 @@ class ReplSession:
         self.state.tasks.append(state)
         reply = state.final_answer or (state.outcome or "done")
         self.state.history.append(Turn(role="agent", text=reply, task_id=state.task_id))
+        # The routing memo is intra-goal only (start() re-resolves the same prompt):
+        # a finished goal changes the conversation, so the same text next turn must
+        # re-classify in the new context (PR-#32 review — "continue", "keep going").
+        self._route_memo = None
 
     async def submit(self, prompt: str) -> TaskState:
         """Run one goal to completion and record it — the simple (batch-shaped) path.
@@ -532,8 +538,10 @@ class ReplSession:
             self.set_mode("plan")
             return MetaResult(kind="mode_set", text="mode set to plan")
         if cmd == "state":
+            # Strictly local: never resolve (the classifier is a network call, and meta
+            # commands must not reach a model or spend tokens — §23.2, PR-#32 review).
             summary = (
-                f"mode: {self.resolve_mode('')} · "
+                f"mode: {self.state.mode or 'auto'} · "
                 f"tasks: {len(self.state.tasks)} · turns: {len(self.state.history)}"
             )
             return MetaResult(kind="state", text=summary)

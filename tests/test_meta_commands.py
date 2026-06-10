@@ -61,7 +61,7 @@ def test_state_summarizes_session(git_repo):
     asyncio.run(repl.submit("explain calc.py"))
     result = repl.run_meta("/state")
     assert "1" in result.text  # one task run
-    assert "investigate" in result.text  # current mode
+    assert "mode: auto" in result.text  # no override set — and /state never resolves/classifies
 
 
 def test_diff_returns_workspace_diff(git_repo):

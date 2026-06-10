@@ -239,6 +239,10 @@ class CockpitApp(App):
         if self.repl.is_meta(text):
             self._handle_meta(text)
         else:
+            # Disable input synchronously: classification runs before AgentStart (whose
+            # handler used to be the only disabler), and that window let a second goal
+            # start and race the first (PR-#32 review). Re-enabled in _run_goal's finally.
+            self.query_one("#prompt", Input).disabled = True
             self.run_worker(self._run_goal(text), exclusive=False)
 
     def _handle_meta(self, text: str) -> None:

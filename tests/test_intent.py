@@ -158,3 +158,39 @@ async def test_classified_goal_runs_end_to_end(tmp_path):
     state = await repl.submit("Now walk me through app.py")
     assert state.task_kind == "investigate"
     assert state.outcome == "success"
+
+
+def test_meta_state_never_classifies(tmp_path):
+    """`/state` is strictly local — no classifier call, no token spend (§23.2)."""
+    captured: list[dict] = []
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport("edit", captured)
+    )
+    repl = _repl(tmp_path, classifier=clf)
+    result = repl.run_meta("/state")
+    assert "mode: auto" in result.text
+    assert captured == []  # the meta command never reached the model
+    repl.set_mode("edit")
+    assert "mode: edit" in repl.run_meta("/state").text  # an override displays verbatim
+
+
+async def test_route_memo_cleared_per_goal(tmp_path):
+    """The same prompt text on a LATER turn re-classifies in the new conversation.
+
+    The memo exists only so `start()` doesn't re-pay the call within one goal;
+    carrying it across goals would freeze "continue"-style follow-ups to a stale
+    verdict (PR-#32 review).
+    """
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "app.py"})),
+        ModelDecision(action=FinalAnswer(answer="x is set in app.py")),
+    ] * 2
+    captured: list[dict] = []
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport("investigate", captured)
+    )
+    repl = _repl(tmp_path, decisions, classifier=clf)
+    await repl.submit("walk me through app.py")
+    await repl.submit("walk me through app.py")  # same text, new turn
+    assert len(captured) == 2  # re-classified with the grown conversation
