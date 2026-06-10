@@ -223,3 +223,24 @@ def test_cli_delegates_to_harness_facade(git_repo):
         cli.run_agent("explain add()", config=config, emitter=Emitter(), model_client=_OneShotModel())
 
     assert mock_run.called
+
+
+def test_harness_threads_context_budgets_from_config(tmp_path):
+    # The compaction budgets are config knobs (AVATAR_CONTEXT_*), threaded into the
+    # default ContextBuilder — the Phase-2.5 constants were invisible and unreachable.
+    config = HarnessConfig(
+        workspace_root=str(tmp_path),
+        context_detail_char_budget=12345,
+        context_max_detail_chars=2345,
+    )
+    harness = Harness(config=config)
+    assert harness.context_builder.detail_char_budget == 12345
+    assert harness.context_builder.max_detail_chars == 2345
+
+
+def test_context_budget_defaults_are_realistic():
+    # Defaults sized so an ordinary source file fits whole per item, with several files'
+    # worth of total verbatim detail (still far under max_context_tokens).
+    config = HarnessConfig()
+    assert config.context_max_detail_chars >= 16_000
+    assert config.context_detail_char_budget >= 48_000

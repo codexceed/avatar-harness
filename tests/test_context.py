@@ -130,3 +130,40 @@ def test_context_respects_char_budget(tmp_path, read_registry):
     )
     blob = "\n".join(packet.recent_evidence)
     assert blob.count("D" * 100) <= 2  # only ~budget worth of detail is included verbatim
+
+
+# --- truncation visibility + realistic budgets (dogfood `events/63bced3f…jsonl`) -----------
+#
+# The old 1500-chars-per-item silent cut made "modify an existing file" unwinnable: the
+# model saw a file that simply ended mid-function, with no hint anything was missing, and
+# burned a 50-turn budget re-reading it (42/50 turns). Truncation must be LOUD, and the
+# defaults must let an ordinary source file fit whole.
+
+
+def test_truncated_detail_is_marked(tmp_path, read_registry):
+    state = TaskState(goal="x", task_kind="investigate")
+    state.add_feedback("read big.py", detail="X" * 300)
+    packet = ContextBuilder(max_detail_chars=100).build(state, Workspace(tmp_path), read_registry)
+    blob = "\n".join(packet.recent_evidence)
+    assert "[truncated" in blob  # the cut is visible...
+    assert "100/300" in blob  # ...and quantified (shown/total)
+    assert "line_range" in blob  # ...with the actionable next step
+
+
+def test_untruncated_detail_has_no_marker(tmp_path, read_registry):
+    state = TaskState(goal="x", task_kind="investigate")
+    state.add_feedback("read small.py", detail="Y" * 50)
+    packet = ContextBuilder(max_detail_chars=100).build(state, Workspace(tmp_path), read_registry)
+    assert "[truncated" not in "\n".join(packet.recent_evidence)
+
+
+def test_default_budgets_fit_an_ordinary_source_file(tmp_path, read_registry):
+    # A ~4k-char file (the dogfood chatbot.py was 3,548) must survive whole under the
+    # defaults — modification requires seeing the entire file at once.
+    state = TaskState(goal="x", task_kind="investigate")
+    content = "line\n" * 800  # 4000 chars
+    state.add_feedback("read scripts/chatbot.py", detail=content)
+    packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
+    blob = "\n".join(packet.recent_evidence)
+    assert content in blob  # intact, no truncation
+    assert "[truncated" not in blob
