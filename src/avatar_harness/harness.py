@@ -66,7 +66,12 @@ class Harness:
         self.tools = tools or default_registry()
         self.verifier = verifier or Verifier(config)
         self.policy = policy
-        self.context_builder = context_builder or ContextBuilder()
+        # The default builder rides the config's compaction budgets (AVATAR_CONTEXT_*);
+        # an injected builder keeps whatever budgets it was constructed with.
+        self.context_builder = context_builder or ContextBuilder(
+            detail_char_budget=config.context_detail_char_budget,
+            max_detail_chars=config.context_max_detail_chars,
+        )
         self.emitter = emitter or Emitter()
 
     @classmethod

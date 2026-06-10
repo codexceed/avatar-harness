@@ -61,8 +61,8 @@ class ContextBuilder:
 
     def __init__(
         self,
-        detail_char_budget: int = 6000,
-        max_detail_chars: int = 1500,
+        detail_char_budget: int = 48_000,
+        max_detail_chars: int = 16_000,
         max_evidence_lines: int = 40,
         max_actions: int = 25,
     ) -> None:
@@ -108,6 +108,13 @@ class ContextBuilder:
             if item.detail and (spent < self.detail_char_budget or pin):
                 detail = item.detail[: self.max_detail_chars]
                 spent += len(detail)
+                if len(detail) < len(item.detail):
+                    # Never cut silently: an unmarked truncation reads as "the file ends
+                    # here" and sends the model into a re-read loop (2026-06-10 dogfood).
+                    detail += (
+                        f"\n… [truncated: {len(detail)}/{len(item.detail)} chars — "
+                        "re-read with a narrower line_range to see the rest]"
+                    )
                 if item.kind in _VERIFIER_KINDS:
                     pinned_verifier = True
                 lines_newest_first.append(f"{item.summary}{suffix}\n{detail}")

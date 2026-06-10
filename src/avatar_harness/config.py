@@ -75,3 +75,12 @@ class HarnessConfig(BaseSettings):
     # `false` restores the legacy single-JSON-object protocol for endpoints whose
     # tool-call support is broken (content-only replies also fall back automatically).
     native_tool_calls: bool = True
+
+    # Context compaction (§9; the Phase-2.5 budgets made visible + realistic). Per-item
+    # and total caps on verbatim evidence *detail* in the model's context. Sized so an
+    # ordinary source file fits whole per item — modifying a file requires seeing all of
+    # it at once (the 2026-06-10 dogfood burned a 50-turn budget re-reading a file that
+    # was silently cut at 1,500 chars) — with several files' worth of total verbatim
+    # detail. `max_context_tokens` still bounds the whole packet.
+    context_max_detail_chars: int = 16_000
+    context_detail_char_budget: int = 48_000
