@@ -2,10 +2,13 @@
 title: avatar_harness.cli
 ---
 
-CLI entry point.
+CLI entry point — the batch shell.
 
 `main()` drives the real loop via `run_agent`. The CLI stays a thin shell over the
-loop — wiring components and event subscribers, nothing more.
+loop — wiring components and event subscribers, nothing more. It is deliberately
+**TUI-free**: the harness is an independent core under many consumers, and the
+interactive cockpit ships its own `jo-cli` entry point (`avatar_harness.tui.cli`)
+so the import direction stays strictly consumer → core.
 
 ## Functions
 ### `main(argv: list[str] | None = None, *, config: HarnessConfig | None = None, model_client: ModelClient | None = None, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate') -> int`

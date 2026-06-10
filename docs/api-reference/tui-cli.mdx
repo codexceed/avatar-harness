@@ -1,0 +1,28 @@
+---
+title: avatar_harness.tui.cli
+---
+
+jo-cli — the interactive cockpit's own entry point.
+
+The harness is an independent core under many consumers (TUIs, eval drivers,
+autonomous wrappers); the cockpit is one of them, so it owns its launcher. The
+import direction is strictly consumer → core: this module consumes the public
+`Harness`/`ReplSession` surface, and nothing in the core imports it back.
+
+The whole sitting is journaled to one write-ahead `events/&lt;session_id>.jsonl`
+(or `--log`), so an interactive run is as replayable as a batch one — events are
+committed to disk *before* the TUI renders them, and a cockpit crash loses
+nothing journaled.
+
+## Functions
+### `main(argv: list[str] | None = None, *, config: HarnessConfig | None = None, model_client: ModelClient | None = None) -> int`
+
+jo-cli entry point: build a `ReplSession` over the cockpit and run it to exit.
+
+Args:
+    argv: Argument vector; falls back to `sys.argv` when omitted.
+    config: Harness config; constructed from the environment when omitted.
+    model_client: Model client; a default `OpenAIModelClient` if omitted (injectable for tests).
+
+Returns:
+    Process exit code (`0` once the cockpit is dismissed).

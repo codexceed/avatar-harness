@@ -1,14 +1,15 @@
-"""CLI entry point.
+"""CLI entry point — the batch shell.
 
 `main()` drives the real loop via `run_agent`. The CLI stays a thin shell over the
-loop — wiring components and event subscribers, nothing more.
+loop — wiring components and event subscribers, nothing more. It is deliberately
+**TUI-free**: the harness is an independent core under many consumers, and the
+interactive cockpit ships its own `jo-cli` entry point (`avatar_harness.tui.cli`)
+so the import direction stays strictly consumer → core.
 """
 
 import argparse
-import contextlib
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -17,11 +18,9 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.eventlog import EventLog
 from avatar_harness.events import Emitter, Event
 from avatar_harness.harness import Harness
-from avatar_harness.journal import JsonlEventJournal
+from avatar_harness.journal import resolve_log_path, update_latest_pointer
 from avatar_harness.model_client import ModelClient
-from avatar_harness.session_state import ReplSession
 from avatar_harness.state import TaskState
-from avatar_harness.tui import load_cockpit
 from avatar_harness.workspace import DirtyWorkspaceError, Workspace
 
 # Truncation width for event values rendered to the terminal.
@@ -101,80 +100,6 @@ def _report(state: TaskState, config: HarnessConfig) -> str:
     return manager.render(manager.build(state, ws))
 
 
-def _resolve_log_path(arg: str | None, session_id: str) -> Path:
-    """Pick the event-log path: an explicit `--log`, else a per-session default.
-
-    The default `events/<session_id>.jsonl` makes one session one file — grouping is
-    physical and the filename is self-identifying — instead of appending every run to a
-    shared static log that must be filtered apart.
-
-    Args:
-        arg: The `--log` value, or `None` to use the per-session default.
-        session_id: This run's id, used to name the default log.
-
-    Returns:
-        The resolved log path.
-    """
-    if arg is not None:
-        return Path(arg)
-    return Path("events") / f"{session_id}.jsonl"
-
-
-def _update_latest_pointer(log_path: Path) -> None:
-    """Point `latest.jsonl` at this run's log so the newest session is always reachable.
-
-    Best-effort: a platform without symlink support (or a permission error) just leaves
-    the per-session log — the pointer is a convenience, not the source of truth.
-
-    Args:
-        log_path: This run's per-session log file.
-    """
-    pointer = log_path.parent / "latest.jsonl"
-    with contextlib.suppress(OSError):
-        if pointer.is_symlink() or pointer.exists():
-            pointer.unlink()
-        pointer.symlink_to(log_path.name)
-
-
-def _launch_cockpit(
-    *,
-    config: HarnessConfig,
-    model_client: ModelClient | None,
-    auto: bool,
-    log_arg: str | None,
-    allow_dirty: bool = False,
-) -> int:
-    """Build a `ReplSession` over the cockpit and run it to exit (the `--interactive` path).
-
-    The whole sitting is journaled to one write-ahead `events/<session_id>.jsonl` (or
-    `--log`), so an interactive run is as replayable as a batch one — events are committed
-    to disk *before* the TUI renders them, and a cockpit crash loses nothing journaled.
-
-    Args:
-        config: Harness config for the session.
-        model_client: Model client; a default `OpenAIModelClient` if omitted.
-        auto: `True` keeps the strict §12 gate; `False` (default) is conversational (§23.5).
-        log_arg: The `--log` value, or `None` for the managed per-session layout.
-        allow_dirty: Acknowledge a dirty tree at the start of the sitting (§15).
-
-    Returns:
-        Process exit code (`0` once the cockpit is dismissed).
-    """
-    session_id = uuid4().hex
-    log_path = _resolve_log_path(log_arg, session_id)
-    journal = JsonlEventJournal(log_path)
-    harness = Harness(config=config, model=model_client)
-    repl = ReplSession(harness, session_id=session_id, auto=auto, journal=journal, allow_dirty=allow_dirty)
-    cockpit_cls = load_cockpit()  # guarded import — clear hint if the [textual] extra is absent
-    try:
-        cockpit_cls(repl=repl).run()
-    finally:
-        journal.close()
-        if log_arg is None:  # only the managed per-session layout maintains the pointer
-            _update_latest_pointer(log_path)
-    return 0
-
-
 def main(
     argv: list[str] | None = None,
     *,
@@ -208,32 +133,14 @@ def main(
         action="store_true",
         help="Run despite uncommitted tracked changes in the workspace (§15).",
     )
-    parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Launch the interactive Textual cockpit (a multi-turn REPL) instead of a batch run.",
-    )
-    parser.add_argument(
-        "--auto",
-        action="store_true",
-        help="In the cockpit, keep the strict §12 verification gate (default: conversational).",
-    )
     args = parser.parse_args(argv)
 
     config = config or HarnessConfig()
-    if args.interactive:
-        return _launch_cockpit(
-            config=config,
-            model_client=model_client,
-            auto=args.auto,
-            log_arg=args.log,
-            allow_dirty=args.allow_dirty,
-        )
     if args.task is None:
-        parser.error("a task is required (or pass --interactive for the cockpit)")
+        parser.error("a task is required (for the interactive cockpit, run `jo-cli`)")
 
     session_id = uuid4().hex
-    log_path = _resolve_log_path(args.log, session_id)
+    log_path = resolve_log_path(args.log, session_id)
     emitter = Emitter(session_id=session_id)
     emitter.subscribe(EventLog(log_path))
     emitter.subscribe(_print_event)
@@ -261,7 +168,7 @@ def main(
     # creates the file, so updating the pointer eagerly would leave latest.jsonl
     # dangling and lose the pointer to the last usable session log.
     if args.log is None:  # only the managed per-session layout maintains the pointer
-        _update_latest_pointer(log_path)
+        update_latest_pointer(log_path)
 
     print("\n" + _report(state, config))
     return 0 if state.outcome == "success" else 1
