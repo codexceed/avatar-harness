@@ -406,9 +406,7 @@ def test_usage_captured_from_provider_reply():
     Until now usage was dropped on the floor — no token counts reached state or the
     journal, so cost-per-solve (the eval harness's key metric) was unmeasurable.
     """
-    reply = _msg_with_usage(
-        tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=1200, completion=45
-    )
+    reply = _msg_with_usage(tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=1200, completion=45)
     client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_usage([reply]))
     decision = client.decide(_packet())
     assert decision.usage is not None
@@ -419,9 +417,7 @@ def test_usage_captured_from_provider_reply():
 def test_usage_summed_across_in_client_retries():
     """Every attempt costs tokens — a retried turn reports the SUM, not the last call."""
     bad = _msg_with_usage(content="{not json", prompt=1000, completion=30)
-    good = _msg_with_usage(
-        tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=1100, completion=40
-    )
+    good = _msg_with_usage(tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=1100, completion=40)
     client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_usage([bad, good]))
     decision = client.decide(_packet())
     assert decision.usage is not None

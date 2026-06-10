@@ -23,6 +23,7 @@ from avatar_harness.event_types import (
     EventSink,
     HarnessEvent,
     ModelDecisionEvent,
+    ModelUsage,
     PhaseChanged,
     ToolEnd,
     ToolStart,
@@ -37,6 +38,7 @@ from avatar_harness.model_client import (
     DecisionParseError,
     FinalAnswer,
     ModelClient,
+    ModelDecision,
     ToolCall,
 )
 from avatar_harness.permission import PermissionPolicy
@@ -128,6 +130,29 @@ class AgentRunner:
         # awaited gate for tier-3 `ask` calls. A `Session` supplies both.
         self.event_sink = event_sink
         self.approval_controller = approval_controller
+
+    def _record_usage(self, state: TaskState, decision: ModelDecision) -> None:
+        """Accumulate provider-reported usage into state and journal it per turn.
+
+        The one mutator does the accumulation; the eval harness (ADR-0004) sums the
+        journaled `model_usage` events for tokens/$ per solved task.
+
+        Args:
+            state: The live task state to accumulate into.
+            decision: The turn's decision, possibly annotated with `usage`.
+        """
+        if decision.usage is None:
+            return
+        state.prompt_tokens += decision.usage.prompt_tokens
+        state.completion_tokens += decision.usage.completion_tokens
+        self._publish(
+            ModelUsage(
+                task_id=state.task_id,
+                turn=state.iterations,
+                prompt_tokens=decision.usage.prompt_tokens,
+                completion_tokens=decision.usage.completion_tokens,
+            )
+        )
 
     def _publish(self, draft: HarnessEvent) -> None:
         """Publish a typed event to the sink, if one is wired (fire-and-forget, §13).
@@ -224,6 +249,8 @@ class AgentRunner:
                         recovered=True,
                     )
                 )
+
+            self._record_usage(state, decision)
 
             action = decision.action
             brief = _action_brief(action)

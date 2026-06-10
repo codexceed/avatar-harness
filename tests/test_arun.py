@@ -211,7 +211,7 @@ async def test_usage_accumulates_into_state_and_journal(tmp_path):
             usage=DecisionUsage(prompt_tokens=1000, completion_tokens=20),
         ),
         ModelDecision(
-            action=FinalAnswer(answer="done"),
+            action=FinalAnswer(answer="x is set in app.py"),  # cited → investigate gate passes
             usage=DecisionUsage(prompt_tokens=1500, completion_tokens=30),
         ),
     ]

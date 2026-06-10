@@ -47,6 +47,13 @@ class DecisionRetryNote(BaseModel):
     raw: str = ""
 
 
+class DecisionUsage(BaseModel):
+    """Provider-reported token usage for one decision (all in-client attempts summed)."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
 class ModelDecision(BaseModel):
     """One validated model decision: a thought plus exactly one action (§6).
 
@@ -59,6 +66,7 @@ class ModelDecision(BaseModel):
     thought_summary: str = ""  # for logging/context only — never control flow
     action: ToolCall | FinalAnswer | AskUser = Field(discriminator="type")
     retry_trace: list[DecisionRetryNote] = Field(default_factory=list)
+    usage: DecisionUsage | None = None  # harness-owned, like retry_trace; set by the client
 
 
 # Cap on the raw-reply excerpt kept per malformed attempt (journal/evidence detail).
@@ -89,8 +97,10 @@ def parse_decision(raw: str) -> ModelDecision:
         decision = ModelDecision.model_validate(data)
     except ValidationError as exc:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
-    # `retry_trace` is harness-owned: a model emitting the field must not plant history.
+    # `retry_trace`/`usage` are harness-owned channels: a model emitting the fields
+    # must not plant fake history or bill itself kindly.
     decision.retry_trace = []
+    decision.usage = None
     return decision
 
 
@@ -335,6 +345,38 @@ def _assistant_call_message(message: Any, call: Any) -> dict:
     }
 
 
+class _UsageTally:
+    """Accumulates provider-reported usage across a decision's in-client attempts."""
+
+    def __init__(self) -> None:
+        self._prompt = 0
+        self._completion = 0
+        self._seen = False
+
+    def add(self, response: Any) -> None:
+        """Fold one response's `usage` into the tally (absent usage is tolerated).
+
+        Args:
+            response: The provider reply, possibly carrying a `usage` object.
+        """
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self._prompt += int(getattr(usage, "prompt_tokens", 0) or 0)
+        self._completion += int(getattr(usage, "completion_tokens", 0) or 0)
+        self._seen = True
+
+    def total(self) -> DecisionUsage | None:
+        """The summed usage, or `None` when the endpoint never reported any.
+
+        Returns:
+            The tally as a `DecisionUsage`, or `None`.
+        """
+        if not self._seen:
+            return None
+        return DecisionUsage(prompt_tokens=self._prompt, completion_tokens=self._completion)
+
+
 class OpenAIModelClient(ModelClient):
     """Calls an OpenAI-compatible endpoint and validates the reply (§6, §18).
 
@@ -423,6 +465,7 @@ class OpenAIModelClient(ModelClient):
         tools = build_tool_schemas(context)
         last_error: DecisionParseError | None = None
         trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()  # every attempt costs tokens; the decision reports the sum
         for _ in range(self.max_parse_retries + 1):
             response = client.chat.completions.create(
                 model=self.config.model,
@@ -430,6 +473,7 @@ class OpenAIModelClient(ModelClient):
                 tools=tools,
                 temperature=0,
             )
+            tally.add(response)
             message = response.choices[0].message
             calls = getattr(message, "tool_calls", None)
             if calls:
@@ -454,6 +498,7 @@ class OpenAIModelClient(ModelClient):
                     ]
                     continue
                 decision.retry_trace = trace
+                decision.usage = tally.total()
                 return decision
             raw = message.content or ""
             try:
@@ -472,6 +517,7 @@ class OpenAIModelClient(ModelClient):
                 ]
                 continue
             decision.retry_trace = trace
+            decision.usage = tally.total()
             return decision
         text = str(last_error) if last_error else "model returned no valid decision"
         raise DecisionParseError(text) from last_error
@@ -492,6 +538,7 @@ class OpenAIModelClient(ModelClient):
         messages = build_messages(context)
         last_error: DecisionParseError | None = None
         trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
         for _ in range(self.max_parse_retries + 1):
             response = client.chat.completions.create(
                 model=self.config.model,
@@ -499,6 +546,7 @@ class OpenAIModelClient(ModelClient):
                 response_format={"type": "json_object"},
                 temperature=0,
             )
+            tally.add(response)
             raw = response.choices[0].message.content or ""
             try:
                 decision = parse_decision(raw)
@@ -518,6 +566,7 @@ class OpenAIModelClient(ModelClient):
                 ]
             else:
                 decision.retry_trace = trace
+                decision.usage = tally.total()
                 return decision
         # The loop only exits without returning via the except branch, which always
         # sets last_error; the fallback keeps this total without an (O-stripped) assert.
