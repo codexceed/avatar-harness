@@ -20,6 +20,19 @@
               "concepts/invariants",
               "concepts/architecture"
             ]
+          },
+          {
+            "group": "Using the library",
+            "pages": [
+              "guides/quickstart",
+              "guides/sdk"
+            ]
+          },
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/terminal-agent"
+            ]
           }
         ]
       },
@@ -39,6 +52,7 @@
               "api-reference/eventlog",
               "api-reference/events",
               "api-reference/harness",
+              "api-reference/intent",
               "api-reference/journal",
               "api-reference/model_client",
               "api-reference/permission",

@@ -28,7 +28,7 @@ Args:
     max_actions: Max prior-action lines to surface.
 
 ```python
-ContextBuilder(detail_char_budget: int = 6000, max_detail_chars: int = 1500, max_evidence_lines: int = 40, max_actions: int = 25) -> None
+ContextBuilder(detail_char_budget: int = 48000, max_detail_chars: int = 16000, max_evidence_lines: int = 40, max_actions: int = 25) -> None
 ```
 
 #### `ContextBuilder.build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket`

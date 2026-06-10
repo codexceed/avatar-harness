@@ -1,0 +1,101 @@
+---
+title: Quickstart
+description: From install to a verifier-checked answer in five minutes.
+---
+
+## Install
+
+avatar-harness is a Python 3.12+ library with two optional extras:
+
+```bash
+pip install avatar-harness[openai]            # the default OpenAI-compatible model client
+pip install avatar-harness[openai,textual]    # + the bundled Textual cockpit (optional)
+```
+
+The core imports without either extra — `openai` is needed only to use the
+default `OpenAIModelClient` (you can inject any `ModelClient` instead), and
+`textual` only for the bundled TUI. Two external binaries must be on `PATH`:
+
+- **ripgrep** (`rg`) — the `search_repo` tool shells out to it.
+- **git** — patches apply via `git apply`; the workspace pins `HEAD` as its diff baseline.
+
+Working from a clone of this repo, `make install` (a thin `uv sync`) sets up
+everything including the dev tools.
+
+## Configure
+
+Configuration comes from `AVATAR_*` environment variables or a local `.env`.
+The only required value is an API key:
+
+```bash
+# .env
+AVATAR_API_KEY=sk-or-...                       # required; falls back to OPENAI_API_KEY
+AVATAR_MODEL=openai/gpt-4o-mini                # default; any model your endpoint serves
+AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); change for OpenAI/local
+AVATAR_WORKSPACE_ROOT=.                        # the repo the agent operates on (default: cwd)
+```
+
+The full knob list (budgets, verification commands, the sensitive-path
+denylist, context-compaction budgets) is in the [SDK guide](/guides/sdk#configuration).
+
+## First run — the CLI
+
+```bash
+avatar-harness "where does the agent loop terminate, and what sets outcome=success?"
+```
+
+The CLI streams a timestamped event trajectory as the agent works, then prints
+a `Status:` line and the cited answer. The whole run is journaled to
+`events/<session_id>.jsonl` for replay and debugging.
+
+<Note>
+  The workspace refuses to start on a tree with uncommitted **tracked** changes
+  (the diff baseline must be well-defined — untracked files are fine). Commit,
+  stash, or pass `--allow-dirty`.
+</Note>
+
+## First run — the library
+
+The same engine, importable. Five lines to a verifier-checked answer:
+
+```python
+from avatar_harness import Harness
+
+harness = Harness.from_env()                  # AVATAR_* / .env; no key needed to construct
+state = harness.run("explain how apply_patch stays atomic")
+print(state.outcome, "\n", state.final_answer)
+```
+
+`state.outcome` is `"success"` only when the harness-owned verifier found
+positive external evidence — the model never self-certifies. The other terminal
+outcomes are `incomplete` (budget exhausted), `blocked` (needs human input), and
+`failed` (a completion claim that wouldn't verify).
+
+Every collaborator is an injectable seam:
+
+```python
+from avatar_harness import Harness, HarnessConfig
+
+harness = Harness(
+    config=HarnessConfig(workspace_root="./repo", test_command="pytest -q"),
+    model=my_model_client,    # any ModelClient — no `openai` extra needed
+)
+state = harness.run("fix the failing auth test", task_kind="edit")
+```
+
+The `task_kind` (`investigate` / `edit` / `test_only`) selects the
+**verification contract** — what evidence is required before the run may be
+called a success. `investigate` is the read-only default.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="SDK guide" icon="cubes" href="/guides/sdk">
+    The full surface: the two-plane `Session`, typed events, multi-turn
+    `ReplSession`, and every configuration knob.
+  </Card>
+  <Card title="Build a terminal agent" icon="terminal" href="/tutorials/terminal-agent">
+    A step-by-step tutorial: your own streaming, approval-answering agent in
+    about 90 lines.
+  </Card>
+</CardGroup>

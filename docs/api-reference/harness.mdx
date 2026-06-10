@@ -33,7 +33,8 @@ Args:
     verifier: The completion verifier; `Verifier(config)` if omitted.
     policy: The before-tool-call permission gate; the standard tier policy
         (threaded with `config.sensitive_path_globs`) if omitted.
-    context_builder: The per-turn context assembler; `ContextBuilder()` if omitted.
+    context_builder: The per-turn context assembler; if omitted, a `ContextBuilder`
+        budgeted from the config's `AVATAR_CONTEXT_*` compaction fields.
     emitter: The observation-only event emitter; a fresh `Emitter()` if omitted.
 
 ```python
@@ -70,7 +71,7 @@ Args:
 Returns:
     The terminal `TaskState` after the loop settles.
 
-#### `Harness.session(self, task: str, *, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate', allow_dirty: bool = False) -> Session`
+#### `Harness.session(self, task: str, *, task_kind: Literal['edit', 'investigate', 'test_only'] = 'investigate', allow_dirty: bool = False, journal: JsonlEventJournal | None = None) -> Session`
 
 Open an interactive `Session` over `task` — the two-plane SDK surface (§13, §23).
 
@@ -82,6 +83,8 @@ Args:
     task: The natural-language task to run.
     task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
     allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+    journal: The write-ahead `JsonlEventJournal` for the run's typed events; `None`
+        (default) keeps the stream in memory only.
 
 Returns:
     A `Session` wrapping the run — observation out, control in.

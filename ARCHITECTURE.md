@@ -327,7 +327,7 @@ If the patch were wrong, the verifier returns `passed=false`, `recommended_next_
 
 ## 6. Current implementation footprint
 
-What exists in `src/avatar_harness/` today (through Phase 2.6):
+What exists in `src/avatar_harness/` today (through Phase 3.2 — the MVP cockpit — plus the post-MVP dogfood hardening):
 
 | Module | Contents | Maps to |
 | --- | --- | --- |
@@ -348,7 +348,10 @@ What exists in `src/avatar_harness/` today (through Phase 2.6):
 | `artifact.py` | `ArtifactManager` + `Artifact` — `status = state.outcome`, files/commands/verification/diff | `§14` |
 | `runner.py` | `AgentRunner` — the §5 loop as async `arun()` (sync `run()` wraps it); runner-owned mutation; gate consult + awaited approval; phase advance/enforce + `phase_changed`; budgets + cancellation; typed-event publishing; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
 | `harness.py` | `Harness` facade — wires defaults, every seam overridable; `from_env()` / `run()` / `arun()` / `session()` | `§8` |
-| `__init__.py` | Curated public API (`__all__`): core (`Harness`/`TaskState`/`Workspace`/`RunDeps`), decisions, tools, **the two-plane async surface** (`Session`/`EventBus`/`JsonlEventJournal`/`EventSink`/`ApprovalController`/`ApprovalGrant`) and the typed `HarnessEvent`s | public surface |
-| `cli.py` | `run_agent`/`main()` — thin callers that delegate to `Harness`; `main()` reports through `ArtifactManager` | `§5`/`§23` shell |
+| `session_state.py` | `SessionState`/`Turn` (the multi-turn scope above `TaskState`) + `ReplSession` — per-goal sessions over the unchanged engine: history seeding, `@path` grounding, mode routing (override → classifier → heuristic), the plan flow (`submit_plan`), local meta commands, grant carry-over | `§23`, ADR-0002 |
+| `intent.py` | `ModeClassifier` — one cheap, schema-constrained `set_task_mode` call routes a goal's `task_kind`; visible + `/mode`-correctable, degrades to the word heuristic on any failure | ADR-0002 D3 (revised) |
+| `tui/` | The Textual cockpit (optional `[textual]` extra; `load_cockpit()` guards the import): `app.py` (`CockpitApp` — status bar, streamed transcript, input), `modals.py` (approval/diff/plan), `replay.py` (`ReplaySession`) — a pure observer + control caller over the `Session` surface, never in the loop | `§23`, ADR-0002 |
+| `__init__.py` | Curated public API (`__all__`): core (`Harness`/`TaskState`/`Workspace`/`RunDeps`), decisions, tools, **the two-plane async surface** (`Session`/`EventBus`/`JsonlEventJournal`/`EventSink`/`ApprovalController`/`ApprovalGrant`), the **multi-turn scope** (`ReplSession`/`SessionState`/`Turn`), and the typed `HarnessEvent`s | public surface |
+| `cli.py` | `run_agent`/`main()` — thin callers that delegate to `Harness`; `main()` reports through `ArtifactManager`; `--interactive` launches the cockpit over a `ReplSession` | `§5`/`§23` shell |
 
 Remaining **[Designed]** (per **ADR-0001/0002**): 3.3 — durable resume; plus free-text-goal → `task_kind` intake classification on the *batch* path and §21 extensions. (**The full 3.2 tail — 3.2a meta commands, 3.2b `@path` grounding, 3.2c plan mode, 3.2d conversational-verification authority, 3.2e the `--interactive` cockpit launch — is [Implemented]; the Phase 3 MVP cockpit is complete.**) (**Lane 1 — bounded `EventBus` + write-ahead `JsonlEventJournal`, Lane 2 — `SessionState`/`ReplSession` + the Textual cockpit (shell + modals), and Lane 3 — `run_command` + prefix-scoped `ApprovalGrant` — are [Implemented]**.)

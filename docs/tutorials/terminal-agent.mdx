@@ -1,0 +1,301 @@
+---
+title: "Tutorial: build a terminal agent"
+description: A bare-bones streaming, approval-answering terminal agent on the harness SDK — about 90 lines.
+---
+
+The bundled Textual cockpit is just one consumer of the SDK. This tutorial
+builds another from scratch: a single-file terminal agent that streams the
+agent's activity, answers approval prompts on stdin, cancels gracefully on
+Ctrl-C, and leaves a replayable journal. Everything it uses is on the exported
+surface — no internals.
+
+The full listing is at the [end](#the-full-listing); each step below adds one
+capability.
+
+## Step 0 — setup
+
+```bash
+pip install avatar-harness[openai]
+```
+
+Plus `rg` and `git` on `PATH`, and a `.env` (or exported variables):
+
+```bash
+AVATAR_API_KEY=sk-or-...
+AVATAR_MODEL=openai/gpt-4o-mini
+AVATAR_BASE_URL=https://openrouter.ai/api/v1
+AVATAR_WORKSPACE_ROOT=/path/to/the/repo/to/work/on
+```
+
+The workspace must be a git repo with no uncommitted *tracked* changes — the
+harness pins `HEAD` as its diff baseline (see the
+[quickstart](/guides/quickstart#first-run--the-cli) for the `allow_dirty`
+escape hatch).
+
+## Step 1 — one-shot batch agent
+
+The smallest possible consumer — no streaming, no UI:
+
+```python
+from avatar_harness import Harness
+
+state = Harness.from_env().run("what does calc.py do?", task_kind="investigate")
+print(state.outcome, "\n", state.final_answer)
+```
+
+Two things to absorb before adding anything:
+
+- **`outcome` is verifier-owned.** `"success"` means the harness-owned verifier
+  found positive external evidence (cited files, passing tests, a clean diff —
+  per `task_kind`). The model claiming "done" is only ever a *proposal*.
+- **`task_kind` selects the verification contract.** `investigate` is read-only
+  Q&A; `edit` requires a verifiable diff; `test_only` requires new tests that
+  pass.
+
+## Step 2 — go async and stream events
+
+`harness.session(...)` returns a not-yet-started `Session`: `run()` drives the
+engine while `events()` yields a typed stream you render. This split is the
+**two-plane contract** — the stream is observation-only and can never alter the
+run.
+
+```python
+session = harness.session(goal, task_kind=kind)
+run_task = asyncio.create_task(session.run())     # drive the engine
+
+async for event in session.events():              # observe it
+    if isinstance(event, ModelDecisionEvent):
+        print(f"  · {event.thought}")
+    elif isinstance(event, ToolStart):
+        print(f"  → {event.tool} {event.input}")
+    elif isinstance(event, ToolEnd):
+        print(f"  {'✓' if event.success else '✗'} {event.summary}")
+    elif isinstance(event, PhaseChanged):
+        print(f"— phase: {event.old} → {event.new}")
+    elif isinstance(event, VerificationEnd):
+        print(f"— verification {'✓' if event.passed else '✗'} {event.summary}")
+    elif isinstance(event, AgentEnd):
+        print(f"\noutcome: {event.outcome}")
+
+state = await run_task
+```
+
+`events()` subscribes **eagerly** — at call time, not first iteration — so
+creating the run task first loses nothing. The stream ends by itself after
+`agent_end`. The full event catalog is in the
+[SDK guide](/guides/sdk#the-event-catalog).
+
+## Step 3 — answer approvals
+
+Gated calls (tier-3 tools like `run_command`, or a sensitive-path hit) are
+*announced* on the event stream as `ApprovalRequested`, and the run blocks until
+you decide via the **control plane**:
+
+```python
+elif isinstance(event, ApprovalRequested):
+    answer = await asyncio.to_thread(          # input() would block the event loop
+        input, f"  ⚠ {event.tool}: {event.reason}\n    allow? [y]es / [a]lways / [d]eny "
+    )
+    choice = answer.strip().lower()[:1]
+    await session.resolve_approval(
+        event.approval_id, allow=choice in ("y", "a"), remember=choice == "a"
+    )
+```
+
+- The event announces; only `resolve_approval` decides — nothing on the stream
+  can approve anything.
+- `remember=True` (the "always" choice) stores a session-scoped
+  `ApprovalGrant`: later calls sharing the same program (`argv[0]`) auto-allow,
+  observable as `ApprovalResolved(via="grant")`.
+- A blocking `input()` would stall the very event loop the run lives on —
+  `asyncio.to_thread` keeps it breathing.
+
+<Note>
+  `apply_patch` is tier 1 and does **not** prompt — it auto-allows once its
+  target paths validate inside the workspace, and the verifier judges the
+  resulting diff. To see an approval fire, give the agent an `edit` goal that
+  needs a command (a build step, a migration), or target a denylisted path and
+  watch it get refused.
+</Note>
+
+## Step 4 — cancel gracefully on Ctrl-C
+
+`session.cancel()` trips the run's cancellation token; the loop observes it at
+the next checkpoint, records the interruption as feedback, and still settles to
+a terminal state — so `await run_task` always returns a `TaskState`, never
+hangs:
+
+```python
+asyncio.get_running_loop().add_signal_handler(
+    signal.SIGINT, lambda: asyncio.ensure_future(session.cancel("user interrupt"))
+)
+```
+
+Any in-flight approval is denied on cancel, so a run blocked on the gate can't
+hang either. (`add_signal_handler` is POSIX-only; on Windows, catch
+`KeyboardInterrupt` around `asyncio.run` instead and accept the harder stop.)
+
+## Step 5 — journal the run
+
+Pass a `JsonlEventJournal` and every event is committed to disk **before** any
+subscriber renders it — a crash loses nothing:
+
+```python
+journal = JsonlEventJournal(Path("events") / "mini-agent.jsonl")
+session = harness.session(goal, task_kind=kind, journal=journal)
+```
+
+Reload it later with `load_events(path)` — the same typed objects, for replay,
+debugging, or evals.
+
+## Step 6 — the final report
+
+The terminal `TaskState` carries everything a report needs:
+
+```python
+if state.final_answer:
+    print(f"\n{state.final_answer}")
+if state.files_modified:
+    print("\nchanged files:", ", ".join(sorted(state.files_modified)))
+if state.verifier_results:
+    print("verification:", state.verifier_results[-1].summary)
+return 0 if state.outcome == "success" else 1
+```
+
+For the richer formatted artifact the batch CLI prints (status + files +
+commands + diff reference), see `avatar_harness.artifact.ArtifactManager` — not
+yet on the exported surface, so treat it as internal for now.
+
+## The full listing
+
+Verified end-to-end (the offline run below):
+
+```python  expandable
+"""mini-agent: a bare-bones terminal agent on avatar-harness (~90 lines)."""
+
+import asyncio
+import signal
+import sys
+from pathlib import Path
+
+from avatar_harness import (
+    AgentEnd,
+    ApprovalRequested,
+    Harness,
+    JsonlEventJournal,
+    ModelDecisionEvent,
+    PhaseChanged,
+    ToolEnd,
+    ToolStart,
+    VerificationEnd,
+)
+
+
+async def render(session) -> None:
+    """The observation plane: draw each typed event; answer approvals on stdin."""
+    async for event in session.events():
+        if isinstance(event, ModelDecisionEvent):
+            print(f"  · {event.thought}")
+        elif isinstance(event, ToolStart):
+            print(f"  → {event.tool} {event.input}")
+        elif isinstance(event, ToolEnd):
+            print(f"  {'✓' if event.success else '✗'} {event.summary}")
+        elif isinstance(event, PhaseChanged):
+            print(f"— phase: {event.old} → {event.new}")
+        elif isinstance(event, VerificationEnd):
+            print(f"— verification {'✓' if event.passed else '✗'} {event.summary}")
+        elif isinstance(event, AgentEnd):
+            print(f"\noutcome: {event.outcome}")
+        elif isinstance(event, ApprovalRequested):
+            answer = await asyncio.to_thread(
+                input, f"  ⚠ {event.tool}: {event.reason}\n    allow? [y]es / [a]lways / [d]eny "
+            )
+            choice = answer.strip().lower()[:1]
+            await session.resolve_approval(
+                event.approval_id, allow=choice in ("y", "a"), remember=choice == "a"
+            )
+
+
+async def main(goal: str, kind: str) -> int:
+    harness = Harness.from_env()
+    journal = JsonlEventJournal(Path("events") / "mini-agent.jsonl")
+    session = harness.session(goal, task_kind=kind, journal=journal)
+
+    asyncio.get_running_loop().add_signal_handler(
+        signal.SIGINT, lambda: asyncio.ensure_future(session.cancel("user interrupt"))
+    )
+
+    run_task = asyncio.create_task(session.run())
+    await render(session)
+    state = await run_task
+
+    if state.final_answer:
+        print(f"\n{state.final_answer}")
+    if state.files_modified:
+        print("\nchanged files:", ", ".join(sorted(state.files_modified)))
+    if state.verifier_results:
+        print("verification:", state.verifier_results[-1].summary)
+    return 0 if state.outcome == "success" else 1
+
+
+if __name__ == "__main__":
+    goal = " ".join(sys.argv[1:]) or "what does calc.py do?"
+    raise SystemExit(asyncio.run(main(goal, "investigate")))
+```
+
+```text
+$ python mini_agent.py "what does calc.py do?"
+  · read the file first
+  → read_file {'path': 'calc.py'}
+  ✓ read calc.py
+  · answer with evidence
+— phase: investigating → verifying
+— verification ✓ verification passed
+
+outcome: success
+
+calc.py defines add(a, b) returning a + b (calc.py lines 1-2).
+verification: verification passed
+```
+
+## Sidebar — run it offline
+
+`ModelClient` is a one-method protocol, so the whole tutorial runs without an
+API key by injecting a scripted model — exactly how the project's own test
+suite drives the engine:
+
+```python
+from avatar_harness import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
+
+class ScriptedModel(ModelClient):
+    def __init__(self, decisions):
+        self._decisions, self._i = decisions, 0
+    def decide(self, context):
+        d = self._decisions[min(self._i, len(self._decisions) - 1)]
+        self._i += 1
+        return d
+
+harness = Harness(
+    config=HarnessConfig(workspace_root="repo", test_command="", lint_command=""),
+    model=ScriptedModel([
+        ModelDecision(thought_summary="read the file first",
+                      action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(thought_summary="answer with evidence",
+                      action=FinalAnswer(answer="calc.py defines add(a, b) (calc.py lines 1-2).")),
+    ]),
+)
+```
+
+Swap this `harness` into `main()` and the run above reproduces byte-for-byte —
+real loop, real verifier, real journal, zero network.
+
+## Where to go from here
+
+- **Multi-turn:** wrap goals in a `ReplSession` — history seeding, grant
+  carry-over, `/`-meta commands, plan mode. See the
+  [SDK guide](/guides/sdk#multi-turn-conversations--replsession).
+- **Your own tools / model / verifier:** every collaborator is a `Harness`
+  constructor kwarg.
+- **A real UI:** the bundled cockpit (`avatar-harness --interactive`) is this
+  same surface rendered with Textual — `src/avatar_harness/tui/app.py` is the
+  reference implementation.
