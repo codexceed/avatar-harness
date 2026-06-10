@@ -239,6 +239,10 @@ class CockpitApp(App):
         if self.repl.is_meta(text):
             self._handle_meta(text)
         else:
+            # Disable input synchronously: classification runs before AgentStart (whose
+            # handler used to be the only disabler), and that window let a second goal
+            # start and race the first (PR-#32 review). Re-enabled in _run_goal's finally.
+            self.query_one("#prompt", Input).disabled = True
             self.run_worker(self._run_goal(text), exclusive=False)
 
     def _handle_meta(self, text: str) -> None:
@@ -279,10 +283,16 @@ class CockpitApp(App):
         self.verdict = None
         self.phase = "investigating"
         try:
-            if self.repl.resolve_mode(text) == "plan":
+            # Resolve off-loop (classification is a network call) and announce the
+            # verdict + its source before running — visible, correctable routing (D3).
+            resolved = await asyncio.to_thread(self.repl.resolve_mode, text)
+            self.mode = resolved
+            self._write(f"▶ mode: {resolved} ({self.repl.last_mode_source}) — /mode to change")
+            self.query_one("#status", Static).update(self._status_text())
+            if resolved == "plan":
                 await self._run_plan_goal(text)
             else:
-                session = self.repl.start(text)
+                session = self.repl.start(text)  # memoized — no second classification
                 state = await self._observe(session)
                 self.repl.record(state)
         except DirtyWorkspaceError as exc:

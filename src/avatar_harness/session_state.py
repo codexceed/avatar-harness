@@ -7,9 +7,11 @@ fresh `TaskState` run through the existing single-task `Session` (one code path 
 the degenerate one-`submit` case, §23.2), seeded with prior history and carrying grants
 forward. The Textual cockpit (Lane 2b) renders this; here it stays pure logic.
 
-Mode routing is a **visible heuristic default + explicit override** (ADR-0002 D3): a
-lightweight rule seeds `task_kind`, and `set_mode` overrides it — never a hidden
-per-prompt classifier. **Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
+Mode routing (revised ADR-0002 D3) is **visible and correctable, never hidden**: an
+explicit `set_mode` override wins; else a one-shot LLM classification (`ModeClassifier`,
+when configured) seeds `task_kind` from the prompt + conversation; else the hardened
+word heuristic. The verdict is announced before the run and `/mode` re-routes.
+**Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
 a read-only plan task → human approve/revise → the approved plan seeds the edit task as a
 constraint; `submit_plan` drives that flow. Local **meta commands** (`/help` `/quit` `/state`
 `/mode` `/plan` `/diff` `/permissions`) are handled by `run_meta` and never reach the
@@ -26,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
+from avatar_harness.intent import ModeClassifier
 from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.session import ApprovalGrant, Session
 from avatar_harness.state import TaskState
@@ -85,7 +88,34 @@ class PlanDecision:
     text: str
 
 
-# First-word imperatives that signal an edit goal; everything else defaults to investigate.
+# Leading conversational filler skipped before the first significant word is judged —
+# "Now make…" must not hide the edit verb (dogfood `events/04849a5a…jsonl`).
+_FILLER_WORDS = frozenset(
+    {"now", "please", "also", "then", "next", "and", "ok", "okay", "just", "can", "could", "you", "we"}
+)
+
+# Question openers that affirmatively signal a read-only goal.
+_QUESTION_WORDS = frozenset(
+    {
+        "why",
+        "how",
+        "what",
+        "when",
+        "where",
+        "who",
+        "which",
+        "explain",
+        "describe",
+        "show",
+        "is",
+        "are",
+        "does",
+        "do",
+    }
+)
+
+# First significant word imperatives that signal an edit goal; question words signal
+# investigate; anything else defaults to investigate.
 _EDIT_VERBS = frozenset(
     {
         "fix",
@@ -120,9 +150,14 @@ def default_mode(prompt: str) -> TaskKind:
     Returns:
         `"edit"` for an edit-shaped prompt, otherwise `"investigate"`.
     """
-    words = prompt.strip().split()
-    first = words[0].lower() if words else ""
-    return "edit" if first in _EDIT_VERBS else "investigate"
+    for word in prompt.strip().split():
+        token = word.lower().strip(",.!?:;")
+        if token in _FILLER_WORDS:
+            continue  # skip conversational filler — judge the first significant word
+        if token in _EDIT_VERBS:
+            return "edit"
+        return "investigate"  # question words and everything else are read-only
+    return "investigate"
 
 
 class Turn(BaseModel):
@@ -175,6 +210,9 @@ class ReplSession:
             conversation lands in one durable file. Each goal's `bus.close()` closes the
             handle; `append` reopens it for the next goal. `None` (default) keeps the
             interactive stream in memory only.
+        classifier: The LLM mode router (revised ADR-0002 D3); if omitted, built from
+            `config.classifier_model` when set (`None`/empty → heuristic-only routing).
+            Its verdict is displayed and `/mode`-overridable — visible, never silent.
         allow_dirty: `True` acknowledges a dirty tree at the *start* of the sitting
             (the `--allow-dirty` flag). Regardless of this, **session-owned dirt is
             always tolerated**: the §15 clean-start check applies to the sitting's first
@@ -190,12 +228,18 @@ class ReplSession:
         session_id: str | None = None,
         auto: bool = False,
         journal: JsonlEventJournal | None = None,
+        classifier: ModeClassifier | None = None,
         allow_dirty: bool = False,
     ) -> None:
         self.harness = harness
         self.auto = auto
         self.journal = journal
         self.allow_dirty = allow_dirty
+        if classifier is None and harness.config.classifier_model:
+            classifier = ModeClassifier(harness.config)
+        self.classifier = classifier
+        self.last_mode_source: str = "heuristic"  # how the latest goal's mode was decided
+        self._route_memo: tuple[str, Mode] | None = None  # one classification per prompt
         # Flipped once the first per-goal workspace opens successfully: from then on the
         # sitting owns its tree, and later goals open `allow_dirty` (multi-turn §15).
         self._tree_claimed = False
@@ -219,16 +263,37 @@ class ReplSession:
         self.state.mode = mode
 
     def resolve_mode(self, prompt: str) -> Mode:
-        """The mode for `prompt`: the explicit override if set, else the heuristic.
+        """The mode for `prompt`: explicit override → classifier → heuristic.
+
+        The classifier verdict is memoized per prompt (`start()` re-resolves
+        internally; a goal pays at most one classification call) and any classifier
+        failure degrades to the heuristic — routing can lose quality, never block.
+        `last_mode_source` records how the verdict was reached, for display.
 
         Args:
             prompt: The user's goal.
 
         Returns:
-            The resolved mode. The heuristic only ever yields a `task_kind`; `plan` is
-            opt-in (set explicitly), never inferred.
+            The resolved mode. Classifier/heuristic only ever yield a `task_kind`;
+            `plan` is opt-in (set explicitly), never inferred.
         """
-        return self.state.mode or default_mode(prompt)
+        if self.state.mode is not None:
+            self.last_mode_source = "override"
+            return self.state.mode
+        if self._route_memo is not None and self._route_memo[0] == prompt:
+            return self._route_memo[1]
+        kind: str | None = None
+        if self.classifier is not None:
+            lines = [f"{t.role}: {t.text}" for t in self.state.history]
+            kind = self.classifier.classify(prompt, history=lines)
+        if kind in _TASK_KINDS:
+            self.last_mode_source = "classifier"
+        else:
+            kind = default_mode(prompt)
+            self.last_mode_source = "heuristic"
+        resolved = cast(Mode, kind)
+        self._route_memo = (prompt, resolved)
+        return resolved
 
     def start(self, prompt: str) -> Session:
         """Build (but don't run) the next per-goal `Session`: resolve mode, seed history + the turn.
@@ -328,6 +393,10 @@ class ReplSession:
         self.state.tasks.append(state)
         reply = state.final_answer or (state.outcome or "done")
         self.state.history.append(Turn(role="agent", text=reply, task_id=state.task_id))
+        # The routing memo is intra-goal only (start() re-resolves the same prompt):
+        # a finished goal changes the conversation, so the same text next turn must
+        # re-classify in the new context (PR-#32 review — "continue", "keep going").
+        self._route_memo = None
 
     async def submit(self, prompt: str) -> TaskState:
         """Run one goal to completion and record it — the simple (batch-shaped) path.
@@ -469,8 +538,10 @@ class ReplSession:
             self.set_mode("plan")
             return MetaResult(kind="mode_set", text="mode set to plan")
         if cmd == "state":
+            # Strictly local: never resolve (the classifier is a network call, and meta
+            # commands must not reach a model or spend tokens — §23.2, PR-#32 review).
             summary = (
-                f"mode: {self.resolve_mode('')} · "
+                f"mode: {self.state.mode or 'auto'} · "
                 f"tasks: {len(self.state.tasks)} · turns: {len(self.state.history)}"
             )
             return MetaResult(kind="state", text=summary)

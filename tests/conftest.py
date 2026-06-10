@@ -71,3 +71,16 @@ def git_repo(tmp_path) -> Path:
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-q", "-m", "initial")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _offline_mode_routing(monkeypatch):
+    """Unit tests never classify over the network.
+
+    `classifier_model` defaults ON (the product choice), so a bare `ReplSession` would
+    construct a real `ModeClassifier` and call the configured endpoint from any test
+    that resolves a mode. Clearing the env var disables it suite-wide; tests that want
+    classification inject a fake-transport `ModeClassifier` or pass `classifier_model=`
+    explicitly (kwargs beat env).
+    """
+    monkeypatch.setenv("AVATAR_CLASSIFIER_MODEL", "")

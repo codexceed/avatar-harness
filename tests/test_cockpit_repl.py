@@ -7,9 +7,13 @@ as observable per-goal `Session`s, plan mode runs plan → `PlanModal` → build
 with Textual's `Pilot` over a real `ReplSession` (ScriptedModel + a tmp git repo).
 """
 
+import time
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("textual")  # the cockpit lives behind the optional [textual] extra
+
 
 from conftest import ScriptedModel
 from pydantic import BaseModel
@@ -17,6 +21,7 @@ from pydantic import BaseModel
 from avatar_harness import cli
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
+from avatar_harness.intent import ModeClassifier
 from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
@@ -269,3 +274,50 @@ async def test_observe_renders_leading_events(git_repo):
         await _type_and_send(pilot, app, "explain calc.py")
         await _settle(app, pilot)
     assert any(line.startswith("▶") for line in app.rendered)  # the AgentStart line rendered
+
+
+async def test_resolved_mode_displayed_before_run(git_repo):
+    """The routing verdict is visible and correctable — never silent control (D3).
+
+    The transcript announces the resolved mode + its source + the `/mode` override
+    before the goal runs, so a misclassification is seeable the moment it happens.
+    """
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py defines add")),
+    ]
+    repl = _repl(git_repo, decisions)  # no classifier wired → heuristic source
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain calc.py")
+        await _settle(app, pilot)
+    mode_lines = [line for line in app.rendered if "mode:" in line and "/mode" in line]
+    assert mode_lines and "investigate" in mode_lines[0]
+    assert "heuristic" in mode_lines[0]  # the source is named
+
+
+async def test_input_disabled_during_classification(git_repo):
+    """No second goal can start while the first is still classifying (PR-#32 review).
+
+    Classification runs before `AgentStart` (whose handler used to be the only
+    disabler), so `_drive_input` must close the window synchronously.
+    """
+
+    def _slow_create(**kwargs):
+        time.sleep(0.3)
+        raise RuntimeError("never classifies")  # falls back to the heuristic
+
+    slow_transport = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=_slow_create)))
+
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py defines add")),
+    ]
+    repl = _repl(git_repo, decisions)
+    repl.classifier = ModeClassifier(HarnessConfig(classifier_model="tiny"), client=slow_transport)
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain calc.py")
+        assert app.query_one("#prompt").disabled  # closed immediately, mid-classification
+        await _settle(app, pilot)
+        assert not app.query_one("#prompt").disabled  # reopened once the goal finished

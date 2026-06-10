@@ -89,3 +89,9 @@ class HarnessConfig(BaseSettings):
     # detail. `max_context_tokens` still bounds the whole packet.
     context_max_detail_chars: int = DEFAULT_CONTEXT_MAX_DETAIL_CHARS
     context_detail_char_budget: int = DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET
+
+    # Mode routing (revises ADR-0002 D3). The REPL classifies each goal's task_kind with
+    # one cheap, schema-constrained call on this model (same base_url/api_key); the
+    # verdict is displayed and /mode-overridable — visible, never silent control. Empty/
+    # unset disables classification (heuristic-only). ~500 in / ~10 out tokens per goal.
+    classifier_model: str | None = "openai/gpt-5-nano"
