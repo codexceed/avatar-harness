@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/codexceed/avatar-harness/compare/v0.1.0...v0.1.1) (2026-06-11)
+
+
+### Documentation
+
+* trim README to a lean setup + usage guide ([#43](https://github.com/codexceed/avatar-harness/issues/43)) ([9f7d1c1](https://github.com/codexceed/avatar-harness/commit/9f7d1c14ebee04c642fb9946296fd2b8bf5da0a3))
+
 ## 0.1.0 (2026-06-11)
 
 
