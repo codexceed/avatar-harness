@@ -1,7 +1,7 @@
 """Interactive journaling — the cockpit path persists its event stream (closing the gap).
 
 Batch mode writes `events/<session_id>.jsonl` via the `EventLog` subscriber; the
-`--interactive` cockpit streamed events to the TUI transcript only — nothing reached
+`jo-cli` cockpit streamed events to the TUI transcript only — nothing reached
 disk, so an interactive run was unreplayable after the fact. The fix threads the
 already-built write-ahead `JsonlEventJournal` (Lane 1) through `ReplSession` into each
 per-goal `Session` — **one journal per REPL sitting**, shared by reference the way
@@ -11,7 +11,6 @@ per-goal `Session` — **one journal per REPL sitting**, shared by reference the
 
 from conftest import ScriptedModel
 
-from avatar_harness import cli
 from avatar_harness.config import HarnessConfig
 from avatar_harness.event_types import load_events
 from avatar_harness.harness import Harness
@@ -20,6 +19,7 @@ from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.tools.filesystem import read_file
+from avatar_harness.tui import cli as jo_cli
 from avatar_harness.tui.app import CockpitApp
 
 
@@ -85,7 +85,7 @@ async def test_harness_session_accepts_journal(tmp_path):
 
 
 def _launch_interactive(git_repo, monkeypatch, argv: list[str]) -> ReplSession:
-    """Run `cli.main` with a stubbed (non-blocking) cockpit; return the launched ReplSession."""
+    """Run `jo_cli.main` with a stubbed (non-blocking) cockpit; return the launched ReplSession."""
     launched: dict = {}
 
     def _fake_run(self, *args, **kwargs):
@@ -93,21 +93,21 @@ def _launch_interactive(git_repo, monkeypatch, argv: list[str]) -> ReplSession:
 
     monkeypatch.setattr(CockpitApp, "run", _fake_run)
     config = HarnessConfig(workspace_root=str(git_repo))
-    assert cli.main(argv, config=config, model_client=ScriptedModel([])) == 0
+    assert jo_cli.main(argv, config=config, model_client=ScriptedModel([])) == 0
     return launched["repl"]
 
 
-def test_main_interactive_wires_journal_at_default_path(git_repo, monkeypatch, tmp_path):
+def test_jo_cli_wires_journal_at_default_path(git_repo, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)  # the default events/ dir is cwd-relative
-    repl = _launch_interactive(git_repo, monkeypatch, ["--interactive"])
+    repl = _launch_interactive(git_repo, monkeypatch, [])
     assert repl.journal is not None
     expected = tmp_path / "events" / f"{repl.state.session_id}.jsonl"
     assert repl.journal.path.resolve() == expected.resolve()  # cwd-relative, like batch mode
     assert repl.journal.path.exists()  # the flight recorder exists from launch
 
 
-def test_main_interactive_respects_log_flag(git_repo, monkeypatch, tmp_path):
+def test_jo_cli_respects_log_flag(git_repo, monkeypatch, tmp_path):
     log = tmp_path / "custom" / "run.jsonl"
-    repl = _launch_interactive(git_repo, monkeypatch, ["--interactive", "--log", str(log)])
+    repl = _launch_interactive(git_repo, monkeypatch, ["--log", str(log)])
     assert repl.journal is not None
     assert repl.journal.path == log

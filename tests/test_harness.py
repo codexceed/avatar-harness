@@ -113,10 +113,12 @@ def test_public_api_exports_stable_surface():
 
 def test_core_imports_without_textual():
     # The TUI cockpit is behind the optional [textual] extra: importing the core
-    # package must not pull in textual (or the tui package). Checked in a fresh
-    # interpreter so it is independent of whatever other tests have imported.
+    # package — INCLUDING the batch CLI shell — must not pull in textual (or the
+    # tui package). The CLI is the load-bearing case: the core's shell knowing one
+    # specific consumer is the layering inversion `jo-cli` exists to prevent.
+    # Checked in a fresh interpreter so it is independent of other tests' imports.
     code = (
-        "import avatar_harness, sys; "
+        "import avatar_harness, avatar_harness.cli, sys; "
         "assert 'textual' not in sys.modules, sorted(m for m in sys.modules if 'textual' in m); "
         "assert 'avatar_harness.tui' not in sys.modules"
     )

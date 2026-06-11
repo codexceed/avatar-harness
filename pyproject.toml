@@ -40,6 +40,10 @@ dev = [
 
 [project.scripts]
 avatar-harness = "avatar_harness.cli:main"
+# The cockpit's own launcher (needs the [textual] extra at runtime; prints an install
+# hint without it). The TUI is a consumer of the core, so it owns its entry point —
+# the batch CLI never imports the TUI.
+jo-cli = "avatar_harness.tui.cli:main"
 
 [build-system]
 requires = ["hatchling"]

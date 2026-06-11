@@ -12,10 +12,47 @@ the write-ahead property — rather than reopening per event like the sync-`Emit
 this is the engine's durable commit log for the typed `HarnessEvent` stream.
 """
 
+import contextlib
 from pathlib import Path
 from typing import TextIO
 
 from avatar_harness.event_types import HarnessEvent, dump_event
+
+
+def resolve_log_path(arg: str | None, session_id: str) -> Path:
+    """Pick the event-log path: an explicit override, else the managed per-session layout.
+
+    The default `events/<session_id>.jsonl` makes one session one file — grouping is
+    physical and the filename is self-identifying — instead of appending every run to a
+    shared static log that must be filtered apart. Shared by every shell that journals
+    a sitting (the batch CLI and `jo-cli` alike), so the layout cannot drift.
+
+    Args:
+        arg: An explicit `--log` value, or `None` to use the per-session default.
+        session_id: This run's id, used to name the default log.
+
+    Returns:
+        The resolved log path.
+    """
+    if arg is not None:
+        return Path(arg)
+    return Path("events") / f"{session_id}.jsonl"
+
+
+def update_latest_pointer(log_path: Path) -> None:
+    """Point `latest.jsonl` at this run's log so the newest session is always reachable.
+
+    Best-effort: a platform without symlink support (or a permission error) just leaves
+    the per-session log — the pointer is a convenience, not the source of truth.
+
+    Args:
+        log_path: This run's per-session log file.
+    """
+    pointer = log_path.parent / "latest.jsonl"
+    with contextlib.suppress(OSError):
+        if pointer.is_symlink() or pointer.exists():
+            pointer.unlink()
+        pointer.symlink_to(log_path.name)
 
 
 class JsonlEventJournal:

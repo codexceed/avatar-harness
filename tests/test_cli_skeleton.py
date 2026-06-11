@@ -166,3 +166,14 @@ def test_main_respects_explicit_log_path(git_repo, tmp_path, monkeypatch):
     assert code == 0
     assert log_path.exists()
     assert not (log_path.parent / "latest.jsonl").exists()
+
+
+def test_batch_cli_does_not_own_interactive_flags(git_repo, capsys):
+    # The cockpit launch was inverted out of the core CLI (the TUI ships its own
+    # `jo-cli` entry point): the batch shell no longer knows --interactive/--auto.
+    config = HarnessConfig(workspace_root=str(git_repo))
+    for flag in ("--interactive", "--auto"):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["task", flag], config=config, model_client=_OneShotModel())
+        assert excinfo.value.code == 2  # argparse: unrecognized argument
+        assert "unrecognized" in capsys.readouterr().err
