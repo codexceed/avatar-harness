@@ -1,9 +1,10 @@
 """Phase 3.2c — plan mode (§23, ADR-0002 Decision 5).
 
 Plan mode is a session *interaction mode*, not a `task_kind`. It rides the existing
-phase gate: a read-only **plan task** (`task_kind="investigate"`, mutation blocked at the
-gate) proposes a plan, the human **approves or revises**, and the approved plan **seeds the
-edit task as a constraint** (which `model_client` surfaces). Revise re-runs the read-only
+contract: a **plan task** (`task_kind="investigate"`, so the verifier's net-zero-diff
+contract requires the tree unchanged at verification — ADR-0005 admits transient
+instrumentation) proposes a plan, the human **approves or revises**, and the approved plan
+**seeds the edit task as a constraint** (which `model_client` surfaces). Revise re-runs the
 plan task so the model refines it (ADR mermaid: revise → PLAN). No new control plane.
 
 Pure `ReplSession` logic here (mirroring 3.2a meta + 3.2b grounding); the cockpit renders
@@ -65,7 +66,8 @@ def test_plan_mode_task_is_read_only(tmp_path):
     repl = _repl(tmp_path)
     repl.set_mode("plan")
     session = repl.start("rework the auth flow")
-    # The plan task investigates (read-only) — mutation is blocked at the phase + task_kind gate.
+    # The plan task investigates — any transient instrumentation must net to zero diff
+    # at verification (the investigate contract; ADR-0005).
     assert session.state.task_kind == "investigate"
     assert session.state.phase == "investigating"
     # A planning directive is seeded so the model proposes a plan rather than answering.

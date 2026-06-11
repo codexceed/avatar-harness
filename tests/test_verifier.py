@@ -31,7 +31,8 @@ def test_investigate_gate_fails_on_unintended_diff(git_repo):
     # direction pointing at the fix: revert (ADR-0005).
     ws = Workspace(git_repo)
     ws.apply_patch(
-        "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n+    print('probe')\n     return a - b\n"
+        "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n"
+        "+    print('probe')\n     return a - b\n"
     )
     state = _investigate_state(
         files_read={"calc.py"},
@@ -64,7 +65,8 @@ def test_investigate_gate_fails_on_secret_in_leftover_diff(git_repo):
     # write — including investigate now that ADR-0005 admits tier-1 tools.
     ws = Workspace(git_repo)
     ws.apply_patch(
-        "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n+    key = 'AKIA123'\n     return a - b\n"
+        "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n"
+        "+    key = 'AKIA123'\n     return a - b\n"
     )
     state = _investigate_state(
         files_read={"calc.py"},

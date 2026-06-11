@@ -140,11 +140,14 @@ class ModelClient(ABC):
 # Kind-AWARE framing: one mission line per `task_kind`, injected into the template.
 # Capability is still gated by tool *exposure* per phase (§10/§21) — the mission only
 # orients the model. An edit task is never framed READ-ONLY (that would forbid the very
-# `apply_patch` it must call); an investigate task is explicitly told not to edit.
+# `apply_patch` it must call); an investigate task may instrument transiently (ADR-0005)
+# but is told the tree must net to zero diff when it answers.
 _KIND_FRAMING = {
     "investigate": (
-        "Your mission: ANSWER the question WITHOUT editing the repo. Inspect with read "
-        "tools and cite the concrete evidence (paths/lines) you actually read."
+        "Your mission: ANSWER the question. Inspect with read tools and cite the concrete "
+        "evidence (paths/lines) you actually read. You may instrument transiently (a debug "
+        "print, a scratch probe), but the repo must be unchanged when you answer — revert "
+        "any instrumentation first."
     ),
     "edit": (
         "Your mission: make a WORKING code change. Inspect what you will modify, then "

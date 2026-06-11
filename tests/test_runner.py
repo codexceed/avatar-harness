@@ -429,12 +429,10 @@ def test_cancellation_records_feedback(git_repo):
 # --- ADR-0005: transient edits in investigate tasks (net-zero-diff relaxation) ----
 
 _PROBE = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n"
-    " def add(a, b):\n+    print('probe')\n     return a - b\n"
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n+    print('probe')\n     return a - b\n"
 )
 _UNPROBE = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,3 +1,2 @@\n"
-    " def add(a, b):\n-    print('probe')\n     return a - b\n"
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,3 +1,2 @@\n def add(a, b):\n-    print('probe')\n     return a - b\n"
 )
 
 
@@ -459,9 +457,7 @@ def test_investigate_transient_edit_round_trip_verifies(git_repo):
     assert "calc.py" in result.files_modified  # the transient writes are still on the ledger
     # No `investigating -> editing` advance rode the tier-1 calls (investigate flow unchanged).
     assert not any(
-        e["old"] == "investigating" and e["new"] == "editing"
-        for e in events
-        if e["type"] == "phase_changed"
+        e["old"] == "investigating" and e["new"] == "editing" for e in events if e["type"] == "phase_changed"
     )
 
 

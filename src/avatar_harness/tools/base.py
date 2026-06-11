@@ -63,6 +63,10 @@ class ToolDefinition:
 def is_edit_intent(task_kind: str, tool: ToolDefinition) -> bool:
     """Whether `tool` is the model's edit intent: the mutating tier on an edit-shaped task.
 
+    Deliberately edit-kinds-only: an investigate task's transient edits (ADR-0005) are
+    admitted by `admits_transient_edit` instead, so they never ride this bootstrap and
+    never advance the phase.
+
     Args:
         task_kind: The task's kind (only `edit`/`test_only` permit mutation, §7).
         tool: The resolved tool definition.
@@ -73,6 +77,26 @@ def is_edit_intent(task_kind: str, tool: ToolDefinition) -> bool:
     return tool.permission_tier == EDIT_INTENT_TIER and task_kind in EDIT_KINDS
 
 
+def admits_transient_edit(task_kind: str, tool: ToolDefinition) -> bool:
+    """Whether `tool` is admitted as a transient edit in an investigate task (ADR-0005).
+
+    Investigation sometimes *instruments*: add a debug print, run, observe, revert.
+    Tier-1 mutation is therefore legal in `investigate` tasks — the enforcement point is
+    the verifier's unchanged net-zero-diff contract (`no_unintended_diff`: the tree must
+    match the pinned baseline at verification), detection where prevention used to be.
+    An explicit rule, distinct from `is_edit_intent`, so the edit-intent phase bootstrap
+    stays edit-kinds-only and investigate's phase flow is unchanged.
+
+    Args:
+        task_kind: The task's kind; only `investigate` rides this rule.
+        tool: The resolved tool definition.
+
+    Returns:
+        True when `tool` is the mutating tier (1) and the task is an investigation.
+    """
+    return tool.permission_tier == EDIT_INTENT_TIER and task_kind == "investigate"
+
+
 def phase_admits_tool(phase: str, task_kind: str, tool: ToolDefinition) -> bool:
     """Whether `tool` may run *and* be advertised in `phase` for `task_kind` (§2.6).
 
@@ -80,18 +104,21 @@ def phase_admits_tool(phase: str, task_kind: str, tool: ToolDefinition) -> bool:
     `ContextBuilder` (what the model is told it may call) — keeping them in lockstep so
     the model never loops blind on a tool the runner would have admitted. True when the
     tool is active in the phase, or it is the edit-intent tool reachable from
-    `investigating` via the bootstrap exception.
+    `investigating` via the bootstrap exception, or it is a transient edit in an
+    investigate task (ADR-0005).
 
     Args:
         phase: The current control phase.
-        task_kind: The task's kind, gating the edit-intent bootstrap.
+        task_kind: The task's kind, gating the edit-intent bootstrap and the
+            transient-edit rule.
         tool: The resolved tool definition.
 
     Returns:
         True if `phase` is in the tool's phases, or `tool` is an edit-intent tool on an
-        edit-shaped task (the bootstrap that surfaces `apply_patch` from `investigating`).
+        edit-shaped task (the bootstrap that surfaces `apply_patch` from `investigating`),
+        or `tool` is tier-1 on an investigate task (transient instrumentation, ADR-0005).
     """
-    return phase in tool.phases or is_edit_intent(task_kind, tool)
+    return phase in tool.phases or is_edit_intent(task_kind, tool) or admits_transient_edit(task_kind, tool)
 
 
 class ToolRegistry:
