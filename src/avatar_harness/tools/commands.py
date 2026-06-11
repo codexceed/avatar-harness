@@ -10,6 +10,7 @@ command that could not run (timeout, target not found) is a failed `ToolResult`.
 from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
+from avatar_harness.planner import effective_invocation
 from avatar_harness.tools.base import ToolDefinition, ToolResult
 
 # Verification tools load in the editing and verifying phases (§21).
@@ -17,6 +18,11 @@ _VERIFY_PHASES = frozenset({"editing", "verifying"})
 
 _USAGE_ERROR_EXIT = 4  # pytest convention: usage error / target not found (model-correctable).
 _CONTENT_BUDGET = 2000
+
+# Programs whose CLI accepts positional file targets — only these get `target`
+# appended. A detected `make test` or `npm test` does not (PR-#40 review: appending
+# produced `make test tests/x.py`); the mismatch is fed back as model-correctable.
+_TARGETABLE_PROGRAMS = frozenset({"pytest"})
 
 
 def _excerpt(out: object) -> str:
@@ -61,6 +67,18 @@ def _run_tests(args: RunTestsInput, deps: RunDeps) -> ToolResult:
             ),
         )
     if args.target:
+        program, _ = effective_invocation(command)
+        if program not in _TARGETABLE_PROGRAMS:
+            # Model-correctable (§10): the declared contract does not take file
+            # targets; the model retries without one (or uses run_command).
+            return ToolResult(
+                tool_name="run_tests",
+                success=False,
+                error=(
+                    f"the declared test command {command!r} does not accept a file target; "
+                    "call run_tests without a target to run the full declared contract"
+                ),
+            )
         command = f"{command} {args.target}"
     out = deps.workspace.run(command, timeout=deps.config.command_timeout_seconds)
     if out.timed_out:
