@@ -122,6 +122,11 @@ Returns:
 
 Run `command` confined to the root, capturing output; bounded by `timeout`.
 
+Never raises into the loop (ADR-0007 robustness floor): a missing binary,
+an empty command, or an unparseable command line all come back as a failed
+`CommandOutput` (shell convention: exit 127 = command not found) so the
+verifier and tools see a legible failure, not a `FileNotFoundError`.
+
 Args:
     command: The shell-style command to run.
     timeout: Seconds before the command is killed, or `None` for no bound.

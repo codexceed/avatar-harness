@@ -40,7 +40,7 @@ EventBus(session_id: str, *, journal: JsonlEventJournal | None = None) -> None
 
 Signal end-of-stream to every subscriber and close the journal (idempotent).
 
-#### `EventBus.emit(self, draft: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
+#### `EventBus.emit(self, draft: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
 
 Awaitable publish — the frozen async interface (delegates to `publish_nowait`).
 
@@ -50,7 +50,7 @@ Args:
 Returns:
     The stamped event.
 
-#### `EventBus.publish_nowait(self, draft: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
+#### `EventBus.publish_nowait(self, draft: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
 
 Stamp `draft`, journal it losslessly, and fan it out (never blocks, §13).
 

@@ -5,11 +5,17 @@ title: avatar_harness.verifier
 Verifier — proves completion via external evidence, never self-certification (§12).
 
 It runs **no model**: every check is a predicate over structured `TaskState` plus
-the workspace. For `edit`/`test_only` the *external signal* is a command the
-verifier runs **itself** (`config.test_command` / `config.lint_command`) — not the
-model's `run_tests` output. The gate is harness-owned, so the model can never
-self-certify (§5). The three pass criteria (§12): no required check fails; no
-required check is skipped for a disallowed reason; at least one positive signal.
+the workspace. For `edit`/`test_only` the *external signal* is the task's frozen
+**verification plan** (ADR-0007) — commands the harness resolved (config override →
+deterministic detection → cited LLM proposal) and froze onto `TaskState` before
+editing began. The verifier is a **pure executor** over that plan: zero language
+knowledge, it runs each frozen command itself via `ws.run` and reads the real exit
+code. The gate is harness-owned, so the model can never self-certify (§5). The
+three pass criteria (§12): no required check fails; no required check is skipped
+for a disallowed reason; at least one positive signal.
+
+When no plan was frozen (a direct library call), the config override tier alone
+is used as the plan — never a detected or invented default.
 
 ## Classes
 ### `Verifier`
@@ -17,7 +23,8 @@ required check is skipped for a disallowed reason; at least one positive signal.
 Disposes of a completion proposal via external evidence, never a model (§12).
 
 Args:
-    config: The harness config supplying the `test`/`lint` commands; `None` leaves both empty.
+    config: The harness config; its `test_command`/`lint_command` override tier
+        doubles as the plan when no frozen plan exists. `None` leaves both empty.
 
 ```python
 Verifier(config: HarnessConfig | None = None) -> None

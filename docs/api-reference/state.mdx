@@ -82,6 +82,26 @@ Evidence(*, step: int, kind: str, summary: str, detail: str | None = None) -> No
 | `kind` | `str` | yes |
 | `summary` | `str` | yes |
 | `detail` | `str | None` | no |
+### `PlannedCheck`
+
+One resolved verification check: what runs, and where it came from (ADR-0007).
+
+The unit of the per-session verification plan. `provenance` names the artifact
+the command was resolved from (`config:AVATAR_TEST_COMMAND`, `ci:.github/...`,
+`Makefile:test`, `llm:&lt;cited path>`), so every run's rubric is auditable.
+
+```python
+PlannedCheck(*, name: str, command: str, kind: Literal['test', 'lint'], provenance: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `name` | `str` | yes |
+| `command` | `str` | yes |
+| `kind` | `Literal['test', 'lint']` | yes |
+| `provenance` | `str` | yes |
 ### `TaskState`
 
 The full, serializable state of one task — the harness's source of truth (§7).
@@ -91,7 +111,7 @@ how it ended), the bounding counters, and the accumulated evidence/decisions
 the context builder draws on. The model's message history is derived from this.
 
 ```python
-TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
+TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, verification_plan: list[PlannedCheck] | None = None, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
 ```
 
 **Fields**
@@ -115,6 +135,7 @@ TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <fact
 | `evidence` | `list[Evidence]` | no |
 | `decisions` | `list[DecisionRecord]` | no |
 | `verifier_results` | `list[VerifierResult]` | no |
+| `verification_plan` | `list[PlannedCheck] | None` | no |
 | `current_plan` | `list[str]` | no |
 | `open_questions` | `list[str]` | no |
 | `latest_error` | `str | None` | no |
@@ -135,6 +156,19 @@ Terminal: the task needs human input (§5 ask_user in a non-interactive run).
 
 Args:
     reason: Why the task is blocked.
+
+#### `TaskState.freeze_verification_plan(self, plan: list[PlannedCheck]) -> None`
+
+Freeze the resolved verification plan — once, before editing begins (ADR-0007).
+
+The freeze is an authority transfer away from the model: after it, the
+rubric cannot move. A second freeze attempt is a harness bug, not a retry.
+
+Args:
+    plan: The resolved checks (may be empty: "nothing discovered").
+
+Raises:
+    RuntimeError: When a plan is already frozen onto this state.
 
 #### `TaskState.terminal`
 
