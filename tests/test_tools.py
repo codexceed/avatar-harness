@@ -324,6 +324,50 @@ def test_run_linter_runs_configured_command(git_repo):
     assert "All checks passed" in result.content
 
 
+def _plan_runtime(root, plan, **config_kw) -> ToolRuntime:
+    """An edit runtime whose RunDeps carry a frozen verification plan (ADR-0007)."""
+    from avatar_harness.state import PlannedCheck
+
+    reg = ToolRegistry()
+    for tool in (read_file, apply_patch, write_file, run_tests, run_linter):
+        reg.register(tool)
+    config_kw.setdefault("test_command", "")
+    config_kw.setdefault("lint_command", "")
+    deps = RunDeps(
+        workspace=Workspace(root),
+        config=HarnessConfig(**config_kw),
+        cancellation=CancellationToken(),
+        verification_plan=[PlannedCheck(**c) for c in plan],
+    )
+    return ToolRuntime(reg, deps)
+
+
+def test_run_tests_falls_back_to_frozen_plan_command(git_repo):
+    # With no config override, run_tests rides the frozen plan's test command —
+    # the model exercises the same rubric the verifier will grade (ADR-0007).
+    rt = _plan_runtime(
+        git_repo,
+        [{"name": "tests", "command": "python -c \"print('plan tests ran')\"", "kind": "test", "provenance": "Makefile:test"}],
+    )
+    result = rt.execute("run_tests", {})
+    assert result.success
+    assert "plan tests ran" in result.content
+
+
+def test_run_tests_with_no_command_or_plan_fails_legibly(git_repo):
+    rt = _edit_runtime(git_repo, test_command="", lint_command="")
+    result = rt.execute("run_tests", {})
+    assert result.success is False
+    assert "AVATAR_TEST_COMMAND" in (result.error or "")
+
+
+def test_run_linter_with_no_command_or_plan_fails_legibly(git_repo):
+    rt = _edit_runtime(git_repo, test_command="", lint_command="")
+    result = rt.execute("run_linter", {})
+    assert result.success is False
+    assert "AVATAR_LINT_COMMAND" in (result.error or "")
+
+
 # --- Phase 2.6 Lane B: tool-failure isolation (the runtime never raises into the loop). ---
 
 

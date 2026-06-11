@@ -1,3 +1,5 @@
+import subprocess
+
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
@@ -505,3 +507,109 @@ def test_investigate_write_file_probe_then_delete_verifies(git_repo):
     assert not (git_repo / "probe.py").exists()  # the probe is genuinely gone (tree AND index)
     assert Workspace(git_repo, allow_dirty=True).diff() == ""  # net-zero at the end
     assert "probe.py" in result.files_modified  # the transient creation stayed on the ledger
+
+
+# --- ADR-0007: verification-plan freeze at the phase boundary --------------
+
+
+def _commit_makefile(git_repo, recipe: str = 'python -c "import calc; assert calc.add(2, 3) == 5"'):
+    """Commit a Makefile declaring a `test` target, so detection has a contract."""
+    (git_repo / "Makefile").write_text(f"test:\n\t{recipe}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(git_repo), "add", "Makefile"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(git_repo), "commit", "-q", "-m", "add Makefile"], check=True, capture_output=True
+    )
+
+
+class _SinkStub:
+    """A typed-event sink stub: records every published draft."""
+
+    def __init__(self) -> None:
+        self.events = []
+
+    def publish_nowait(self, draft):
+        self.events.append(draft)
+        return draft
+
+    async def emit(self, draft):
+        self.events.append(draft)
+        return draft
+
+
+def test_runner_freezes_detected_plan_at_editing_transition(git_repo):
+    # With no config override, the planner detects the repo's declared contract
+    # (the Makefile test target) and the runner freezes it at the
+    # investigating → editing boundary; the verifier then executes the frozen plan.
+    _commit_makefile(git_repo)
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
+    ]
+    state = TaskState(goal="fix add()", task_kind="edit")
+    result = _runner(git_repo, _edit_registry(), decisions, test_command="", lint_command="").run(state)
+    assert result.outcome == "success"
+    assert result.verification_plan is not None
+    by_kind = {c.kind: c for c in result.verification_plan}
+    assert by_kind["test"].command == "make test"
+    assert by_kind["test"].provenance == "Makefile:test"
+    assert any("make test" in c.command for c in result.commands_run)  # the verifier ran the frozen plan
+
+
+def test_runner_journals_frozen_plan_as_typed_event(git_repo):
+    # The frozen plan is journaled BEFORE verification — every run's rubric is auditable.
+    from avatar_harness.event_types import VerificationPlanFrozen, VerificationStart
+
+    _commit_makefile(git_repo)
+    config = HarnessConfig(test_command="", lint_command="")
+    deps = RunDeps(workspace=Workspace(git_repo), config=config, cancellation=CancellationToken())
+    sink = _SinkStub()
+    runner = AgentRunner(
+        model_client=ScriptedModel(
+            [
+                ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+                ModelDecision(action=FinalAnswer(answer="fixed")),
+            ]
+        ),
+        registry=_edit_registry(),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+        event_sink=sink,
+    )
+    runner.run(TaskState(goal="fix add()", task_kind="edit"))
+    types = [type(e) for e in sink.events]
+    assert VerificationPlanFrozen in types
+    assert types.index(VerificationPlanFrozen) < types.index(VerificationStart)
+    frozen = next(e for e in sink.events if isinstance(e, VerificationPlanFrozen))
+    assert [c.command for c in frozen.checks] == ["make test"]
+
+
+def test_runner_empty_plan_fails_verification_legibly(git_repo):
+    # Nothing resolves (no config, no artifacts) → an empty plan freezes and the
+    # edit fails verification with a pointer to declaring a contract — never a crash,
+    # never an invented Python default.
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=FinalAnswer(answer="fixed")),
+    ]
+    state = TaskState(goal="fix add()", task_kind="edit")
+    result = _runner(
+        git_repo, _edit_registry(), decisions, test_command="", lint_command="", max_repair_attempts=1
+    ).run(state)
+    assert result.outcome == "failed"
+    assert result.verification_plan == []
+    assert any("no verification contract" in e.summary for e in result.evidence)
+
+
+def test_runner_leaves_plan_unfrozen_for_investigate(git_repo):
+    # Investigate verification is evidence-shaped, not command-shaped — no plan needed.
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="the bug is the minus in calc.py")),
+    ]
+    state = TaskState(goal="what is wrong with add()?", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions).run(state)
+    assert result.outcome == "success"
+    assert result.verification_plan is None
