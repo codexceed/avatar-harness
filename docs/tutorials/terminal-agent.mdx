@@ -1,0 +1,408 @@
+---
+title: "Tutorial: build a terminal agent"
+description: A bare-bones streaming, approval-answering terminal agent on the harness SDK — about 90 lines.
+---
+
+The bundled Textual cockpit is just one consumer of the SDK. This tutorial
+builds another from scratch: a single-file terminal agent that streams the
+agent's activity, answers approval prompts on stdin, cancels gracefully on
+Ctrl-C, and leaves a replayable journal. Everything it uses is on the exported
+surface — no internals.
+
+It comes in two parts: a four-line **one-shot** agent to ground the core ideas
+(Part 1), then a **streaming** agent built one capability at a time (Part 2).
+The two are separate programs — Part 1 is the black-box version, Part 2 shows the
+work. The full listing of the streaming agent is at the
+[end](#the-full-listing).
+
+## Setup
+
+Not yet on PyPI — install from source (quote the extras; zsh glob-expands the
+brackets otherwise):
+
+```bash
+# from a clone:
+pip install -e '.[openai]'
+# or straight from GitHub (uses your git credentials while the repo is private):
+pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
+```
+
+Plus `rg` and `git` on `PATH`, and a `.env` (or exported variables):
+
+```bash
+AVATAR_API_KEY=sk-or-...
+AVATAR_MODEL=openai/gpt-4o-mini
+AVATAR_BASE_URL=https://openrouter.ai/api/v1
+AVATAR_WORKSPACE_ROOT=/path/to/the/repo/to/work/on
+```
+
+The workspace must be a git repo with no uncommitted *tracked* changes — the
+harness pins `HEAD` as its diff baseline (see the
+[quickstart](/guides/quickstart#first-run--the-cli) for the `allow_dirty`
+escape hatch).
+
+## Part 1 — the one-shot agent
+
+The smallest possible consumer — no streaming, no UI. Complete and runnable
+exactly as written:
+
+```python
+from avatar_harness import Harness
+
+state = Harness.from_env().run("create a basic chatbot in chatbot.py", task_kind="edit")
+print(state.outcome, "\n", state.final_answer)
+```
+
+That one line *builds* something: the agent inspects the repo, writes
+`chatbot.py`, and the harness-owned verifier confirms the result before `run()`
+returns. The diff lands in your workspace — `git diff` shows it. Two things to
+absorb:
+
+- **`outcome` is verifier-owned.** `"success"` means the verifier found positive
+  external evidence — for an `edit`, a real diff that clears a check (lint or
+  tests) run over it, never the model's say-so. "Done" is only ever a *proposal*
+  the verifier disposes of.
+- **`task_kind` selects the verification contract.** `edit` (used here) requires
+  a verifiable diff with a passing check over it; `investigate` is read-only Q&A;
+  `test_only` requires new tests that pass.
+
+## Part 2 — the streaming agent
+
+Part 1 is a whole agent, but a black box: you get the verdict, never the work.
+The rest of the tutorial builds a **separate** program — a single-file terminal
+agent that shows each step as it happens. From here the code accretes toward the
+[full listing](#the-full-listing); each section adds one capability.
+
+### Stream the run
+
+`harness.session(...)` returns a not-yet-started `Session`: `run()` drives the
+engine while `events()` yields a typed stream you render. This split is the
+**two-plane contract** — the stream is observation-only and can never alter the
+run. Put the render loop in its own coroutine, and a `main()` that wires the
+goal and lets the two run together:
+
+```python
+import asyncio
+
+from avatar_harness import (
+    AgentEnd,
+    Harness,
+    ModelDecisionEvent,
+    PhaseChanged,
+    ToolEnd,
+    ToolStart,
+    VerificationEnd,
+)
+
+
+async def render(session) -> None:                    # the observation plane
+    async for event in session.events():
+        if isinstance(event, ModelDecisionEvent):
+            if event.thought:                         # often empty under native tool-calling
+                print(f"  · {event.thought}")
+        elif isinstance(event, ToolStart):
+            print(f"  → {event.tool} {event.input}")
+        elif isinstance(event, ToolEnd):
+            print(f"  {'✓' if event.success else '✗'} {event.summary}")
+        elif isinstance(event, PhaseChanged):
+            print(f"— phase: {event.old} → {event.new}")
+        elif isinstance(event, VerificationEnd):
+            print(f"— verification {'✓' if event.passed else '✗'} {event.summary}")
+        elif isinstance(event, AgentEnd):
+            print(f"\noutcome: {event.outcome}")
+
+
+async def main() -> int:
+    harness = Harness.from_env()
+    goal, kind = "create a basic chatbot in chatbot.py", "edit"
+    session = harness.session(goal, task_kind=kind)
+
+    run_task = asyncio.create_task(session.run())     # drive the engine
+    await render(session)                             # observe it
+    state = await run_task
+    return 0 if state.outcome == "success" else 1
+```
+
+`events()` subscribes **eagerly** — at call time, not first iteration — so
+creating the run task before the loop loses nothing. The stream ends by itself
+after `agent_end`. The full event catalog is in the
+[SDK guide](/guides/sdk#the-event-catalog).
+
+Each section below extends this skeleton — a new branch in `render`, or a few
+lines in `main` — and the imports grow to match (the [full listing](#the-full-listing)
+has the complete set).
+
+### Answer approvals
+
+Gated calls (tier-3 tools like `run_command`, or a sensitive-path hit) are
+*announced* on the event stream as `ApprovalRequested`, and the run blocks until
+you decide via the **control plane**. Add one more branch to `render`'s loop
+(and `ApprovalRequested` to the imports):
+
+```python
+elif isinstance(event, ApprovalRequested):
+    answer = await asyncio.to_thread(          # input() would block the event loop
+        input, f"  ⚠ {event.tool}: {event.reason}\n    allow? [y]es / [a]lways / [d]eny "
+    )
+    choice = answer.strip().lower()[:1]
+    await session.resolve_approval(
+        event.approval_id, allow=choice in ("y", "a"), remember=choice == "a"
+    )
+```
+
+- The event announces; only `resolve_approval` decides — nothing on the stream
+  can approve anything.
+- `remember=True` (the "always" choice) stores a session-scoped
+  `ApprovalGrant`: later calls sharing the same program (`argv[0]`) auto-allow,
+  observable as `ApprovalResolved(via="grant")`.
+- A blocking `input()` would stall the very event loop the run lives on —
+  `asyncio.to_thread` keeps it breathing.
+
+<Note>
+  Creating `chatbot.py` won't prompt: `write_file`/`apply_patch` are tier 1 and
+  auto-allow once their target paths validate inside the workspace — the verifier
+  judges the resulting diff. To see an approval fire, give a goal that needs a
+  command (a build step, a migration), or target a denylisted path and watch it
+  get refused.
+</Note>
+
+### Cancel gracefully on Ctrl-C
+
+`session.cancel()` trips the run's cancellation token; the loop observes it at
+the next checkpoint, records the interruption as feedback, and still settles to
+a terminal state — so `await run_task` always returns a `TaskState`, never
+hangs. Register the handler in `main`, before starting the run task:
+
+```python
+asyncio.get_running_loop().add_signal_handler(
+    signal.SIGINT, lambda: asyncio.ensure_future(session.cancel("user interrupt"))
+)
+```
+
+Any in-flight approval is denied on cancel, so a run blocked on the gate can't
+hang either. (`add_signal_handler` is POSIX-only; on Windows, catch
+`KeyboardInterrupt` around `asyncio.run` instead and accept the harder stop.)
+
+### Journal the run
+
+Pass a `JsonlEventJournal` to `harness.session(...)` in `main` and every event
+is committed to disk **before** any subscriber renders it — a crash loses
+nothing:
+
+```python
+journal = JsonlEventJournal(Path("events") / "mini-agent.jsonl")
+session = harness.session(goal, task_kind=kind, journal=journal)
+```
+
+Reload it later with `load_events(path)` — the same typed objects, for replay,
+debugging, or evals.
+
+### The final report
+
+The terminal `TaskState` carries everything a report needs — swap the bare
+`return` in `main` for a report:
+
+```python
+if state.final_answer:
+    print(f"\n{state.final_answer}")
+if state.files_modified:
+    print("\nchanged files:", ", ".join(sorted(state.files_modified)))
+if state.verifier_results:
+    print("verification:", state.verifier_results[-1].summary)
+return 0 if state.outcome == "success" else 1
+```
+
+For the richer formatted artifact the batch CLI prints (status + files +
+commands + diff reference), see `avatar_harness.artifact.ArtifactManager` — not
+yet on the exported surface, so treat it as internal for now.
+
+## The full listing
+
+Verified end-to-end (the live run below, lightly elided):
+
+```python  expandable
+"""mini-agent: a bare-bones terminal agent on avatar-harness (~90 lines)."""
+
+import asyncio
+import signal
+import sys
+from pathlib import Path
+
+from avatar_harness import (
+    AgentEnd,
+    ApprovalRequested,
+    Harness,
+    JsonlEventJournal,
+    ModelDecisionEvent,
+    PhaseChanged,
+    ToolEnd,
+    ToolStart,
+    VerificationEnd,
+)
+
+
+async def render(session) -> None:
+    """The observation plane: draw each typed event; answer approvals on stdin."""
+    async for event in session.events():
+        if isinstance(event, ModelDecisionEvent):
+            if event.thought:  # often empty under native tool-calling
+                print(f"  · {event.thought}")
+        elif isinstance(event, ToolStart):
+            print(f"  → {event.tool} {event.input}")
+        elif isinstance(event, ToolEnd):
+            print(f"  {'✓' if event.success else '✗'} {event.summary}")
+        elif isinstance(event, PhaseChanged):
+            print(f"— phase: {event.old} → {event.new}")
+        elif isinstance(event, VerificationEnd):
+            print(f"— verification {'✓' if event.passed else '✗'} {event.summary}")
+        elif isinstance(event, AgentEnd):
+            print(f"\noutcome: {event.outcome}")
+        elif isinstance(event, ApprovalRequested):
+            answer = await asyncio.to_thread(
+                input, f"  ⚠ {event.tool}: {event.reason}\n    allow? [y]es / [a]lways / [d]eny "
+            )
+            choice = answer.strip().lower()[:1]
+            await session.resolve_approval(
+                event.approval_id, allow=choice in ("y", "a"), remember=choice == "a"
+            )
+
+
+async def main(goal: str, kind: str) -> int:
+    harness = Harness.from_env()
+    journal = JsonlEventJournal(Path("events") / "mini-agent.jsonl")
+    session = harness.session(goal, task_kind=kind, journal=journal)
+
+    asyncio.get_running_loop().add_signal_handler(
+        signal.SIGINT, lambda: asyncio.ensure_future(session.cancel("user interrupt"))
+    )
+
+    run_task = asyncio.create_task(session.run())
+    await render(session)
+    state = await run_task
+
+    if state.final_answer:
+        print(f"\n{state.final_answer}")
+    if state.files_modified:
+        print("\nchanged files:", ", ".join(sorted(state.files_modified)))
+    if state.verifier_results:
+        print("verification:", state.verifier_results[-1].summary)
+    return 0 if state.outcome == "success" else 1
+
+
+if __name__ == "__main__":
+    goal = " ".join(sys.argv[1:]) or "create a basic chatbot in chatbot.py"
+    raise SystemExit(asyncio.run(main(goal, "edit")))
+```
+
+```text
+$ python mini_agent.py "create a basic chatbot in chatbot.py"
+  → list_files {'glob': '**/*.py'}
+  ✓ 0 file(s) matching '**/*.py'
+— phase: investigating → editing
+  → write_file {'path': 'chatbot.py', 'content': '"""A basic command-line chatbot.\n…'}
+  ✓ wrote chatbot.py
+  → read_file {'path': 'chatbot.py'}
+  ✓ read chatbot.py
+— phase: editing → verifying
+— verification ✓ verification passed
+
+outcome: success
+
+Implemented `chatbot.py` as a basic command-line chatbot:
+- `generate_response(user_message)` — rule-based replies (greetings, "how are
+  you", name, help) with a fallback
+- `main()` — an `input("You: ")` loop that prints replies and exits on
+  quit/exit/bye
+[…]
+changed files: chatbot.py
+verification: verification passed
+```
+
+The agent looked for existing Python, found none, wrote `chatbot.py`, then the
+verifier ran the contract: a diff is present and `ruff check` passes over the new
+file (`pytest` skipped — no tests collected), so the run settles to `success`.
+(Your output will differ — it's a live model run; the shape is what matters.)
+
+## Sidebar — run it offline
+
+`ModelClient` is a one-method protocol, so the whole tutorial runs without an
+API key by injecting a scripted model — exactly how the project's own test suite
+drives the engine. An `edit` task needs a clean git workspace (the verifier diffs
+against `HEAD`), so the snippet spins up a throwaway repo:
+
+```python
+import subprocess
+import tempfile
+from pathlib import Path
+
+from avatar_harness import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
+
+CHATBOT = '''"""A basic command-line echo chatbot."""
+
+
+def main() -> None:
+    print("bot: hi! type ctrl-d to quit.")
+    while True:
+        try:
+            user = input("you: ")
+        except EOFError:
+            print("bot: bye!")
+            break
+        print(f"bot: you said {user!r}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+class ScriptedModel(ModelClient):
+    def __init__(self, decisions):
+        self._decisions, self._i = decisions, 0
+
+    def decide(self, context):
+        d = self._decisions[min(self._i, len(self._decisions) - 1)]
+        self._i += 1
+        return d
+
+
+root = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "root"], cwd=root, check=True)
+
+harness = Harness(
+    config=HarnessConfig(workspace_root=str(root)),   # default pytest -q / ruff check
+    model=ScriptedModel([
+        ModelDecision(thought_summary="create the chatbot",
+                      action=ToolCall(name="write_file",
+                                      input={"path": "chatbot.py", "content": CHATBOT})),
+        ModelDecision(thought_summary="report what was built",
+                      action=FinalAnswer(answer="Created chatbot.py — a basic CLI echo loop.")),
+    ]),
+)
+state = harness.run("create a basic chatbot in chatbot.py", task_kind="edit")
+```
+
+Swap this `harness` into `main()` and the same flow runs offline. It exercises
+the real contract end-to-end: `write_file` creates a genuine diff, `pytest -q`
+skips with no tests collected (a tolerated skip), and `ruff check` passes over the
+new file — the positive signal that settles verification to `success`. Real loop,
+real verifier, zero network.
+
+<Note>
+  Keep escape sequences out of the embedded `CHATBOT` source — a literal `\n`
+  inside the triple-quoted string would become a real newline in the written
+  file and break its string literals (and fail lint). The echo loop above sticks
+  to plain strings for exactly this reason.
+</Note>
+
+## Where to go from here
+
+- **Multi-turn:** wrap goals in a `ReplSession` — history seeding, grant
+  carry-over, `/`-meta commands, plan mode. See the
+  [SDK guide](/guides/sdk#multi-turn-conversations--replsession).
+- **Your own tools / model / verifier:** every collaborator is a `Harness`
+  constructor kwarg.
+- **A real UI:** the bundled cockpit (`avatar-harness --interactive`) is this
+  same surface rendered with Textual — `src/avatar_harness/tui/app.py` is the
+  reference implementation.

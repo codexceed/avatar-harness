@@ -29,6 +29,46 @@ AskUser(*, type: Literal['ask_user'] = 'ask_user', question: str) -> None
 ### `DecisionParseError`
 
 Malformed model output — recoverable; fed back to the model (§6), never fatal.
+
+Carries `usage` when the client exhausts its in-client retries, so a lost turn is
+still billed — the expensive failure mode is exactly the one that must not be
+undercounted (PR-#31 review).
+
+Args:
+    message: The parse-failure description fed back to the model.
+    usage: Tokens spent across the failed attempts, or `None` if unreported.
+
+```python
+DecisionParseError(message: str = '', usage: 'DecisionUsage | None' = None) -> None
+```
+### `DecisionRetryNote`
+
+One malformed in-client attempt: what was wrong, and a capped raw excerpt.
+
+```python
+DecisionRetryNote(*, error: str, raw: str = '') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `error` | `str` | yes |
+| `raw` | `str` | no |
+### `DecisionUsage`
+
+Provider-reported token usage for one decision (all in-client attempts summed).
+
+```python
+DecisionUsage(*, prompt_tokens: int = 0, completion_tokens: int = 0) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `prompt_tokens` | `int` | no |
+| `completion_tokens` | `int` | no |
 ### `FinalAnswer`
 
 Decision claiming the task is complete — a proposal for the verifier (§6, §12).
@@ -67,8 +107,13 @@ Returns:
 
 One validated model decision: a thought plus exactly one action (§6).
 
+`retry_trace` is a **harness-owned diagnostics channel**: the model client annotates
+the decision with any malformed attempts it recovered from in-client, so the runner
+can record them as evidence and journal them (invariant #5). It is never accepted
+from raw model output — `parse_decision` clears it.
+
 ```python
-ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser) -> None
+ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, usage: DecisionUsage | None = None) -> None
 ```
 
 **Fields**
@@ -77,6 +122,8 @@ ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | Ask
 | --- | --- | --- |
 | `thought_summary` | `str` | no |
 | `action` | `ToolCall | FinalAnswer | AskUser` | yes |
+| `retry_trace` | `list[DecisionRetryNote]` | no |
+| `usage` | `DecisionUsage | None` | no |
 ### `OpenAIModelClient`
 
 Calls an OpenAI-compatible endpoint and validates the reply (§6, §18).
@@ -100,14 +147,16 @@ OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: 
 
 Call the endpoint and validate the reply, retrying on malformed output (§6).
 
+The default transport is native provider tool-calling (ADR-0003 A) — the
+provider owns the call envelope, so a large patch can't die in hand-escaping;
+`config.native_tool_calls=False` restores the legacy single-JSON-object protocol.
+Either path raises `DecisionParseError` when every attempt is malformed.
+
 Args:
     context: The assembled context packet.
 
 Returns:
     The validated decision for the current turn.
-
-Raises:
-    DecisionParseError: If every attempt yields malformed output.
 ### `ToolCall`
 
 Decision to invoke a named tool with validated input (§6).
@@ -125,15 +174,31 @@ ToolCall(*, type: Literal['tool_call'] = 'tool_call', name: str, input: dict = <
 | `input` | `dict` | no |
 
 ## Functions
-### `build_messages(context: ContextPacket) -> list[dict[str, str]]`
+### `build_messages(context: ContextPacket, *, native_tools: bool = False) -> list[dict[str, str]]`
 
 Assemble the system + user messages for one decision (§9 packet → prompt).
 
 Args:
     context: The assembled context packet.
+    native_tools: `True` for the native tool-calling transport (ADR-0003 A) — the
+        provider carries the tool schemas, so the prompt drops the JSON-envelope
+        contract and the prose tool list; `False` keeps the legacy protocol verbatim.
 
 Returns:
     The system + user messages for one decision.
+### `build_tool_schemas(context: ContextPacket) -> list[dict]`
+
+The function schemas for one decision: the advertised tools + the decision actions.
+
+Each phase-admitted tool rides its real pydantic `input_schema`; `final_answer` and
+`ask_user` become functions too, so every §6 decision shape is a structured call the
+provider validates — never a hand-escaped JSON envelope (ADR-0003 A).
+
+Args:
+    context: The assembled context packet (its `allowed_tools` are advertised).
+
+Returns:
+    OpenAI-style `tools=` entries.
 ### `parse_decision(raw: str) -> ModelDecision`
 
 Validate raw model output into a `ModelDecision`, or raise a recoverable error.

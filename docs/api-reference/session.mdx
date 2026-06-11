@@ -75,7 +75,7 @@ Args:
     reason: Why the run is being cancelled (retained for display; the loop records
         its own cancellation feedback when it observes the token).
 
-#### `Session.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+#### `Session.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
 
 The observation plane: an independent async stream of typed events (§13).
 

@@ -11,9 +11,11 @@ fresh `TaskState` run through the existing single-task `Session` (one code path 
 the degenerate one-`submit` case, §23.2), seeded with prior history and carrying grants
 forward. The Textual cockpit (Lane 2b) renders this; here it stays pure logic.
 
-Mode routing is a **visible heuristic default + explicit override** (ADR-0002 D3): a
-lightweight rule seeds `task_kind`, and `set_mode` overrides it — never a hidden
-per-prompt classifier. **Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
+Mode routing (revised ADR-0002 D3) is **visible and correctable, never hidden**: an
+explicit `set_mode` override wins; else a one-shot LLM classification (`ModeClassifier`,
+when configured) seeds `task_kind` from the prompt + conversation; else the hardened
+word heuristic. The verdict is announced before the run and `/mode` re-routes.
+**Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
 a read-only plan task → human approve/revise → the approved plan seeds the edit task as a
 constraint; `submit_plan` drives that flow. Local **meta commands** (`/help` `/quit` `/state`
 `/mode` `/plan` `/diff` `/permissions`) are handled by `run_meta` and never reach the
@@ -57,9 +59,23 @@ Args:
         *conversational* — the verifier runs + reports but is advisory, the reply is
         delivered without repair, and the human is terminal authority. `auto=True`
         restores the strict §12 gate (the `--auto` flag, wired by the CLI in 3.2e).
+    journal: One write-ahead `JsonlEventJournal` for the whole sitting, threaded into
+        every per-goal `Session` (shared by reference, like `grants`) so the multi-turn
+        conversation lands in one durable file. Each goal's `bus.close()` closes the
+        handle; `append` reopens it for the next goal. `None` (default) keeps the
+        interactive stream in memory only.
+    classifier: The LLM mode router (revised ADR-0002 D3); if omitted, built from
+        `config.classifier_model` when set (`None`/empty → heuristic-only routing).
+        Its verdict is displayed and `/mode`-overridable — visible, never silent.
+    allow_dirty: `True` acknowledges a dirty tree at the *start* of the sitting
+        (the `--allow-dirty` flag). Regardless of this, **session-owned dirt is
+        always tolerated**: the §15 clean-start check applies to the sitting's first
+        goal only — after that, uncommitted changes are the session's own work
+        product, and a follow-up goal must not be refused because the previous one
+        succeeded.
 
 ```python
-ReplSession(harness: Harness, *, session_id: str | None = None, auto: bool = False) -> None
+ReplSession(harness: Harness, *, session_id: str | None = None, auto: bool = False, journal: JsonlEventJournal | None = None, classifier: ModeClassifier | None = None, allow_dirty: bool = False) -> None
 ```
 
 #### `ReplSession.extract_plan(state: TaskState) -> str`
@@ -124,14 +140,19 @@ Returns:
 
 #### `ReplSession.resolve_mode(self, prompt: str) -> Literal['edit', 'investigate', 'test_only', 'plan']`
 
-The mode for `prompt`: the explicit override if set, else the heuristic.
+The mode for `prompt`: explicit override → classifier → heuristic.
+
+The classifier verdict is memoized per prompt (`start()` re-resolves
+internally; a goal pays at most one classification call) and any classifier
+failure degrades to the heuristic — routing can lose quality, never block.
+`last_mode_source` records how the verdict was reached, for display.
 
 Args:
     prompt: The user's goal.
 
 Returns:
-    The resolved mode. The heuristic only ever yields a `task_kind`; `plan` is
-    opt-in (set explicitly), never inferred.
+    The resolved mode. Classifier/heuristic only ever yield a `task_kind`;
+    `plan` is opt-in (set explicitly), never inferred.
 
 #### `ReplSession.run_meta(self, text: str) -> MetaResult`
 

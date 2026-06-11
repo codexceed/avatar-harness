@@ -20,7 +20,7 @@ Args:
         of a single concrete event type is accepted via the covariant `Sequence`).
 
 ```python
-ReplaySession(events: Sequence[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]) -> None
+ReplaySession(events: Sequence[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]) -> None
 ```
 
 #### `ReplaySession.cancel(self, reason: str = 'cancelled') -> None`
@@ -30,7 +30,7 @@ No-op control plane: a replay cannot be cancelled.
 Args:
     reason: Ignored — present to match the control surface.
 
-#### `ReplaySession.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+#### `ReplaySession.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
 
 Yield the recorded events in order, then end the stream.
 

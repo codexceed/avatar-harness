@@ -2,11 +2,15 @@
 title: avatar_harness.tools.edit
 ---
 
-Editing tool: apply_patch (§10, tier 1).
+Editing tools: apply_patch + write_file (§10, tier 1).
 
-The only mutating tool in the MVP. It hands a unified diff to the `Workspace`,
-which applies it atomically; a failed apply (stale context) comes back as a
+The mutating tools. `apply_patch` hands a unified diff to the `Workspace`, which
+applies it atomically; a failed apply (stale context) comes back as a
 model-correctable `ToolResult`, never an exception thrown at the loop (§10).
+`write_file` (ADR-0003 B) is the plain-content transport for the no-anchor case —
+file *creation* — where a unified diff is pure fragility; modification stays
+diff-anchored (an existing target is refused toward `apply_patch` unless
+`overwrite` is explicit).
 
 ## Classes
 ### `ApplyPatchInput`
@@ -22,3 +26,18 @@ ApplyPatchInput(*, diff: str) -> None
 | Field | Type | Required |
 | --- | --- | --- |
 | `diff` | `str` | yes |
+### `WriteFileInput`
+
+Input for `write_file`: create a file with full content (overwrite only if explicit).
+
+```python
+WriteFileInput(*, path: str, content: str, overwrite: bool = False) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `path` | `str` | yes |
+| `content` | `str` | yes |
+| `overwrite` | `bool` | no |

@@ -58,9 +58,9 @@ make install          # uv sync — installs deps + dev tools
 
 `uv` reads the committed `uv.lock`, so the environment is reproducible. `make install` is a thin wrapper over `uv sync` (the dev env includes the `openai` client).
 
-> **Embedding it as a library** (outside this repo's dev env): `openai` is an **optional extra**. Run `pip install avatar-harness[openai]` (or `uv add avatar-harness[openai]`) to use the default `OpenAIModelClient`, or install the base package and inject your own `ModelClient`. The core imports without `openai`; a `Harness` is constructible without an API key (credentials are needed only at inference).
+> **Embedding it as a library** (outside this repo's dev env): the package is **not yet published to PyPI** — install from source: from a clone, `pip install -e '.[openai]'`; or straight from GitHub, `pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'` (equivalently `uv add 'avatar-harness[openai] @ git+…'`; uses your git credentials while the repo is private). Always quote the extras — zsh glob-expands the brackets. `openai` is an **optional extra** for the default `OpenAIModelClient`; install the base package and inject your own `ModelClient` instead. The core imports without `openai`; a `Harness` is constructible without an API key (credentials are needed only at inference).
 
-> **Interactive cockpit:** the Textual TUI is a second optional extra — `pip install avatar-harness[textual]`. The core engine and SDK import without it; `import avatar_harness` never pulls in `textual`. Launch it with `avatar-harness --interactive` (see [Usage](#usage)): event-streamed transcript + status bar + input, approval/plan/diff modals, meta commands, `@path` grounding, the plan-mode flow (read-only plan → approve/revise → constrained edit), and conversational verification (`--auto` restores the strict gate). Durable crash-resume (Phase 3.3) is the remaining cockpit increment (see [`docs/adr/`](docs/adr)).
+> **Interactive cockpit:** the Textual TUI is a second optional extra — add `textual` to the extras when installing from source (e.g. `pip install -e '.[openai,textual]'` from a clone). The core engine and SDK import without it; `import avatar_harness` never pulls in `textual`. Launch it with `avatar-harness --interactive` (see [Usage](#usage)): event-streamed transcript + status bar + input, approval/plan/diff modals, meta commands, `@path` grounding, the plan-mode flow (read-only plan → approve/revise → constrained edit), and conversational verification (`--auto` restores the strict gate). Durable crash-resume (Phase 3.3) is the remaining cockpit increment (see [`docs/adr/`](docs/adr)).
 
 ## Configuration
 
@@ -106,7 +106,7 @@ It prints a timestamped event trajectory as it works (`[model_decision] … [too
 uv run avatar-harness --interactive
 ```
 
-A status bar (mode · phase · outcome), a streaming transcript, and an input box. Type goals across turns; the agent reads/edits/runs/verifies with you in the loop. Slash **meta commands** are handled locally (never hit the model): `/help`, `/mode <edit|investigate|test_only|plan>`, `/plan`, `/diff`, `/state`, `/permissions`, `/quit`. Reference a file with `@path/to/file` to ground a goal in it. `apply_patch`/`run_command` prompt for approval (`[y]` once · `[a]` always for this session · `[d]` deny); plan mode proposes a read-only plan you approve or revise before any edit. By default the cockpit is **conversational** — verification always runs and is reported, but the reply isn't blocked on it (you're the terminal authority); pass `--auto` to keep the strict gate. The whole sitting is journaled **write-ahead** to `events/<session_id>.jsonl` (or `--log PATH`), the same layout as a batch run — every event hits disk *before* the TUI renders it, so even a crashed cockpit session leaves a complete, replayable record.
+A status bar (mode · phase · outcome), a streaming transcript, and an input box. Type goals across turns; the agent reads/edits/runs/verifies with you in the loop. Slash **meta commands** are handled locally (never hit the model): `/help`, `/mode <edit|investigate|test_only|plan>`, `/plan`, `/diff`, `/state`, `/permissions`, `/quit`. Reference a file with `@path/to/file` to ground a goal in it. `run_command` (and any sensitive-path call) prompts for approval (`[y]` once · `[a]` always for this session · `[d]` deny); `apply_patch` is tier-1 — auto-allowed once its target paths validate inside the workspace, with the verifier judging the resulting diff; plan mode proposes a read-only plan you approve or revise before any edit. By default the cockpit is **conversational** — verification always runs and is reported, but the reply isn't blocked on it (you're the terminal authority); pass `--auto` to keep the strict gate. The whole sitting is journaled **write-ahead** to `events/<session_id>.jsonl` (or `--log PATH`), the same layout as a batch run — every event hits disk *before* the TUI renders it, so even a crashed cockpit session leaves a complete, replayable record.
 
 **Flags:**
 
@@ -172,6 +172,17 @@ asyncio.run(main())
 ```
 
 **Public exports** (`avatar_harness.__all__`): the core entry points (`Harness`, `HarnessConfig`, `TaskState`, `Workspace`, `RunDeps`), decision types, tool contracts, the **two-plane surface** (`Session`, `EventBus`, `JsonlEventJournal`, `EventSink`, `ApprovalController`, `ApprovalGrant`), the **multi-turn session scope** (`ReplSession`, `SessionState`, `Turn`), and the typed lifecycle events (`HarnessEvent` + `ApprovalRequested`, `ToolStart`/`ToolEnd`, `PhaseChanged`, …). Build on these rather than deep-importing internals.
+
+## Documentation
+
+The docs site under [`docs/`](docs/) (Mintlify; `make docs-serve` previews it locally) carries the user-facing documentation:
+
+- **[Quickstart](docs/guides/quickstart.mdx)** — install → configure → a verifier-checked answer, CLI and library.
+- **[SDK guide](docs/guides/sdk.mdx)** — the curated surface: the `Harness` facade, the two-plane `Session` contract, the typed-event catalog, multi-turn `ReplSession`, and every `AVATAR_*` config knob.
+- **[Tutorial: build a terminal agent](docs/tutorials/terminal-agent.mdx)** — a streaming, approval-answering agent of your own in ~90 lines.
+- **[API reference](docs/api-reference)** — generated from docstrings (always in sync with the source).
+
+Design-depth docs live at the repo root: [`ARCHITECTURE.md`](ARCHITECTURE.md) (system map), [`HARNESS_DESIGN.md`](HARNESS_DESIGN.md) (canonical spec), [`docs/adr/`](docs/adr) (decision records).
 
 ## Development
 

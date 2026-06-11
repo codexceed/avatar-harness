@@ -1,0 +1,224 @@
+---
+title: SDK guide
+description: The curated public surface — what to import, which seam to build on, and how the two planes relate.
+---
+
+Everything documented here is exported from `avatar_harness.__all__` — the
+stable surface to build against. Deep imports of internal modules may break
+without notice; the generated **API reference** covers internals page by page.
+
+## The SDK map
+
+The `__all__` list is grouped by role, and the grouping *is* the map:
+
+| Group | Exports | Build on it when… |
+| --- | --- | --- |
+| Core entry points & state | `Harness`, `HarnessConfig`, `TaskState`, `RunDeps`, `Workspace` | you want to run tasks (everyone starts here). |
+| Model decisions | `ModelClient`, `ModelDecision`, `ToolCall`, `FinalAnswer`, `AskUser` | you're swapping the model provider or scripting a fake model for tests. |
+| Tools | `ToolDefinition`, `ToolRegistry`, `ToolResult` | you're adding or replacing tools. |
+| Two-plane async surface | `Session`, `EventBus`, `JsonlEventJournal`, `EventSink`, `ApprovalController`, `ApprovalGrant` | you're building a UI, a supervisor, or an autonomous wrapper over one run. |
+| Multi-turn session scope | `ReplSession`, `SessionState`, `Turn` | you're building a conversation (many goals, shared history and grants). |
+| Typed lifecycle events | `HarnessEvent`, `AgentStart` … `CancellationObserved`, `parse_event`, `dump_event`, `load_events` | you're rendering, journaling, or replaying a run. |
+
+## The `Harness` facade
+
+`Harness` assembles a run's collaborators; every one is overridable via a
+constructor kwarg (model, tools, verifier, policy, context builder, emitter) —
+swap a seam, keep the rest:
+
+```python
+from avatar_harness import Harness
+
+harness = Harness.from_env()    # HarnessConfig() from AVATAR_* / .env
+```
+
+Three entry points, one engine:
+
+| Call | Returns | Use when |
+| --- | --- | --- |
+| `harness.run(task, *, task_kind, allow_dirty)` | terminal `TaskState` | batch / scripting — run to completion, synchronously. |
+| `await harness.arun(...)` | terminal `TaskState` | you're already on an event loop and only need the result. |
+| `harness.session(task, *, task_kind, allow_dirty, journal)` | a not-yet-started `Session` | you want the event stream and the approval/cancel controls. |
+
+`Harness.from_env()` constructs without an API key — credentials are needed
+only when the model is first called, so a fully wired harness (e.g. with a fake
+model, in tests) never touches the network.
+
+## The two-plane `Session`
+
+The interactive contract, and the load-bearing boundary of the whole SDK
+(design §13): **observation flows out, control flows in, and the two never mix.**
+
+```python
+import asyncio
+from avatar_harness import ApprovalRequested, Harness
+
+harness = Harness.from_env()
+session = harness.session("fix the failing auth test", task_kind="edit")
+
+run_task = asyncio.create_task(session.run())     # drive the engine
+async for event in session.events():              # observation plane (out)
+    render(event)
+    if isinstance(event, ApprovalRequested):      # control plane (in)
+        await session.resolve_approval(event.approval_id, allow=True)
+state = await run_task
+```
+
+**Observation — `session.events()`.** An async stream of typed `HarnessEvent`s.
+It subscribes *eagerly* (at call time, not first iteration), so a consumer
+created before `run()` misses nothing. Each call yields a fresh, independent
+stream — any number of observers can watch one run, and a slow or broken
+observer can never block the loop or its peers. The stream ends after
+`agent_end`.
+
+**Control — two methods, nothing else.**
+
+- `await session.resolve_approval(approval_id, *, allow, remember=False)` —
+  answer a pending `ApprovalRequested`. With `allow=True, remember=True` (the
+  "always" choice) the session stores an `ApprovalGrant` scoped to the call's
+  program (`argv[0]`), so later calls sharing that program auto-allow — observable
+  as `ApprovalResolved(via="grant")`, never silent. Grants are session-scoped,
+  never global, and never cover tier-4 (destructive/external) actions.
+- `await session.cancel(reason)` — trip the cancellation token. The loop
+  observes it at the next checkpoint, records the interruption as feedback, and
+  settles to a terminal state; any in-flight approval is denied so a gated run
+  can't hang.
+
+An event can *announce* that approval is needed; only the control method
+*decides* it. Nothing you do on the event stream can alter the run.
+
+<Note>
+  Approval prompts fire for `ask`-gated calls: tier-3 tools (`run_command`) and
+  sensitive-path denylist hits. `apply_patch` is tier 1 — it auto-allows once
+  its target paths validate inside the workspace, and the verifier judges the
+  resulting diff.
+</Note>
+
+**Journaling.** Pass `journal=JsonlEventJournal(path)` to `harness.session(...)`
+and every event is written **write-ahead** — committed to disk before any
+subscriber sees it — so even a crashed consumer leaves a complete, replayable
+record. `load_events(path)` reloads the file as typed events.
+
+## The event catalog
+
+Every event extends `EventBase` (`schema_version`, bus-assigned monotonic
+`event_id`, `session_id`, `task_id`, `turn`, `ts`) and is exhaustively matchable
+on its `type` discriminator:
+
+| Event | Key payload | Meaning |
+| --- | --- | --- |
+| `AgentStart` / `AgentEnd` | `goal` / `outcome` | A run began / settled (the stream's end). |
+| `TurnStart` / `TurnEnd` | `iteration` | One model/tool iteration. |
+| `PhaseChanged` | `old`, `new` | The control phase advanced (`investigating → editing → verifying`). |
+| `ModelDecisionEvent` | `thought`, `action_type`, `action` | The model chose this turn's action. |
+| `ModelUpdate` | `delta`, `channel="display"` | A streamed display delta (droppable under backpressure). |
+| `ToolStart` / `ToolEnd` | `tool`, `input` / `success`, `summary`, `content` | A tool call executed. |
+| `ApprovalRequested` | `approval_id`, `tool`, `reason`, `input` | A gated call awaits a human — announce only. |
+| `ApprovalResolved` | `approval_id`, `allowed`, `via` | The decision (`via="human"` or `"grant"`). |
+| `VerificationStart` / `VerificationEnd` | — / `passed`, `summary` | The harness-owned verifier ran. |
+| `CancellationObserved` | `reason` | The loop saw a tripped token and is stopping. |
+
+Two further events ride the stream and the journal but are not yet exported in
+`__all__` (deep-import from `avatar_harness.event_types` for now): `ModelUsage`
+(`prompt_tokens`/`completion_tokens` per turn) and `DecisionError` (a malformed
+model reply, with a capped raw excerpt).
+
+The union is **closed and versioned**: `parse_event` rejects unknown types, and
+the journal round-trips every event verbatim.
+
+## Multi-turn conversations — `ReplSession`
+
+`ReplSession` is the scope *above* one task: conversation history, the sequence
+of per-goal `TaskState`s, session-scoped grants, and the current mode. Each goal
+runs as a fresh task through the same single-task `Session` — batch is just the
+degenerate one-submit case.
+
+```python
+from avatar_harness import Harness, ReplSession
+
+repl = ReplSession(Harness.from_env())
+state = await repl.submit("how does the permission gate work?")   # goal 1
+state = await repl.submit("now add a tier for network access")    # goal 2 — sees goal 1's history
+```
+
+What it gives you over raw sessions:
+
+- **History seeding** — prior turns become explicit evidence on the next task
+  (structured seeding, not transcript bleed).
+- **Grant carry-over** — an "always allow" granted in one goal persists to later
+  goals (shared by reference with each per-goal `Session`).
+- **Mode routing** — each goal's `task_kind` resolves as explicit `/mode`
+  override → LLM classifier (when `AVATAR_CLASSIFIER_MODEL` is set) → word
+  heuristic. The verdict is visible (`repl.last_mode_source`) and always
+  correctable — never silent control.
+- **`@path` grounding** — `@src/foo.py` in a goal seeds that file as initial
+  evidence, read through the workspace so the sensitive-path denylist applies.
+- **Meta commands** — `repl.is_meta(text)` / `repl.run_meta(text)` handle
+  `/help`, `/quit`, `/state`, `/mode`, `/plan`, `/diff`, `/permissions` locally;
+  they never reach the model.
+- **Plan mode** — `repl.submit_plan(prompt, decide)` drives read-only plan →
+  approve/revise → build, with the approved plan seeding the edit task as a
+  constraint.
+- **Verification authority** — the REPL default is *conversational*: the
+  verifier always runs and reports, but the reply is delivered without the
+  repair gate; the human is the terminal authority. `ReplSession(harness,
+  auto=True)` restores the strict gate.
+
+The bundled Textual cockpit (`avatar-harness --interactive`) is exactly this
+surface rendered full-screen — nothing it does is unavailable to your own UI.
+
+## Configuration
+
+All fields of `HarnessConfig`, env-overridable with the `AVATAR_` prefix (or a
+local `.env`):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AVATAR_API_KEY` | — | Endpoint key; falls back to `OPENAI_API_KEY`. |
+| `AVATAR_MODEL` | `openai/gpt-4o-mini` | Model name, as your endpoint serves it. |
+| `AVATAR_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint. |
+| `AVATAR_WORKSPACE_ROOT` | `.` | The repo the agent operates on. |
+| `AVATAR_MAX_ITERATIONS` | `50` | Iteration budget → `incomplete`. |
+| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `600` | Whole-run timeout → `incomplete`. |
+| `AVATAR_MAX_CONSECUTIVE_FAILURES` | `5` | Thrash guard (tool errors in a row) → `incomplete`. |
+| `AVATAR_MAX_REPAIR_ATTEMPTS` | `3` | Verification rejections in a row → `failed`. |
+| `AVATAR_MAX_CONTEXT_TOKENS` | `100000` | Hard bound on the per-turn context packet. |
+| `AVATAR_TEST_COMMAND` | `pytest -q` | The verifier runs this itself — never model-mediated. Empty disables. |
+| `AVATAR_LINT_COMMAND` | `ruff check` | Verifier-owned lint/type command. Empty disables. |
+| `AVATAR_COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout. |
+| `AVATAR_SENSITIVE_PATH_GLOBS` | built-in set | Path denylist (`.env`, `*.pem`, `.ssh`, …) refused for read/patch/search. A JSON list; *replaces* the defaults. |
+| `AVATAR_NATIVE_TOOL_CALLS` | `true` | Decisions ride provider function-calling; `false` forces the legacy JSON protocol. |
+| `AVATAR_CONTEXT_MAX_DETAIL_CHARS` | `16000` | Per-item cap on verbatim evidence detail in context. |
+| `AVATAR_CONTEXT_DETAIL_CHAR_BUDGET` | `48000` | Total verbatim-detail budget per packet. |
+| `AVATAR_CLASSIFIER_MODEL` | `openai/gpt-5-nano` | The REPL's mode router (one cheap call per goal). Empty disables → heuristic only. |
+| `AVATAR_INTERACTIVE` | `true` | Whether `ask_user` may prompt; when off, an unanswered question yields `blocked`. |
+
+## Testing without a network
+
+`ModelClient` is a one-method protocol, so a scripted fake makes any flow
+deterministic and offline:
+
+```python
+from avatar_harness import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
+
+class ScriptedModel(ModelClient):
+    def __init__(self, decisions):
+        self._decisions, self._i = decisions, 0
+    def decide(self, context):
+        d = self._decisions[min(self._i, len(self._decisions) - 1)]
+        self._i += 1
+        return d
+
+harness = Harness(
+    config=HarnessConfig(workspace_root="."),
+    model=ScriptedModel([
+        ModelDecision(thought_summary="read it",
+                      action=ToolCall(name="read_file", input={"path": "README.md"})),
+        ModelDecision(thought_summary="answer",
+                      action=FinalAnswer(answer="Per README.md (line 1), this repo is …")),
+    ]),
+)
+state = harness.run("what does this repo do?")   # runs the real loop, verifier and all
+```
+
+This is exactly how the project's own test suite drives the engine.

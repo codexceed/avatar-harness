@@ -144,6 +144,33 @@ CancellationObserved(*, schema_version: Literal[1] = 1, event_id: int = 0, sessi
 | `ts` | `datetime` | no |
 | `type` | `Literal['cancellation_observed']` | no |
 | `reason` | `str` | no |
+### `DecisionError`
+
+A malformed model reply — either recovered by an in-client retry or a lost turn (§6).
+
+Closes the observability gap where a failed decision attempt (e.g. a truncated
+`apply_patch` emission) left no trace: every malformed attempt is journaled with
+its error and a capped excerpt of the raw reply, so a struggling run is legible
+live and debuggable after the fact (invariant #5).
+
+```python
+DecisionError(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['decision_error'] = 'decision_error', error: str = '', raw: str = '', recovered: bool = True) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['decision_error']` | no |
+| `error` | `str` | no |
+| `raw` | `str` | no |
+| `recovered` | `bool` | no |
 ### `EventBase`
 
 Fields common to every lifecycle event — the journal's ordering/versioning keys.
@@ -240,6 +267,30 @@ ModelUpdate(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: st
 | `type` | `Literal['model_update']` | no |
 | `delta` | `str` | no |
 | `channel` | `Literal['display']` | no |
+### `ModelUsage`
+
+Provider-reported token usage for one turn (in-client retries summed).
+
+The journal's per-turn cost record — the eval harness (ADR-0004) sums these for
+tokens/$ per solved task; without them cost is unmeasurable (invariant #5).
+
+```python
+ModelUsage(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['model_usage'] = 'model_usage', prompt_tokens: int = 0, completion_tokens: int = 0) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['model_usage']` | no |
+| `prompt_tokens` | `int` | no |
+| `completion_tokens` | `int` | no |
 ### `PhaseChanged`
 
 The control phase advanced from `old` to `new` (§7).
@@ -388,7 +439,7 @@ VerificationStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_
 | `type` | `Literal['verification_start']` | no |
 
 ## Functions
-### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
+### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
 
 Serialize an event to one JSON line for the journal.
 
@@ -397,7 +448,7 @@ Args:
 
 Returns:
     Its compact JSON representation.
-### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
 
 Reload a JSONL journal back into typed events, in file order.
 
@@ -406,7 +457,7 @@ Args:
 
 Returns:
     The events, one per non-blank line, validated through the union.
-### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
+### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
 
 Validate a dict / JSON string into the right `HarnessEvent` variant.
 

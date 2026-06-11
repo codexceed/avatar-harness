@@ -1,0 +1,43 @@
+---
+title: avatar_harness.intent
+---
+
+ModeClassifier — LLM mode routing, visible and correctable (revises ADR-0002 D3).
+
+The first-word heuristic misrouted a conversational follow-up ("Now make the UI
+richer…" → `investigate`) and the run burned its whole budget structurally unable to
+edit (dogfood `events/04849a5a…jsonl`). D3's objection to a classifier was *hiddenness*,
+not LLM-ness — so this one is: a one-shot, schema-constrained call on a cheap dedicated
+model (`AVATAR_CLASSIFIER_MODEL`), whose verdict the cockpit displays and `/mode`
+overrides. Any failure returns `None` and the caller falls back to the heuristic —
+classification can degrade, never block.
+
+## Classes
+### `ModeClassifier`
+
+Classifies a goal into a `task_kind` with one cheap, schema-constrained call.
+
+Args:
+    config: Harness config; `classifier_model` names the (cheap) model to use and
+        `base_url`/`api_key` are shared with the main endpoint.
+    client: An injected OpenAI-compatible client, or `None` to build one lazily on
+        first use (mirrors `OpenAIModelClient` — credentials are call-time only).
+
+```python
+ModeClassifier(config: HarnessConfig, client: Any = None) -> None
+```
+
+#### `ModeClassifier.classify(self, prompt: str, history: Sequence[str] = ()) -> str | None`
+
+Classify `prompt` (in conversation context) into a task kind, or `None`.
+
+`None` means "no usable verdict" — endpoint error, junk reply, unknown kind —
+and the caller falls back to the heuristic. The classifier can degrade the
+routing quality, never the goal itself.
+
+Args:
+    prompt: The user's new request.
+    history: Recent conversation lines (newest last) for context.
+
+Returns:
+    One of `edit`/`investigate`/`test_only`, or `None` when unusable.

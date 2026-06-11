@@ -91,7 +91,7 @@ how it ended), the bounding counters, and the accumulated evidence/decisions
 the context builder draws on. The model's message history is derived from this.
 
 ```python
-TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
+TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
 ```
 
 **Fields**
@@ -107,6 +107,8 @@ TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <fact
 | `iterations` | `int` | no |
 | `consecutive_failures` | `int` | no |
 | `repair_failures` | `int` | no |
+| `prompt_tokens` | `int` | no |
+| `completion_tokens` | `int` | no |
 | `files_read` | `set[str]` | no |
 | `files_modified` | `set[str]` | no |
 | `commands_run` | `list[CommandRecord]` | no |
