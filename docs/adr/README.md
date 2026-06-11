@@ -12,6 +12,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0004](0004-internal-eval-harness.md) | Internal eval harness: dogfood incidents as a scored regression suite | Proposed |
 | [0005](0005-transient-edits-in-investigate.md) | Transient edits in `investigate` tasks (net-zero-diff relaxation) | Proposed |
 | [0006](0006-git-independent-project-scope.md) | Git-independent project scope for file discovery | Proposed |
+| [0007](0007-dynamic-verification-plan-resolution.md) | Dynamic, no-dependency verification-plan resolution | Proposed |
 
 ## Conventions
 
