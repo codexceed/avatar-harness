@@ -11,6 +11,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0003](0003-file-creation-transport.md) | A robust transport for file creation (and large mutations) | Accepted (A + B implemented) |
 | [0004](0004-internal-eval-harness.md) | Internal eval harness: dogfood incidents as a scored regression suite | Proposed |
 | [0005](0005-transient-edits-in-investigate.md) | Transient edits in `investigate` tasks (net-zero-diff relaxation) | Proposed |
+| [0006](0006-git-independent-project-scope.md) | Git-independent project scope for file discovery | Proposed |
 
 ## Conventions
 
