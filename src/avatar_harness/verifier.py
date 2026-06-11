@@ -1,36 +1,44 @@
 """Verifier — proves completion via external evidence, never self-certification (§12).
 
 It runs **no model**: every check is a predicate over structured `TaskState` plus
-the workspace. For `edit`/`test_only` the *external signal* is a command the
-verifier runs **itself** (`config.test_command` / `config.lint_command`) — not the
-model's `run_tests` output. The gate is harness-owned, so the model can never
-self-certify (§5). The three pass criteria (§12): no required check fails; no
-required check is skipped for a disallowed reason; at least one positive signal.
+the workspace. For `edit`/`test_only` the *external signal* is the task's frozen
+**verification plan** (ADR-0007) — commands the harness resolved (config override →
+deterministic detection → cited LLM proposal) and froze onto `TaskState` before
+editing began. The verifier is a **pure executor** over that plan: zero language
+knowledge, it runs each frozen command itself via `ws.run` and reads the real exit
+code. The gate is harness-owned, so the model can never self-certify (§5). The
+three pass criteria (§12): no required check fails; no required check is skipped
+for a disallowed reason; at least one positive signal.
+
+When no plan was frozen (a direct library call), the config override tier alone
+is used as the plan — never a detected or invented default.
 """
 
 from avatar_harness.config import HarnessConfig
-from avatar_harness.state import CheckResult, TaskState, VerifierResult
+from avatar_harness.planner import config_override_checks
+from avatar_harness.state import CheckResult, PlannedCheck, TaskState, VerifierResult
 from avatar_harness.workspace import Workspace
 
 # Skips the gate tolerates (§12 criterion 2): discovered absence, not evasion.
-_ALLOWED_SKIPS = frozenset(
-    {
-        "no test target exists in this repo",
-        "no lint command configured",
-    }
-)
+_ALLOWED_SKIPS = frozenset({"no test target exists in this repo"})
 
 # Likely secrets / placeholders that must never land in a diff (always-on guard, §12).
 _SECRET_MARKERS = ("AKIA", "-----BEGIN", "PLACEHOLDER", "<placeholder>")
 
 _NO_TESTS_EXIT = 5  # pytest convention: no tests were collected.
 
+# The legible no-contract failure (ADR-0007): never an invented check, never vacuous.
+_NO_CONTRACT_EVIDENCE = (
+    "no verification contract discovered — declare one via AVATAR_TEST_COMMAND / AVATAR_LINT_COMMAND"
+)
+
 
 class Verifier:
     """Disposes of a completion proposal via external evidence, never a model (§12).
 
     Args:
-        config: The harness config supplying the `test`/`lint` commands; `None` leaves both empty.
+        config: The harness config; its `test_command`/`lint_command` override tier
+            doubles as the plan when no frozen plan exists. `None` leaves both empty.
     """
 
     def __init__(self, config: HarnessConfig | None = None) -> None:
@@ -104,19 +112,23 @@ class Verifier:
 
     def _verify_edit(self, state: TaskState, ws: Workspace) -> VerifierResult:
         diff = ws.diff()
+        plan = self._plan(state)
+        command_checks = self._plan_checks(plan, ws)
         checks = [
             self._diff_present(diff, state),
             self._no_secrets(diff),
-            self._command_check("tests", self._test_command(), ws, no_target_allowed=True),
-            self._command_check("lint", self._lint_command(), ws, no_target_allowed=False),
+            *command_checks,
         ]
-        # Positive external signal: a passing test, or (absent tests) clean lint over the diff.
-        return self._dispose(checks, positive={"tests", "lint"})
+        # Positive external signal: any frozen plan command passing — a targeted
+        # test, or (when the repo declares none) clean lint over the diff (§12).
+        return self._dispose(checks, positive={c.name for c in plan})
 
     # --- test_only --------------------------------------------------------
 
     def _verify_test_only(self, state: TaskState, ws: Workspace) -> VerifierResult:
         changed_tests = sorted(p for p in state.files_modified if _is_test_path(p))
+        plan = [c for c in self._plan(state) if c.kind == "test"]
+        command_checks = self._plan_checks(plan, ws, no_target_allowed=False)
         checks = [
             CheckResult(
                 name="tests_changed",
@@ -124,9 +136,58 @@ class Verifier:
                 status="pass" if changed_tests else "fail",
                 evidence=f"test files changed={changed_tests}",
             ),
-            self._command_check("tests", self._test_command(), ws, no_target_allowed=False),
+            *command_checks,
         ]
-        return self._dispose(checks, positive={"tests"})
+        return self._dispose(checks, positive={c.name for c in plan})
+
+    # --- the frozen plan (ADR-0007) ----------------------------------------
+
+    def _plan(self, state: TaskState) -> list[PlannedCheck]:
+        """The plan to execute: the frozen one, else the config override tier alone.
+
+        Once frozen, the plan IS the rubric — config had its say at resolution time
+        and does not re-enter. The fallback covers direct library callers who never
+        ran the planner; it stays language-free (overrides only, no detection).
+
+        Args:
+            state: The task state carrying the (possibly) frozen plan.
+
+        Returns:
+            The checks to execute (possibly empty: no contract).
+        """
+        if state.verification_plan is not None:
+            return state.verification_plan
+        return config_override_checks(self.config)
+
+    def _plan_checks(
+        self, plan: list[PlannedCheck], ws: Workspace, *, no_target_allowed: bool = True
+    ) -> list[CheckResult]:
+        """Execute every plan command; an empty plan is a legible contract failure.
+
+        Args:
+            plan: The frozen checks to run.
+            ws: The run-scoped workspace.
+            no_target_allowed: Whether a test command's no-tests-collected exit is a
+                tolerated skip (`True` for edit; `False` for test_only, where the new
+                tests must actually run).
+
+        Returns:
+            One `CheckResult` per plan entry, or the single `verification_contract`
+            failure when the plan is empty.
+        """
+        if not plan:
+            return [
+                CheckResult(
+                    name="verification_contract",
+                    kind="required",
+                    status="fail",
+                    evidence=_NO_CONTRACT_EVIDENCE,
+                )
+            ]
+        return [
+            self._command_check(check, ws, no_target_allowed=no_target_allowed and check.kind == "test")
+            for check in plan
+        ]
 
     # --- shared check builders -------------------------------------------
 
@@ -148,42 +209,51 @@ class Verifier:
             evidence=f"markers={found}" if found else "no secret/placeholder markers in diff",
         )
 
-    def _command_check(
-        self, name: str, command: str, ws: Workspace, *, no_target_allowed: bool
-    ) -> CheckResult:
-        """Run a verification command and classify its result into a `CheckResult`.
+    def _command_check(self, check: PlannedCheck, ws: Workspace, *, no_target_allowed: bool) -> CheckResult:
+        """Run one frozen verification command and classify its result (§5, ADR-0007).
 
-        The verifier runs this ITSELF (§5): the command's exit code is the external
-        signal. An empty command is a skip — allowed for lint, disallowed for tests.
+        The verifier runs this ITSELF: the command's real exit code is the external
+        signal, and the check's provenance rides in the evidence so the rubric is
+        auditable. A missing binary surfaces as a failed check (exit 127 from the
+        workspace), never a crash.
 
         Args:
-            name: The check name (`tests` or `lint`).
-            command: The command to run; empty means skip.
+            check: The frozen check to execute.
             ws: The run-scoped workspace.
             no_target_allowed: Whether a `_NO_TESTS_EXIT` exit is a tolerated skip.
 
         Returns:
             The classified `CheckResult`.
         """
-        if not command:
-            reason = "no lint command configured" if name == "lint" else "no test command configured"
-            return CheckResult(name=name, kind="required", status="skip", evidence=reason, skip_reason=reason)
         timeout = self.config.command_timeout_seconds if self.config else None
-        out = ws.run(command, timeout=timeout)
+        out = ws.run(check.command, timeout=timeout)
+        tag = f"[{check.provenance}]"
         if out.timed_out:
-            return CheckResult(name=name, kind="required", status="fail", evidence=f"timed out: {command!r}")
+            return CheckResult(
+                name=check.name,
+                kind="required",
+                status="fail",
+                evidence=f"timed out: {check.command!r} {tag}",
+            )
         if out.exit_code == 0:
-            return CheckResult(name=name, kind="required", status="pass", evidence=f"{command!r} exit=0")
+            return CheckResult(
+                name=check.name, kind="required", status="pass", evidence=f"{check.command!r} exit=0 {tag}"
+            )
         if no_target_allowed and out.exit_code == _NO_TESTS_EXIT:
             return CheckResult(
-                name=name,
+                name=check.name,
                 kind="required",
                 status="skip",
-                evidence=f"{command!r} exit={_NO_TESTS_EXIT}",
+                evidence=f"{check.command!r} exit={_NO_TESTS_EXIT} {tag}",
                 skip_reason="no test target exists in this repo",
             )
+        detail = (out.stderr or out.stdout).strip().splitlines()
+        excerpt = f": {detail[0]}" if detail else ""
         return CheckResult(
-            name=name, kind="required", status="fail", evidence=f"{command!r} exit={out.exit_code}"
+            name=check.name,
+            kind="required",
+            status="fail",
+            evidence=f"{check.command!r} exit={out.exit_code} {tag}{excerpt}",
         )
 
     # --- the gate (§12 pass criteria) ------------------------------------
@@ -199,6 +269,8 @@ class Verifier:
         passed = not failed and not bad_skips and has_positive
         if passed:
             summary = "verification passed"
+        elif "verification_contract" in failed:
+            summary = f"verification failed: {_NO_CONTRACT_EVIDENCE}"
         elif failed:
             summary = f"verification failed: {failed}"
         elif bad_skips:
@@ -211,12 +283,6 @@ class Verifier:
             checks=checks,
             recommended_next_action=None if passed else _recommend(failed, bad_skips, has_positive),
         )
-
-    def _test_command(self) -> str:
-        return self.config.test_command if self.config else ""
-
-    def _lint_command(self) -> str:
-        return self.config.lint_command if self.config else ""
 
 
 def _is_test_path(path: str) -> bool:
@@ -258,6 +324,9 @@ _FAIL_HINTS = {
     ),
     "tests_changed": "a test_only task must add or change tests; add the missing tests",
     "no_secrets": "remove the hard-coded secret/placeholder the diff introduces",
+    "verification_contract": (
+        "no verification contract discovered — declare one via AVATAR_TEST_COMMAND / AVATAR_LINT_COMMAND"
+    ),
     "tests": "the tests fail; fix the change so the test command passes",
     "lint": "lint/type checks fail; clean up the diff",
 }

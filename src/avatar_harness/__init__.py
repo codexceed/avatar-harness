@@ -46,6 +46,7 @@ from avatar_harness.event_types import (
     TurnEnd,
     TurnStart,
     VerificationEnd,
+    VerificationPlanFrozen,
     VerificationStart,
     dump_event,
     load_events,
@@ -60,9 +61,10 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
+from avatar_harness.planner import VerificationPlanner
 from avatar_harness.session import ApprovalGrant, Session
 from avatar_harness.session_state import ReplSession, SessionState, Turn
-from avatar_harness.state import TaskState
+from avatar_harness.state import PlannedCheck, TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.workspace import Workspace
 
@@ -75,6 +77,9 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "TaskState",
     "RunDeps",
     "Workspace",
+    # --- verification-plan resolution (ADR-0007) ---
+    "VerificationPlanner",
+    "PlannedCheck",
     # --- model decisions ---
     "ModelClient",
     "ModelDecision",
@@ -110,6 +115,7 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "ToolEnd",
     "ApprovalRequested",
     "ApprovalResolved",
+    "VerificationPlanFrozen",
     "VerificationStart",
     "VerificationEnd",
     "CancellationObserved",

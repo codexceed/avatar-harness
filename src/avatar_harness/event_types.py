@@ -15,6 +15,8 @@ from typing import Annotated, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from avatar_harness.state import PlannedCheck
+
 SCHEMA_VERSION = 1
 
 
@@ -156,6 +158,19 @@ class DecisionError(EventBase):
     recovered: bool = True  # True: a later in-client attempt parsed; False: the turn was lost
 
 
+class VerificationPlanFrozen(EventBase):
+    """The per-session verification plan was resolved and frozen (ADR-0007).
+
+    Journaled at the investigating → editing boundary, before any verification:
+    each check carries its command and provenance, so every run's rubric — and
+    where each check came from — is auditable. An empty `checks` records that
+    nothing was discovered (the verifier will fail legibly).
+    """
+
+    type: Literal["verification_plan_frozen"] = "verification_plan_frozen"
+    checks: list[PlannedCheck] = Field(default_factory=list)
+
+
 class VerificationStart(EventBase):
     """The harness-owned verifier has begun (§12)."""
 
@@ -191,6 +206,7 @@ HarnessEvent = Annotated[
     | ApprovalResolved
     | DecisionError
     | ModelUsage
+    | VerificationPlanFrozen
     | VerificationStart
     | VerificationEnd
     | CancellationObserved,

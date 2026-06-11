@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.event_types import VerificationPlanFrozen, VerificationStart
 from avatar_harness.events import Emitter
 from avatar_harness.model_client import (
     AskUser,
@@ -557,8 +558,6 @@ def test_runner_freezes_detected_plan_at_editing_transition(git_repo):
 
 def test_runner_journals_frozen_plan_as_typed_event(git_repo):
     # The frozen plan is journaled BEFORE verification — every run's rubric is auditable.
-    from avatar_harness.event_types import VerificationPlanFrozen, VerificationStart
-
     _commit_makefile(git_repo)
     config = HarnessConfig(test_command="", lint_command="")
     deps = RunDeps(workspace=Workspace(git_repo), config=config, cancellation=CancellationToken())

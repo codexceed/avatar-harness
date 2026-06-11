@@ -30,6 +30,7 @@ from avatar_harness.event_types import (
     TurnEnd,
     TurnStart,
     VerificationEnd,
+    VerificationPlanFrozen,
     VerificationStart,
 )
 from avatar_harness.events import Emitter
@@ -42,6 +43,7 @@ from avatar_harness.model_client import (
     ToolCall,
 )
 from avatar_harness.permission import PermissionPolicy
+from avatar_harness.planner import VerificationPlanner
 from avatar_harness.state import CommandRecord, DecisionRecord, TaskState
 from avatar_harness.tools.base import (
     ToolDefinition,
@@ -90,6 +92,8 @@ class AgentRunner:
         emitter: Observation-only event emitter (§13).
         config: Budgets and harness settings.
         policy: The before-tool-call control gate (§11); defaults to the standard tier policy.
+        planner: Resolves the per-session verification plan (ADR-0007); defaults to a
+            `VerificationPlanner(config)`.
         event_sink: Optional typed-event sink (a `Session`); absent on the batch/sync path.
         approval_controller: Optional awaited gate for tier-3 `ask` calls (a `Session`).
         conversational: Verification authority (§23.5). `False` (default) is the strict §12
@@ -107,6 +111,7 @@ class AgentRunner:
         emitter: Emitter,
         config: HarnessConfig,
         policy: PermissionPolicy | None = None,
+        planner: VerificationPlanner | None = None,
         event_sink: EventSink | None = None,
         approval_controller: ApprovalController | None = None,
         conversational: bool = False,
@@ -125,6 +130,10 @@ class AgentRunner:
         # The before-tool-call control gate (§11); defaults to the standard tier policy,
         # threaded with the configured sensitive-path denylist (§11, Phase 2.5).
         self.policy = policy or PermissionPolicy(config.sensitive_path_globs)
+        # Resolves the per-session verification plan (ADR-0007): config override →
+        # deterministic detection → cited LLM proposal. The runner freezes the result
+        # onto TaskState at the investigating → editing boundary.
+        self.planner = planner or VerificationPlanner(config)
         # Phase 3.0 two-plane wiring (both optional; absent on the batch/sync path):
         # `event_sink` receives typed `HarnessEvent`s; `approval_controller` is the
         # awaited gate for tier-3 `ask` calls. A `Session` supplies both.
@@ -341,6 +350,30 @@ class AgentRunner:
         self.emitter.emit("phase_changed", old=old, new=new, task_id=state.task_id)
         self._publish(PhaseChanged(task_id=state.task_id, old=old, new=new))
 
+    def _freeze_plan(self, state: TaskState, ws: Workspace) -> None:
+        """Resolve and freeze the verification plan at the phase boundary (ADR-0007).
+
+        Idempotent and runner-owned: resolution happens once, during `investigating`,
+        and the result freezes onto `TaskState` before editing begins — the freeze is
+        the authority transfer away from the model (it may pick among the frozen
+        checks, never author one). The frozen plan is journaled as a typed event so
+        every run's rubric is auditable. `investigate` tasks are command-free (§12)
+        and never freeze a plan.
+
+        Args:
+            state: The task state the plan freezes onto.
+            ws: The run-scoped workspace whose artifacts the planner reads.
+        """
+        if state.verification_plan is not None or state.task_kind == "investigate":
+            return
+        plan = self.planner.resolve(ws)
+        state.freeze_verification_plan(plan)
+        self.deps.verification_plan = plan  # mirrored so run_tests/run_linter ride the contract
+        rubric = "; ".join(f"{c.name}: `{c.command}` [{c.provenance}]" for c in plan) or "none discovered"
+        state.add_feedback(f"verification plan frozen: {rubric}", kind="verification_plan")
+        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in plan])
+        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=plan))
+
     def _stop_incomplete(self, state: TaskState, reason: str, *, kind: str) -> None:
         """Record a stop reason and end the run as `incomplete` (budgets/cancellation, §5).
 
@@ -390,6 +423,8 @@ class AgentRunner:
             self.emitter.emit("out_of_phase", tool=action.name, phase=state.phase)
             return
         if tool is not None and self._is_edit_intent(state, tool) and state.phase == "investigating":
+            # The investigating → editing boundary is the plan's freeze point (ADR-0007).
+            self._freeze_plan(state, ws)
             self._set_phase(state, "editing")
         permission = self.policy.check(tool, action.input, state, ws) if tool is not None else None
         if permission is not None and permission.blocked and not await self._approved(action, permission):
@@ -451,6 +486,9 @@ class AgentRunner:
             state: The task state to verify and mutate (outcome / repair counters).
             ws: The run-scoped workspace the verifier inspects.
         """
+        # A run can claim done without ever editing — the plan still freezes before
+        # the verifier runs, so the rubric is fixed and journaled in every case.
+        self._freeze_plan(state, ws)
         self._set_phase(state, "verifying")
         self.emitter.emit("verification_start")
         self._publish(VerificationStart(task_id=state.task_id))

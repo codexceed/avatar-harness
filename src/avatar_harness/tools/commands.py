@@ -24,6 +24,25 @@ def _excerpt(out: object) -> str:
     return text[:_CONTENT_BUDGET]
 
 
+def _resolved_command(deps: RunDeps, kind: str) -> str:
+    """The command for `kind`: config override first, else the frozen plan (ADR-0007).
+
+    Args:
+        deps: The run-scoped dependencies (config + mirrored verification plan).
+        kind: The slot to resolve (`test` or `lint`).
+
+    Returns:
+        The resolved command, or `""` when neither config nor plan declares one.
+    """
+    override = deps.config.test_command if kind == "test" else deps.config.lint_command
+    if override:
+        return override
+    for check in deps.verification_plan or []:
+        if check.kind == kind:
+            return check.command
+    return ""
+
+
 class RunTestsInput(BaseModel):
     """Input for `run_tests`: an optional target appended to the configured command."""
 
@@ -31,7 +50,16 @@ class RunTestsInput(BaseModel):
 
 
 def _run_tests(args: RunTestsInput, deps: RunDeps) -> ToolResult:
-    command = deps.config.test_command
+    command = _resolved_command(deps, "test")
+    if not command:
+        return ToolResult(
+            tool_name="run_tests",
+            success=False,
+            error=(
+                "no test command configured or discovered — set AVATAR_TEST_COMMAND or declare "
+                "one in the repo (CI workflow, package manifest, Makefile)"
+            ),
+        )
     if args.target:
         command = f"{command} {args.target}"
     out = deps.workspace.run(command, timeout=deps.config.command_timeout_seconds)
@@ -64,7 +92,16 @@ class RunLinterInput(BaseModel):
 
 
 def _run_linter(args: RunLinterInput, deps: RunDeps) -> ToolResult:  # noqa: ARG001 — ToolHandler shape; run_linter takes no input
-    command = deps.config.lint_command
+    command = _resolved_command(deps, "lint")
+    if not command:
+        return ToolResult(
+            tool_name="run_linter",
+            success=False,
+            error=(
+                "no lint command configured or discovered — set AVATAR_LINT_COMMAND or declare "
+                "one in the repo (CI workflow, package manifest, Makefile)"
+            ),
+        )
     out = deps.workspace.run(command, timeout=deps.config.command_timeout_seconds)
     if out.timed_out:
         return ToolResult(tool_name="run_linter", success=False, error=f"lint timed out: {command!r}")

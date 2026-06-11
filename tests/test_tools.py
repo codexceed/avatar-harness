@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.state import PlannedCheck
 from avatar_harness.tools import filesystem
 from avatar_harness.tools.base import (
     ToolDefinition,
@@ -326,8 +327,6 @@ def test_run_linter_runs_configured_command(git_repo):
 
 def _plan_runtime(root, plan, **config_kw) -> ToolRuntime:
     """An edit runtime whose RunDeps carry a frozen verification plan (ADR-0007)."""
-    from avatar_harness.state import PlannedCheck
-
     reg = ToolRegistry()
     for tool in (read_file, apply_patch, write_file, run_tests, run_linter):
         reg.register(tool)
@@ -347,7 +346,14 @@ def test_run_tests_falls_back_to_frozen_plan_command(git_repo):
     # the model exercises the same rubric the verifier will grade (ADR-0007).
     rt = _plan_runtime(
         git_repo,
-        [{"name": "tests", "command": "python -c \"print('plan tests ran')\"", "kind": "test", "provenance": "Makefile:test"}],
+        [
+            {
+                "name": "tests",
+                "command": "python -c \"print('plan tests ran')\"",
+                "kind": "test",
+                "provenance": "Makefile:test",
+            }
+        ],
     )
     result = rt.execute("run_tests", {})
     assert result.success
