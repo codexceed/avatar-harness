@@ -8,6 +8,12 @@ Keeping it a direct call — never an emitter subscriber — is the whole point.
 Tiers (§11): 0 reads (allow) · 1 apply_patch (allow iff every target path
 resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
 (blocked by default in the non-interactive MVP; `ask` lands with the Phase 3 REPL).
+
+Tier 1 is allowed for every task kind, including `investigate` (ADR-0005): transient
+instrumentation is legal there, and the verifier's net-zero-diff contract — not this
+gate — enforces that the tree matches the pinned baseline at verification (detection
+where prevention used to be). The sensitive-path denylist and workspace confinement
+still apply to every kind.
 """
 
 from collections.abc import Sequence
@@ -20,7 +26,6 @@ from avatar_harness.tools.base import ToolDefinition
 from avatar_harness.workspace import Workspace, path_is_sensitive
 
 _ASK_TIER = 3  # tier at and above which an action is gated (ask/block).
-_EDIT_TIER = 1  # the mutation tier (apply_patch) — blocked for read-only investigate tasks.
 
 
 class ToolPermission(BaseModel):
@@ -49,15 +54,19 @@ class PermissionPolicy:
         self,
         tool: ToolDefinition,
         raw_input: dict,
-        state: TaskState,
+        state: TaskState,  # noqa: ARG002 — signature kept for kind/state-aware policies and subclasses
         ws: Workspace,
     ) -> ToolPermission:
         """Return the control decision for `tool` with `raw_input` (allow / block / ask).
 
+        Tier 1 (mutation) is allowed for every task kind: investigate tasks may
+        instrument transiently (ADR-0005), with the verifier's net-zero-diff contract
+        as the enforcement point.
+
         Args:
             tool: The tool definition, carrying its `permission_tier` and declared paths.
             raw_input: The proposed tool arguments.
-            state: The current task state; its `task_kind` gates mutation.
+            state: The current task state (reserved for state-aware policies).
             ws: The run-scoped workspace, used for path confinement.
 
         Returns:
@@ -70,13 +79,6 @@ class PermissionPolicy:
                 blocked=True,
                 ask=True,
                 reason=f"{tool.name!r} is tier {tier} (destructive/external) — blocked pending approval",
-            )
-        if state.task_kind == "investigate" and tier == _EDIT_TIER:
-            # A read-only kind may never mutate — prevention at the gate, not just the
-            # verifier catching the diff afterward (tier 1 is the editing capability).
-            return ToolPermission(
-                blocked=True,
-                reason=f"investigate tasks cannot modify files; {tool.name!r} is not permitted",
             )
         # Path policy over the tool's *declared* paths — one place for confinement AND the
         # sensitive-path denylist, so neither can drift per tool (subsumes apply_patch's

@@ -13,6 +13,12 @@ Tiers (§11): 0 reads (allow) · 1 apply_patch (allow iff every target path
 resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
 (blocked by default in the non-interactive MVP; `ask` lands with the Phase 3 REPL).
 
+Tier 1 is allowed for every task kind, including `investigate` (ADR-0005): transient
+instrumentation is legal there, and the verifier's net-zero-diff contract — not this
+gate — enforces that the tree matches the pinned baseline at verification (detection
+where prevention used to be). The sensitive-path denylist and workspace confinement
+still apply to every kind.
+
 ## Classes
 ### `PermissionPolicy`
 
@@ -31,10 +37,14 @@ PermissionPolicy(sensitive_path_globs: Sequence[str] | None = None) -> None
 
 Return the control decision for `tool` with `raw_input` (allow / block / ask).
 
+Tier 1 (mutation) is allowed for every task kind: investigate tasks may
+instrument transiently (ADR-0005), with the verifier's net-zero-diff contract
+as the enforcement point.
+
 Args:
     tool: The tool definition, carrying its `permission_tier` and declared paths.
     raw_input: The proposed tool arguments.
-    state: The current task state; its `task_kind` gates mutation.
+    state: The current task state (reserved for state-aware policies).
     ws: The run-scoped workspace, used for path confinement.
 
 Returns:

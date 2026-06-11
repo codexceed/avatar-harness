@@ -1,6 +1,6 @@
 # ADR 0005 — Transient edits in `investigate` tasks (net-zero-diff relaxation)
 
-- **Status:** Proposed (deliberately deferred — implement on first real friction, per Principle C)
+- **Status:** Accepted — implemented 2026-06-11 (maintainer call)
 - **Date:** 2026-06-10
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — raised in design discussion 2026-06-10 ("are there not investigative workflows that involve edits?")
@@ -31,4 +31,5 @@ Mechanics when implemented:
 
 - When implemented: prevention at the gate is traded for detection at the verifier for this one kind — the secret/placeholder diff guard and the denylist still apply to every write through the `Workspace` chokepoint.
 - A model that forgets to revert fails verification with a legible reason ("unintended diff") and can repair by reverting — the repair loop already exists.
-- Trigger to implement: the first dogfood/eval run that demonstrably needs instrumentation to answer (record the journal id here when it happens).
+- Trigger to implement: implemented by maintainer directive 2026-06-11 (a maintainer call, ahead of the originally anticipated dogfood/eval friction).
+- **Known limitation / follow-up trigger (recorded 2026-06-11):** this decision admits **tier-1 tools only** — no tier-2/3 command tool (`run_tests`/`run_linter`/`run_command`) is admissible from an investigate task's `investigating` phase. The motivating "instrument → **run** → observe → revert" loop is therefore still impossible; only write → read → revert works today. Extending command admission to investigate would amend this decision and needs its own ADR/decision entry; the trigger is the first dogfood/eval task that needs to *execute* its instrumentation to answer (record the journal id here when it happens).

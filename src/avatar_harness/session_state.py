@@ -12,7 +12,8 @@ explicit `set_mode` override wins; else a one-shot LLM classification (`ModeClas
 when configured) seeds `task_kind` from the prompt + conversation; else the hardened
 word heuristic. The verdict is announced before the run and `/mode` re-routes.
 **Plan mode** (ADR-0002 D5) is the one mode that isn't a `task_kind`:
-a read-only plan task → human approve/revise → the approved plan seeds the edit task as a
+a no-net-change plan task (`investigate` kind: the tree must net to zero diff at
+verification, ADR-0005) → human approve/revise → the approved plan seeds the edit task as a
 constraint; `submit_plan` drives that flow. Local **meta commands** (`/help` `/quit` `/state`
 `/mode` `/plan` `/diff` `/permissions`) are handled by `run_meta` and never reach the
 model (§23.2).
@@ -37,12 +38,13 @@ from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathErr
 TaskKind = Literal["edit", "investigate", "test_only"]
 _TASK_KINDS: tuple[TaskKind, ...] = ("edit", "investigate", "test_only")
 
-# A session interaction mode: a `task_kind`, or `plan` — the read-only plan→approve→build
+# A session interaction mode: a `task_kind`, or `plan` — the plan→approve→build
 # flow (ADR-0002 Decision 5). `plan` is not a `task_kind`; it routes through `submit_plan`.
 Mode = Literal["edit", "investigate", "test_only", "plan"]
 _MODES: tuple[Mode, ...] = (*_TASK_KINDS, "plan")
 
-# Seeded as a constraint on the read-only plan task so the model proposes a plan, not an answer.
+# Seeded as a constraint on the plan task so the model proposes a plan, not an answer
+# (a directive, not the gate: ADR-0005 admits tier-1 writes in investigate tasks).
 _PLAN_DIRECTIVE = "Plan mode: using only read tools, propose a concise step-by-step plan. Do not edit."
 
 # Plan-run outcomes that are NOT approvable: the run never produced a usable plan (blocked on
@@ -94,7 +96,7 @@ _FILLER_WORDS = frozenset(
     {"now", "please", "also", "then", "next", "and", "ok", "okay", "just", "can", "could", "you", "we"}
 )
 
-# Question openers that affirmatively signal a read-only goal.
+# Question openers that affirmatively signal an investigative goal.
 _QUESTION_WORDS = frozenset(
     {
         "why",
@@ -141,7 +143,8 @@ def default_mode(prompt: str) -> TaskKind:
     """Heuristically route a free-form prompt to an initial mode (`task_kind`).
 
     A first-word imperative (`fix …`, `add …`) reads as an edit goal; anything else
-    (questions, "explain …", "why …") defaults to read-only investigation. This is the
+    (questions, "explain …", "why …") defaults to investigation (grounded answer,
+    net-zero diff at verification). This is the
     *visible* default the status bar shows and the user can override — not a classifier.
 
     Args:
@@ -156,7 +159,7 @@ def default_mode(prompt: str) -> TaskKind:
             continue  # skip conversational filler — judge the first significant word
         if token in _EDIT_VERBS:
             return "edit"
-        return "investigate"  # question words and everything else are read-only
+        return "investigate"  # question words and everything else route to investigate
     return "investigate"
 
 
@@ -298,7 +301,7 @@ class ReplSession:
     def start(self, prompt: str) -> Session:
         """Build (but don't run) the next per-goal `Session`: resolve mode, seed history + the turn.
 
-        In `plan` mode this is the read-only **plan task** (`task_kind="investigate"` with the
+        In `plan` mode this is the **plan task** (`task_kind="investigate"` with the
         planning directive) — the first step of the plan flow the cockpit drives; otherwise it
         is a direct run of the resolved `task_kind`. The returned session is wired with the
         session-scoped grant list (shared by reference), so a `[a] always` persists across goals.
@@ -315,9 +318,10 @@ class ReplSession:
         return self._make_session(prompt, cast(TaskKind, resolved))
 
     def start_plan(self, prompt: str, *, revision: str | None = None) -> Session:
-        """Build the read-only plan `Session` for `prompt` (observable; the cockpit streams it).
+        """Build the plan `Session` for `prompt` (observable; the cockpit streams it).
 
-        A read-only `investigate` task seeded with the planning directive (and, on a revise,
+        An `investigate` task (net-zero-diff contract, ADR-0005) seeded with the planning
+        directive (and, on a revise,
         the revision note so the model refines). No user turn is appended — the plan flow
         records the goal's turn once via `record_goal`, so plan and build don't double it.
 
@@ -326,7 +330,7 @@ class ReplSession:
             revision: A prior revision request to fold in, or `None` for the first plan.
 
         Returns:
-            A not-yet-started read-only plan `Session`.
+            A not-yet-started plan `Session`.
         """
         constraints = [_PLAN_DIRECTIVE]
         if revision:
@@ -419,9 +423,9 @@ class ReplSession:
         return state
 
     async def submit_plan(self, prompt: str, decide: Callable[[str], PlanDecision]) -> TaskState:
-        """Drive the plan flow: read-only plan → approve/revise → build (ADR-0002 D5, §23).
+        """Drive the plan flow: plan → approve/revise → build (ADR-0002 D5, §23).
 
-        Proposes a plan with a read-only task, then calls `decide` (the `PlanModal` in the
+        Proposes a plan with a no-net-change `investigate` task, then calls `decide` (the `PlanModal` in the
         cockpit; an injected callback in tests). On revise it re-runs the plan task with the
         revision fed back so the model refines it; on approval it runs the edit task seeded
         with the approved plan as a constraint and returns its terminal state.

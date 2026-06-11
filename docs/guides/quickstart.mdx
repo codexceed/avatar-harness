@@ -100,7 +100,9 @@ state = harness.run("fix the failing auth test", task_kind="edit")
 
 The `task_kind` (`investigate` / `edit` / `test_only`) selects the
 **verification contract** — what evidence is required before the run may be
-called a success. `investigate` is the read-only default.
+called a success. `investigate` is the default: a grounded answer with the
+tree netting to zero diff vs the pinned baseline at verification (transient
+instrumentation is legal mid-task, but must be reverted — ADR-0005).
 
 ## Where to go next
 

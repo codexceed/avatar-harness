@@ -66,6 +66,19 @@ def test_write_file_denied_when_target_is_sensitive(git_repo):
     assert perm.blocked is True
 
 
+def test_sensitive_writes_still_denied_in_investigate(git_repo):
+    # ADR-0005 admits tier-1 tools in investigate tasks, but the relaxation removes ONLY
+    # the kind gate: the sensitive-path denylist (and workspace chokepoint behind it)
+    # still refuses every secret-targeting write, whatever the task kind.
+    state = _state("investigate")
+    ws = Workspace(git_repo)
+    write = PermissionPolicy().check(write_file, {"path": ".env", "content": "LEAK=1"}, state, ws)
+    assert write.blocked is True
+    diff = "--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+LEAK=1\n"
+    patch = PermissionPolicy().check(apply_patch, {"diff": diff}, state, ws)
+    assert patch.blocked is True
+
+
 # --- configurable via HarnessConfig -------------------------------------------
 
 

@@ -63,6 +63,11 @@ class Verifier:
         answer = (state.final_answer or "").strip()
         cited = sorted(p for p in state.files_read if p in answer)
         inspected = bool(state.files_read or state.commands_run or state.evidence)
+        # The contract is *no diff at the end*, not *no writes ever* (ADR-0005): transient
+        # instrumentation is legal, so the check is the working tree vs the pinned
+        # baseline at verification — the `files_modified` ledger records the writes but
+        # does not fail a tree that nets to zero.
+        diff = ws.diff()
 
         checks = [
             CheckResult(
@@ -80,9 +85,18 @@ class Verifier:
             CheckResult(
                 name="no_unintended_diff",
                 kind="required",
-                status="pass" if (not ws.diff() and not state.files_modified) else "fail",
-                evidence=f"files_modified={sorted(state.files_modified)}",
+                status="pass" if not diff else "fail",
+                evidence=(
+                    f"tree matches the pinned baseline; files touched transiently="
+                    f"{sorted(state.files_modified)}"
+                    if not diff
+                    else f"net diff remains vs the pinned baseline; files_modified="
+                    f"{sorted(state.files_modified)}"
+                ),
             ),
+            # The always-on secret/placeholder guard (§12) applies to every kind that can
+            # write — a leftover instrumented diff must not smuggle a secret either.
+            self._no_secrets(diff),
         ]
         return self._dispose(checks, positive={"grounded_in_evidence"})
 
@@ -238,6 +252,10 @@ def _scan_secrets(diff: str) -> list[str]:
 # Repair direction per failed check, in priority order (§12 recommended_next_action).
 _FAIL_HINTS = {
     "diff_present": "no change was made; apply a patch that addresses the goal",
+    "no_unintended_diff": (
+        "an investigate task must leave the repo unchanged: revert the leftover "
+        "instrumentation so the diff vs the pinned baseline is empty"
+    ),
     "tests_changed": "a test_only task must add or change tests; add the missing tests",
     "no_secrets": "remove the hard-coded secret/placeholder the diff introduces",
     "tests": "the tests fail; fix the change so the test command passes",

@@ -156,7 +156,7 @@ What it gives you over raw sessions:
 - **Meta commands** — `repl.is_meta(text)` / `repl.run_meta(text)` handle
   `/help`, `/quit`, `/state`, `/mode`, `/plan`, `/diff`, `/permissions` locally;
   they never reach the model.
-- **Plan mode** — `repl.submit_plan(prompt, decide)` drives read-only plan →
+- **Plan mode** — `repl.submit_plan(prompt, decide)` drives a no-net-change plan →
   approve/revise → build, with the approved plan seeding the edit task as a
   constraint.
 - **Verification authority** — the REPL default is *conversational*: the
