@@ -1,6 +1,6 @@
 # ADR 0005 — Transient edits in `investigate` tasks (net-zero-diff relaxation)
 
-- **Status:** Proposed (deliberately deferred — implement on first real friction, per Principle C)
+- **Status:** Accepted — implemented 2026-06-11 (maintainer call)
 - **Date:** 2026-06-10
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — raised in design discussion 2026-06-10 ("are there not investigative workflows that involve edits?")
@@ -31,4 +31,4 @@ Mechanics when implemented:
 
 - When implemented: prevention at the gate is traded for detection at the verifier for this one kind — the secret/placeholder diff guard and the denylist still apply to every write through the `Workspace` chokepoint.
 - A model that forgets to revert fails verification with a legible reason ("unintended diff") and can repair by reverting — the repair loop already exists.
-- Trigger to implement: the first dogfood/eval run that demonstrably needs instrumentation to answer (record the journal id here when it happens).
+- Trigger to implement: implemented by maintainer directive 2026-06-11 (a maintainer call, ahead of the originally anticipated dogfood/eval friction).
