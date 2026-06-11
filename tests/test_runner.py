@@ -480,3 +480,28 @@ def test_investigate_leftover_diff_fails_then_repair_by_revert_succeeds(git_repo
     assert first.passed is False
     assert "no_unintended_diff" in first.summary  # the legible reason the model repairs from
     assert Workspace(git_repo, allow_dirty=True).diff() == ""
+
+
+def test_investigate_write_file_probe_then_delete_verifies(git_repo):
+    # The write_file creation path of the ADR-0005 round trip (the apply_patch path is
+    # covered above): a scratch probe file is created (staged, so it is visible in the
+    # diff), the repo is observed, then the probe is deleted via an apply_patch deletion
+    # hunk — the tree nets to zero diff vs the pinned baseline and verification passes.
+    delete_probe = "--- a/probe.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-print('probe')\n"
+    reg = ToolRegistry()
+    for tool in (read_file, apply_patch, write_file):
+        reg.register(tool)
+    decisions = [
+        ModelDecision(
+            action=ToolCall(name="write_file", input={"path": "probe.py", "content": "print('probe')\n"})
+        ),
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": delete_probe})),
+        ModelDecision(action=FinalAnswer(answer="probed: calc.py subtracts in add(); probe deleted")),
+    ]
+    state = TaskState(goal="why does add() return the wrong sum?", task_kind="investigate")
+    result = _runner(git_repo, reg, decisions).run(state)
+    assert result.outcome == "success"
+    assert not (git_repo / "probe.py").exists()  # the probe is genuinely gone (tree AND index)
+    assert Workspace(git_repo, allow_dirty=True).diff() == ""  # net-zero at the end
+    assert "probe.py" in result.files_modified  # the transient creation stayed on the ledger
