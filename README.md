@@ -74,7 +74,9 @@ AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); change fo
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 ```
 
-Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND`, `AVATAR_LINT_COMMAND`, `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`, `AVATAR_CONTEXT_MAX_DETAIL_CHARS` / `AVATAR_CONTEXT_DETAIL_CHAR_BUDGET` (how much verbatim tool output the model's context retains per item / in total). See `src/avatar_harness/config.py` for the full list.
+Other useful knobs (all optional, with sane defaults): `AVATAR_MAX_ITERATIONS`, `AVATAR_MAX_REPAIR_ATTEMPTS`, `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` (see *Verification commands* below), `AVATAR_COMMAND_TIMEOUT_SECONDS`, `AVATAR_SENSITIVE_PATH_GLOBS`, `AVATAR_CONTEXT_MAX_DETAIL_CHARS` / `AVATAR_CONTEXT_DETAIL_CHAR_BUDGET` (how much verbatim tool output the model's context retains per item / in total). See `src/avatar_harness/config.py` for the full list.
+
+**Verification commands (the per-session plan).** The harness resolves *what proves the work* once per session and freezes it before editing begins (ADR-0007): an explicit `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` **always wins** (the override tier — both default to unset); otherwise the harness **detects the repo's declared contract** deterministically — CI workflow `run:` steps rank above package manifests (`package.json`, `pyproject.toml`, tox/nox, `Cargo.toml`, `go.mod`, `.pre-commit-config.yaml`), which rank above Makefile `test`/`lint` targets. Optionally, `AVATAR_PLANNER_MODEL` enables an LLM fallback for slots detection can't resolve — it may only *propose* a command citing the repo artifact that declares it, and the harness validates the citation. The frozen plan (each command + its provenance) is journaled, and the verifier runs it itself — never model-mediated. If nothing resolves (a greenfield repo with no declared contract), an `edit` fails verification legibly: declare the contract via the env keys.
 
 **Mode routing (cockpit).** Each goal's `task_kind` is classified by one cheap, schema-constrained call on `AVATAR_CLASSIFIER_MODEL` (default `openai/gpt-5-nano`; same endpoint/key as the main model). The verdict is announced in the transcript (`▶ mode: edit (classifier) — /mode to change`) and always overridable with `/mode`; set the variable empty to disable classification (a word heuristic takes over).
 
@@ -133,7 +135,9 @@ print(state.outcome, state.final_answer)
 # Or override any seam — model, tools, verifier, policy — and keep the rest:
 from avatar_harness import HarnessConfig
 harness = Harness(
-    config=HarnessConfig(workspace_root="./repo", test_command="pytest -q"),
+    # test_command is the always-wins override; left unset, the harness detects
+    # the repo's declared contract (CI / manifests / Makefile — ADR-0007)
+    config=HarnessConfig(workspace_root="./repo", test_command="python -m pytest -q"),
     model=my_model_client,   # any ModelClient; no `openai` needed
 )
 state = harness.run("fix the failing auth test", task_kind="edit")

@@ -34,7 +34,17 @@ AVATAR_API_KEY=sk-or-...
 AVATAR_MODEL=openai/gpt-4o-mini
 AVATAR_BASE_URL=https://openrouter.ai/api/v1
 AVATAR_WORKSPACE_ROOT=/path/to/the/repo/to/work/on
+# the verification contract for this tutorial's greenfield workspace (see note)
+AVATAR_TEST_COMMAND="python -m pytest -q"
+AVATAR_LINT_COMMAND="python -m ruff check"
 ```
+
+The harness resolves *what proves the work* per session (ADR-0007): an explicit
+`AVATAR_TEST_COMMAND`/`AVATAR_LINT_COMMAND` always wins; otherwise it detects the
+repo's declared contract (CI workflows, manifests, Makefile targets). This
+tutorial's workspace starts **empty** — nothing to detect — so declare the
+contract explicitly as above, or the `edit` run will (correctly) fail
+verification with "no verification contract discovered".
 
 The workspace must be a git repo with no uncommitted *tracked* changes — the
 harness pins `HEAD` as its diff baseline (see the
@@ -321,8 +331,9 @@ verification: verification passed
 ```
 
 The agent looked for existing Python, found none, wrote `chatbot.py`, then the
-verifier ran the contract: a diff is present and `ruff check` passes over the new
-file (`pytest` skipped — no tests collected), so the run settles to `success`.
+verifier ran the declared contract: a diff is present and `python -m ruff check`
+passes over the new file (`python -m pytest -q` skipped — no tests collected), so
+the run settles to `success`.
 (Your output will differ — it's a live model run; the shape is what matters.)
 
 ## Sidebar — run it offline
@@ -373,7 +384,12 @@ subprocess.run(["git", "init", "-q"], cwd=root, check=True)
 subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "root"], cwd=root, check=True)
 
 harness = Harness(
-    config=HarnessConfig(workspace_root=str(root)),   # default pytest -q / ruff check
+    # a greenfield repo declares its contract explicitly (the override tier, ADR-0007)
+    config=HarnessConfig(
+        workspace_root=str(root),
+        test_command="python -m pytest -q",
+        lint_command="python -m ruff check",
+    ),
     model=ScriptedModel([
         ModelDecision(thought_summary="create the chatbot",
                       action=ToolCall(name="write_file",
@@ -386,10 +402,10 @@ state = harness.run("create a basic chatbot in chatbot.py", task_kind="edit")
 ```
 
 Swap this `harness` into `main()` and the same flow runs offline. It exercises
-the real contract end-to-end: `write_file` creates a genuine diff, `pytest -q`
-skips with no tests collected (a tolerated skip), and `ruff check` passes over the
-new file — the positive signal that settles verification to `success`. Real loop,
-real verifier, zero network.
+the real contract end-to-end: `write_file` creates a genuine diff, the declared
+test command skips with no tests collected (a tolerated skip), and the declared
+lint command passes over the new file — the positive signal that settles
+verification to `success`. Real loop, real verifier, zero network.
 
 <Note>
   Keep escape sequences out of the embedded `CHATBOT` source — a literal `\n`

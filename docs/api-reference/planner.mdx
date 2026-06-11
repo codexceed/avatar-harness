@@ -66,3 +66,16 @@ Args:
 
 Returns:
     Up to one test and one lint check, for the non-empty config commands.
+### `effective_invocation(command: str) -> tuple[str, list[str]]`
+
+The effective program + args of one command segment (program-position parse).
+
+Strips leading env-var assignments (`CI=1 pytest`) and unwraps runner wrappers
+(`sudo`, `uv run`, `npx`, `python -m &lt;module>`) so classification keys on what
+actually executes — never on a token appearing anywhere in the line.
+
+Args:
+    command: One command segment (no `&&`/`;` chaining).
+
+Returns:
+    `(program, args)` — program is the basename (empty when nothing remains).

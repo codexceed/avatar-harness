@@ -184,8 +184,9 @@ local `.env`):
 | `AVATAR_MAX_CONSECUTIVE_FAILURES` | `5` | Thrash guard (tool errors in a row) → `incomplete`. |
 | `AVATAR_MAX_REPAIR_ATTEMPTS` | `3` | Verification rejections in a row → `failed`. |
 | `AVATAR_MAX_CONTEXT_TOKENS` | `100000` | Hard bound on the per-turn context packet. |
-| `AVATAR_TEST_COMMAND` | `pytest -q` | The verifier runs this itself — never model-mediated. Empty disables. |
-| `AVATAR_LINT_COMMAND` | `ruff check` | Verifier-owned lint/type command. Empty disables. |
+| `AVATAR_TEST_COMMAND` | *(empty)* | The verification plan's **override tier** (ADR-0007): a non-empty value always wins. Empty = unset → the planner detects the repo's declared test contract (CI workflows > manifests > Makefile). The harness runs the resolved command itself — never model-mediated. |
+| `AVATAR_LINT_COMMAND` | *(empty)* | Same, for the lint/type slot of the verification plan. |
+| `AVATAR_PLANNER_MODEL` | *(unset)* | Opt-in LLM fallback for verification-plan resolution: consulted only for slots detection left empty, may only *propose* a command citing the repo artifact that declares it (the harness validates the citation). Unset keeps resolution fully deterministic/offline. |
 | `AVATAR_COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout. |
 | `AVATAR_SENSITIVE_PATH_GLOBS` | built-in set | Path denylist (`.env`, `*.pem`, `.ssh`, …) refused for read/patch/search. A JSON list; *replaces* the defaults. |
 | `AVATAR_NATIVE_TOOL_CALLS` | `true` | Decisions ride provider function-calling; `false` forces the legacy JSON protocol. |

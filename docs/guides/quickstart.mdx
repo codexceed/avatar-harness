@@ -92,7 +92,9 @@ Every collaborator is an injectable seam:
 from avatar_harness import Harness, HarnessConfig
 
 harness = Harness(
-    config=HarnessConfig(workspace_root="./repo", test_command="pytest -q"),
+    # test_command is the always-wins override; left unset, the harness detects
+    # the repo's declared contract (CI workflows, manifests, Makefile — ADR-0007)
+    config=HarnessConfig(workspace_root="./repo", test_command="python -m pytest -q"),
     model=my_model_client,    # any ModelClient — no `openai` extra needed
 )
 state = harness.run("fix the failing auth test", task_kind="edit")
