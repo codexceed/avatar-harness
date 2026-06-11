@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
@@ -40,6 +44,43 @@ def test_search_repo_no_matches_is_clean_success(tmp_path):
     result = _runtime(tmp_path).execute("search_repo", {"query": "zzz_absent"})
     assert result.success
     assert result.content == ""
+
+
+def test_search_repo_searches_tree_when_stdin_is_a_pipe(tmp_path):
+    # rg invoked with no explicit path falls back to searching STDIN whenever stdin
+    # isn't a tty — so in any embedding with a piped stdin (CI, cron, a supervising
+    # process) the search blocks on the silent pipe until the 30s timeout and never
+    # sees the tree (found following the tutorial, 2026-06-10). Run the handler in a
+    # child whose stdin is an open, never-written pipe: it must return tree matches
+    # promptly, proving the search reads the workspace, not stdin.
+    (tmp_path / "a.py").write_text("def login():\n    pass\n", encoding="utf-8")
+    code = (
+        "from avatar_harness.config import HarnessConfig\n"
+        "from avatar_harness.deps import CancellationToken, RunDeps\n"
+        "from avatar_harness.tools.base import ToolRegistry, ToolRuntime\n"
+        "from avatar_harness.tools.search import search_repo\n"
+        "from avatar_harness.workspace import Workspace\n"
+        f"ws = Workspace({str(tmp_path)!r})\n"
+        "deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())\n"
+        "reg = ToolRegistry()\n"
+        "reg.register(search_repo)\n"
+        "result = ToolRuntime(reg, deps).execute('search_repo', {'query': 'login'})\n"
+        "print('TREE-MATCH' if result.success and 'a.py' in result.content else f'MISS: {result!r}')\n"
+    )
+    read_fd, write_fd = os.pipe()  # parent keeps write_fd open: the child's stdin never EOFs
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            stdin=read_fd,
+            capture_output=True,
+            text=True,
+            timeout=10,  # far below the tool's own 30s rg timeout: a stdin-read hang fails here
+            check=False,
+        )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+    assert "TREE-MATCH" in proc.stdout, proc.stdout + proc.stderr
 
 
 def test_list_files_matches_glob(tmp_path):
