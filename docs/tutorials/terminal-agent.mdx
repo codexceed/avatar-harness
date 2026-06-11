@@ -49,18 +49,22 @@ exactly as written:
 ```python
 from avatar_harness import Harness
 
-state = Harness.from_env().run("what does this repo do?", task_kind="investigate")
+state = Harness.from_env().run("create a basic chatbot in chatbot.py", task_kind="edit")
 print(state.outcome, "\n", state.final_answer)
 ```
 
-Two things to absorb before adding anything:
+That one line *builds* something: the agent inspects the repo, writes
+`chatbot.py`, and the harness-owned verifier confirms the result before `run()`
+returns. The diff lands in your workspace — `git diff` shows it. Two things to
+absorb:
 
-- **`outcome` is verifier-owned.** `"success"` means the harness-owned verifier
-  found positive external evidence (cited files, passing tests, a clean diff —
-  per `task_kind`). The model claiming "done" is only ever a *proposal*.
-- **`task_kind` selects the verification contract.** `investigate` is read-only
-  Q&A; `edit` requires a verifiable diff; `test_only` requires new tests that
-  pass.
+- **`outcome` is verifier-owned.** `"success"` means the verifier found positive
+  external evidence — for an `edit`, a real diff that clears a check (lint or
+  tests) run over it, never the model's say-so. "Done" is only ever a *proposal*
+  the verifier disposes of.
+- **`task_kind` selects the verification contract.** `edit` (used here) requires
+  a verifiable diff with a passing check over it; `investigate` is read-only Q&A;
+  `test_only` requires new tests that pass.
 
 ## Part 2 — the streaming agent
 
@@ -110,7 +114,7 @@ async def render(session) -> None:                    # the observation plane
 
 async def main() -> int:
     harness = Harness.from_env()
-    goal, kind = "what does this repo do?", "investigate"
+    goal, kind = "create a basic chatbot in chatbot.py", "edit"
     session = harness.session(goal, task_kind=kind)
 
     run_task = asyncio.create_task(session.run())     # drive the engine
@@ -155,11 +159,11 @@ elif isinstance(event, ApprovalRequested):
   `asyncio.to_thread` keeps it breathing.
 
 <Note>
-  `apply_patch` is tier 1 and does **not** prompt — it auto-allows once its
-  target paths validate inside the workspace, and the verifier judges the
-  resulting diff. To see an approval fire, give the agent an `edit` goal that
-  needs a command (a build step, a migration), or target a denylisted path and
-  watch it get refused.
+  Creating `chatbot.py` won't prompt: `write_file`/`apply_patch` are tier 1 and
+  auto-allow once their target paths validate inside the workspace — the verifier
+  judges the resulting diff. To see an approval fire, give a goal that needs a
+  command (a build step, a migration), or target a denylisted path and watch it
+  get refused.
 </Note>
 
 ### Cancel gracefully on Ctrl-C
@@ -286,67 +290,111 @@ async def main(goal: str, kind: str) -> int:
 
 
 if __name__ == "__main__":
-    goal = " ".join(sys.argv[1:]) or "what does this repo do?"
-    raise SystemExit(asyncio.run(main(goal, "investigate")))
+    goal = " ".join(sys.argv[1:]) or "create a basic chatbot in chatbot.py"
+    raise SystemExit(asyncio.run(main(goal, "edit")))
 ```
 
 ```text
-$ python mini_agent.py "what does this repo do?"
-  → list_files {'glob': '**/*'}
-  ✓ 1525 file(s) matching '**/*'
-  → list_files {'glob': 'README*'}
-  ✓ 1 file(s) matching 'README*'
-  → read_file {'path': 'README.md'}
-  ✓ read README.md
-  → read_file {'path': 'README.md', 'line_range': [1, 120]}
-  ✓ read README.md
-— phase: investigating → verifying
+$ python mini_agent.py "create a basic chatbot in chatbot.py"
+  → list_files {'glob': '**/*.py'}
+  ✓ 0 file(s) matching '**/*.py'
+— phase: investigating → editing
+  → write_file {'path': 'chatbot.py', 'content': '"""A basic command-line chatbot.\n…'}
+  ✓ wrote chatbot.py
+  → read_file {'path': 'chatbot.py'}
+  ✓ read chatbot.py
+— phase: editing → verifying
 — verification ✓ verification passed
 
 outcome: success
 
-This repo (`avatar-harness`) is a **Python coding-agent harness**: it provides
-the runtime around an LLM to turn natural-language repo tasks into a controlled
-loop of **inspect/edit/run/verify**.
+Implemented `chatbot.py` as a basic command-line chatbot:
+- `generate_response(user_message)` — rule-based replies (greetings, "how are
+  you", name, help) with a fallback
+- `main()` — an `input("You: ")` loop that prints replies and exits on
+  quit/exit/bye
 […]
-Evidence inspected:
-- `README.md` lines 1–120 (title + opening description + Status + loop/design)
+changed files: chatbot.py
 verification: verification passed
 ```
 
-(Your output will differ — it's a live model run against your repo; the shape
-is what matters.)
+The agent looked for existing Python, found none, wrote `chatbot.py`, then the
+verifier ran the contract: a diff is present and `ruff check` passes over the new
+file (`pytest` skipped — no tests collected), so the run settles to `success`.
+(Your output will differ — it's a live model run; the shape is what matters.)
 
 ## Sidebar — run it offline
 
 `ModelClient` is a one-method protocol, so the whole tutorial runs without an
-API key by injecting a scripted model — exactly how the project's own test
-suite drives the engine:
+API key by injecting a scripted model — exactly how the project's own test suite
+drives the engine. An `edit` task needs a clean git workspace (the verifier diffs
+against `HEAD`), so the snippet spins up a throwaway repo:
 
 ```python
+import subprocess
+import tempfile
+from pathlib import Path
+
 from avatar_harness import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
+
+CHATBOT = '''"""A basic command-line echo chatbot."""
+
+
+def main() -> None:
+    print("bot: hi! type ctrl-d to quit.")
+    while True:
+        try:
+            user = input("you: ")
+        except EOFError:
+            print("bot: bye!")
+            break
+        print(f"bot: you said {user!r}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
 
 class ScriptedModel(ModelClient):
     def __init__(self, decisions):
         self._decisions, self._i = decisions, 0
+
     def decide(self, context):
         d = self._decisions[min(self._i, len(self._decisions) - 1)]
         self._i += 1
         return d
 
+
+root = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "root"], cwd=root, check=True)
+
 harness = Harness(
-    config=HarnessConfig(workspace_root=".", test_command="", lint_command=""),
+    config=HarnessConfig(workspace_root=str(root)),   # default pytest -q / ruff check
     model=ScriptedModel([
-        ModelDecision(thought_summary="read the readme first",
-                      action=ToolCall(name="read_file", input={"path": "README.md"})),
-        ModelDecision(thought_summary="answer with evidence",
-                      action=FinalAnswer(answer="Per README.md (line 1), this repo is …")),
+        ModelDecision(thought_summary="create the chatbot",
+                      action=ToolCall(name="write_file",
+                                      input={"path": "chatbot.py", "content": CHATBOT})),
+        ModelDecision(thought_summary="report what was built",
+                      action=FinalAnswer(answer="Created chatbot.py — a basic CLI echo loop.")),
     ]),
 )
+state = harness.run("create a basic chatbot in chatbot.py", task_kind="edit")
 ```
 
-Swap this `harness` into `main()` and the same flow runs offline — real loop,
-real verifier, real journal, zero network.
+Swap this `harness` into `main()` and the same flow runs offline. It exercises
+the real contract end-to-end: `write_file` creates a genuine diff, `pytest -q`
+skips with no tests collected (a tolerated skip), and `ruff check` passes over the
+new file — the positive signal that settles verification to `success`. Real loop,
+real verifier, zero network.
+
+<Note>
+  Keep escape sequences out of the embedded `CHATBOT` source — a literal `\n`
+  inside the triple-quoted string would become a real newline in the written
+  file and break its string literals (and fail lint). The echo loop above sticks
+  to plain strings for exactly this reason.
+</Note>
 
 ## Where to go from here
 
