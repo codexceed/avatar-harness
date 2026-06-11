@@ -34,6 +34,25 @@ def test_config_native_tool_calls_defaults_on_and_overrides(monkeypatch):
     assert HarnessConfig().native_tool_calls is False
 
 
+def test_config_verification_commands_are_override_tier_not_defaults(monkeypatch):
+    """ADR-0007: the static `pytest -q`/`ruff check` defaults are gone.
+
+    `AVATAR_TEST_COMMAND`/`AVATAR_LINT_COMMAND` survive as the always-wins override
+    tier (empty = unset → the planner detects), and the LLM fallback is opt-in.
+    """
+    for var in ("AVATAR_TEST_COMMAND", "AVATAR_LINT_COMMAND", "AVATAR_PLANNER_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    config = HarnessConfig(_env_file=None)  # pyright: ignore[reportCallIssue]
+    assert config.test_command == ""
+    assert config.lint_command == ""
+    assert config.planner_model is None
+    monkeypatch.setenv("AVATAR_TEST_COMMAND", "go test ./...")
+    monkeypatch.setenv("AVATAR_PLANNER_MODEL", "openai/gpt-5-nano")
+    override = HarnessConfig(_env_file=None)  # pyright: ignore[reportCallIssue]
+    assert override.test_command == "go test ./..."
+    assert override.planner_model == "openai/gpt-5-nano"
+
+
 def test_config_classifier_model_default_and_override(monkeypatch):
     """The mode classifier rides a cheap dedicated model; empty disables it.
 

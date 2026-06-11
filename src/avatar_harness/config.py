@@ -51,13 +51,20 @@ class HarnessConfig(BaseSettings):
     max_repair_attempts: int = 3
     max_context_tokens: int = 100_000
 
-    # Verification commands (§12). The verifier runs these ITSELF — independent of
-    # any run_tests/run_linter the model called — so its signal is harness-owned,
-    # never model-mediated. Empty disables the command (an allowed/disallowed skip
-    # per the gate). Target inference is deferred (§21); the command is explicit.
-    test_command: str = "pytest -q"
-    lint_command: str = "ruff check"
+    # Verification commands — the OVERRIDE tier of plan resolution (§12, ADR-0007).
+    # A non-empty value always wins: the user's stated contract is never overridden.
+    # Empty (the default) means "unset" — the `VerificationPlanner` then detects the
+    # repo's declared contract (CI workflows, manifests, Makefile) deterministically.
+    # The harness runs the resolved commands ITSELF — never model-mediated (§5).
+    test_command: str = ""
+    lint_command: str = ""
     command_timeout_seconds: int = 120
+
+    # LLM fallback for verification-plan resolution (ADR-0007 tier 3). Opt-in: unset
+    # (the default) keeps resolution fully deterministic/offline. When set, the model
+    # may PROPOSE a command for a slot detection left empty — only with a citation to
+    # the repo artifact it came from, which the harness validates before accepting.
+    planner_model: str | None = None
 
     # Session / UX (§23).
     interactive: bool = True

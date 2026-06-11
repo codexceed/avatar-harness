@@ -287,6 +287,11 @@ class Workspace:
     def run(self, command: str, timeout: int | None = None) -> CommandOutput:
         """Run `command` confined to the root, capturing output; bounded by `timeout`.
 
+        Never raises into the loop (ADR-0007 robustness floor): a missing binary,
+        an empty command, or an unparseable command line all come back as a failed
+        `CommandOutput` (shell convention: exit 127 = command not found) so the
+        verifier and tools see a legible failure, not a `FileNotFoundError`.
+
         Args:
             command: The shell-style command to run.
             timeout: Seconds before the command is killed, or `None` for no bound.
@@ -294,9 +299,31 @@ class Workspace:
         Returns:
             The captured stdout, stderr, exit code, and timeout flag.
         """
+        out = self._run_unlogged(command, timeout)
+        self.command_log.append(out)
+        return out
+
+    def _run_unlogged(self, command: str, timeout: int | None) -> CommandOutput:
+        """Execute `command` and classify every failure mode into a `CommandOutput`.
+
+        Args:
+            command: The shell-style command to run.
+            timeout: Seconds before the command is killed, or `None` for no bound.
+
+        Returns:
+            The captured output; exit 127 for not-found/unrunnable, `None` on timeout.
+        """
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:  # unbalanced quotes etc. — legible, not a raise
+            return CommandOutput(
+                command=command, stdout="", stderr=f"unparseable command: {exc}", exit_code=127
+            )
+        if not argv:
+            return CommandOutput(command=command, stdout="", stderr="empty command", exit_code=127)
         try:
             proc = subprocess.run(
-                shlex.split(command),
+                argv,
                 cwd=str(self.root),
                 capture_output=True,
                 text=True,
@@ -304,19 +331,24 @@ class Workspace:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            out = CommandOutput(
+            return CommandOutput(
                 command=command,
                 stdout=exc.stdout or "" if isinstance(exc.stdout, str) else "",
                 stderr=exc.stderr or "" if isinstance(exc.stderr, str) else "",
                 exit_code=None,
                 timed_out=True,
             )
-        else:
-            out = CommandOutput(
-                command=command, stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode
+        except FileNotFoundError:
+            return CommandOutput(
+                command=command, stdout="", stderr=f"command not found: {argv[0]}", exit_code=127
             )
-        self.command_log.append(out)
-        return out
+        except OSError as exc:  # not executable, bad interpreter, ... — surface, don't crash
+            return CommandOutput(
+                command=command, stdout="", stderr=f"cannot run {argv[0]}: {exc}", exit_code=126
+            )
+        return CommandOutput(
+            command=command, stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode
+        )
 
     # --- diff against the pinned baseline (§15) --------------------------
 

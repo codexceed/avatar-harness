@@ -8,6 +8,7 @@ need; `state` and `event_log` join when the runner is built.
 from dataclasses import dataclass
 
 from avatar_harness.config import HarnessConfig
+from avatar_harness.state import PlannedCheck
 from avatar_harness.workspace import Workspace
 
 
@@ -24,8 +25,14 @@ class CancellationToken:
 
 @dataclass
 class RunDeps:
-    """The run-scoped dependencies handed explicitly to tools and the runtime (§8)."""
+    """The run-scoped dependencies handed explicitly to tools and the runtime (§8).
+
+    `verification_plan` mirrors the plan the runner froze onto `TaskState`
+    (ADR-0007), so `run_tests`/`run_linter` can ride the resolved contract when no
+    config override exists — the model exercises the same rubric the verifier grades.
+    """
 
     workspace: Workspace
     config: HarnessConfig
     cancellation: CancellationToken
+    verification_plan: list[PlannedCheck] | None = None

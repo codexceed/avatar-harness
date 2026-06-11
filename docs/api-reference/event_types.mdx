@@ -418,6 +418,31 @@ VerificationEnd(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id
 | `type` | `Literal['verification_end']` | no |
 | `passed` | `bool` | yes |
 | `summary` | `str` | no |
+### `VerificationPlanFrozen`
+
+The per-session verification plan was resolved and frozen (ADR-0007).
+
+Journaled at the investigating → editing boundary, before any verification:
+each check carries its command and provenance, so every run's rubric — and
+where each check came from — is auditable. An empty `checks` records that
+nothing was discovered (the verifier will fail legibly).
+
+```python
+VerificationPlanFrozen(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['verification_plan_frozen'] = 'verification_plan_frozen', checks: list[PlannedCheck] = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['verification_plan_frozen']` | no |
+| `checks` | `list[PlannedCheck]` | no |
 ### `VerificationStart`
 
 The harness-owned verifier has begun (§12).
@@ -439,7 +464,7 @@ VerificationStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_
 | `type` | `Literal['verification_start']` | no |
 
 ## Functions
-### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
+### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
 
 Serialize an event to one JSON line for the journal.
 
@@ -448,7 +473,7 @@ Args:
 
 Returns:
     Its compact JSON representation.
-### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
 
 Reload a JSONL journal back into typed events, in file order.
 
@@ -457,7 +482,7 @@ Args:
 
 Returns:
     The events, one per non-blank line, validated through the union.
-### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
+### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
 
 Validate a dict / JSON string into the right `HarnessEvent` variant.
 

@@ -26,13 +26,15 @@ Args:
     emitter: Observation-only event emitter (§13).
     config: Budgets and harness settings.
     policy: The before-tool-call control gate (§11); defaults to the standard tier policy.
+    planner: Resolves the per-session verification plan (ADR-0007); defaults to a
+        `VerificationPlanner(config)`.
     event_sink: Optional typed-event sink (a `Session`); absent on the batch/sync path.
     approval_controller: Optional awaited gate for tier-3 `ask` calls (a `Session`).
     conversational: Verification authority (§23.5). `False` (default) is the strict §12
         gate; `True` runs the verifier as advisory and delivers without repairing.
 
 ```python
-AgentRunner(*, model_client: ModelClient, registry: ToolRegistry, deps: RunDeps, context_builder: ContextBuilder, verifier: Verifier, emitter: Emitter, config: HarnessConfig, policy: PermissionPolicy | None = None, event_sink: EventSink | None = None, approval_controller: ApprovalController | None = None, conversational: bool = False) -> None
+AgentRunner(*, model_client: ModelClient, registry: ToolRegistry, deps: RunDeps, context_builder: ContextBuilder, verifier: Verifier, emitter: Emitter, config: HarnessConfig, policy: PermissionPolicy | None = None, planner: VerificationPlanner | None = None, event_sink: EventSink | None = None, approval_controller: ApprovalController | None = None, conversational: bool = False) -> None
 ```
 
 #### `AgentRunner.arun(self, state: TaskState) -> TaskState`

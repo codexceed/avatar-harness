@@ -1,5 +1,5 @@
 from avatar_harness.config import HarnessConfig
-from avatar_harness.state import TaskState
+from avatar_harness.state import PlannedCheck, TaskState
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
@@ -125,14 +125,14 @@ def test_edit_gate_passes_on_clean_lint_when_no_test_target(git_repo):
     assert report.passed
 
 
-def test_edit_gate_fails_on_disallowed_skip(git_repo):
+def test_edit_gate_passes_on_declared_lint_only_contract(git_repo):
+    # ADR-0007: a user-declared lint-only contract is legitimate — §12's positive
+    # signal is "a passing test, or (if none exists) clean lint/types over the diff".
     ws = Workspace(git_repo)
     state = _edit(ws)
-    # No test command configured is NOT an allowed skip for an edit (criterion 2),
-    # even though lint passes and would otherwise supply a positive signal.
     report = Verifier(HarnessConfig(test_command="", lint_command=_PASS)).verify(state, ws)
-    assert report.passed is False
-    assert any(c.name == "tests" and c.status == "skip" for c in report.checks)
+    assert report.passed
+    assert any(c.name == "lint" and c.status == "pass" for c in report.checks)
 
 
 def test_edit_gate_flags_placeholder_or_secret(git_repo):
@@ -160,6 +160,83 @@ def test_edit_gate_flags_secret_in_created_file(git_repo):
     report = Verifier(HarnessConfig(test_command=_PASS)).verify(state, ws)
     assert report.passed is False
     assert any(c.name == "no_secrets" and c.status == "fail" for c in report.checks)
+
+
+# --- frozen-plan execution (ADR-0007) -------------------------------------
+
+
+def test_edit_gate_executes_frozen_plan_without_config(git_repo):
+    # The verifier is a PURE EXECUTOR over the frozen plan: zero language
+    # knowledge, no config needed — it runs the frozen commands and reads exit codes.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [PlannedCheck(name="tests", command=_PASS, kind="test", provenance="ci:.github/workflows/ci.yml")]
+    )
+    report = Verifier().verify(state, ws)
+    assert report.passed
+    tests = next(c for c in report.checks if c.name == "tests")
+    assert "ci:.github/workflows/ci.yml" in tests.evidence  # the rubric is auditable
+
+
+def test_edit_gate_frozen_plan_overrides_config_commands(git_repo):
+    # Once frozen, the plan IS the rubric; the config tier already had its say at
+    # resolution time and cannot re-enter at execution time.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [PlannedCheck(name="tests", command=_PASS, kind="test", provenance="Makefile:test")]
+    )
+    report = Verifier(HarnessConfig(test_command=_FAIL, lint_command=_FAIL)).verify(state, ws)
+    assert report.passed
+
+
+def test_edit_gate_fails_legibly_on_empty_frozen_plan(git_repo):
+    # No contract discovered → the gate fails with a pointer to declaring one,
+    # never an invented check and never a vacuous pass.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan([])
+    report = Verifier().verify(state, ws)
+    assert report.passed is False
+    contract = next(c for c in report.checks if c.name == "verification_contract")
+    assert contract.status == "fail"
+    assert "no verification contract" in contract.evidence
+    assert "AVATAR_TEST_COMMAND" in (report.recommended_next_action or "")
+
+
+def test_edit_gate_missing_binary_is_failed_check_not_crash(git_repo):
+    # The dogfood crash this ADR exists to close: a missing tool is a failed
+    # check with legible evidence, not a FileNotFoundError into the loop.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [
+            PlannedCheck(
+                name="lint",
+                command="definitely-not-a-real-binary-xyz check",
+                kind="lint",
+                provenance="config:AVATAR_LINT_COMMAND",
+            )
+        ]
+    )
+    report = Verifier().verify(state, ws)
+    assert report.passed is False
+    lint = next(c for c in report.checks if c.name == "lint")
+    assert lint.status == "fail"
+    assert "not found" in lint.evidence
+
+
+def test_test_only_gate_fails_when_plan_has_no_test_check(git_repo):
+    ws = Workspace(git_repo)
+    changed = ws.apply_patch(_ADD_TEST)
+    state = TaskState(goal="add tests", task_kind="test_only", files_modified=set(changed))
+    state.freeze_verification_plan(
+        [PlannedCheck(name="lint", command=_PASS, kind="lint", provenance="Makefile:lint")]
+    )
+    report = Verifier().verify(state, ws)
+    assert report.passed is False
+    assert any(c.name == "verification_contract" and c.status == "fail" for c in report.checks)
 
 
 # --- test_only gate (§12) -----------------------------------------------

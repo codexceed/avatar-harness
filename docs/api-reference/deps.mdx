@@ -24,6 +24,10 @@ Trip the token so an in-flight tool can abort at its next checkpoint.
 
 The run-scoped dependencies handed explicitly to tools and the runtime (§8).
 
+`verification_plan` mirrors the plan the runner froze onto `TaskState`
+(ADR-0007), so `run_tests`/`run_linter` can ride the resolved contract when no
+config override exists — the model exercises the same rubric the verifier grades.
+
 ```python
-RunDeps(workspace: Workspace, config: HarnessConfig, cancellation: CancellationToken) -> None
+RunDeps(workspace: Workspace, config: HarnessConfig, cancellation: CancellationToken, verification_plan: list[PlannedCheck] | None = None) -> None
 ```

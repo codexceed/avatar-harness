@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
+from avatar_harness.state import PlannedCheck
 from avatar_harness.tools import filesystem
 from avatar_harness.tools.base import (
     ToolDefinition,
@@ -322,6 +323,80 @@ def test_run_linter_runs_configured_command(git_repo):
     result = rt.execute("run_linter", {})
     assert result.success
     assert "All checks passed" in result.content
+
+
+def _plan_runtime(root, plan, **config_kw) -> ToolRuntime:
+    """An edit runtime whose RunDeps carry a frozen verification plan (ADR-0007)."""
+    reg = ToolRegistry()
+    for tool in (read_file, apply_patch, write_file, run_tests, run_linter):
+        reg.register(tool)
+    config_kw.setdefault("test_command", "")
+    config_kw.setdefault("lint_command", "")
+    deps = RunDeps(
+        workspace=Workspace(root),
+        config=HarnessConfig(**config_kw),
+        cancellation=CancellationToken(),
+        verification_plan=[PlannedCheck(**c) for c in plan],
+    )
+    return ToolRuntime(reg, deps)
+
+
+def test_run_tests_falls_back_to_frozen_plan_command(git_repo):
+    # With no config override, run_tests rides the frozen plan's test command —
+    # the model exercises the same rubric the verifier will grade (ADR-0007).
+    rt = _plan_runtime(
+        git_repo,
+        [
+            {
+                "name": "tests",
+                "command": "python -c \"print('plan tests ran')\"",
+                "kind": "test",
+                "provenance": "Makefile:test",
+            }
+        ],
+    )
+    result = rt.execute("run_tests", {})
+    assert result.success
+    assert "plan tests ran" in result.content
+
+
+def test_run_tests_appends_target_to_pytest_style_command(git_repo):
+    # A pytest-style invocation accepts positional file targets — the target scopes it.
+    (git_repo / "tests").mkdir()
+    (git_repo / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    rt = _edit_runtime(git_repo, test_command="python -m pytest -q")
+    result = rt.execute("run_tests", {"target": "tests/test_ok.py"})
+    assert result.success
+    assert "1 passed" in result.content
+
+
+def test_run_tests_target_on_untargetable_command_is_model_correctable(git_repo):
+    # PR-#40 review: appending a file target to `make test` produces
+    # `make test tests/x.py` — broken. The mismatch is fed back as a
+    # model-correctable error naming the declared contract, never executed.
+    rt = _plan_runtime(
+        git_repo,
+        [{"name": "tests", "command": "make test", "kind": "test", "provenance": "Makefile:test"}],
+    )
+    result = rt.execute("run_tests", {"target": "tests/test_ok.py"})
+    assert result.success is False
+    assert "make test" in (result.error or "")
+    assert "target" in (result.error or "")
+    assert not any("tests/test_ok.py" in c.command for c in rt.deps.workspace.command_log)
+
+
+def test_run_tests_with_no_command_or_plan_fails_legibly(git_repo):
+    rt = _edit_runtime(git_repo, test_command="", lint_command="")
+    result = rt.execute("run_tests", {})
+    assert result.success is False
+    assert "AVATAR_TEST_COMMAND" in (result.error or "")
+
+
+def test_run_linter_with_no_command_or_plan_fails_legibly(git_repo):
+    rt = _edit_runtime(git_repo, test_command="", lint_command="")
+    result = rt.execute("run_linter", {})
+    assert result.success is False
+    assert "AVATAR_LINT_COMMAND" in (result.error or "")
 
 
 # --- Phase 2.6 Lane B: tool-failure isolation (the runtime never raises into the loop). ---

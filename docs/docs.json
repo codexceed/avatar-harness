@@ -56,6 +56,7 @@
               "api-reference/journal",
               "api-reference/model_client",
               "api-reference/permission",
+              "api-reference/planner",
               "api-reference/runner",
               "api-reference/session",
               "api-reference/session_state",

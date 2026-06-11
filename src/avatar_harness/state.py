@@ -44,6 +44,20 @@ class CommandRecord(BaseModel):
     summary: str = ""
 
 
+class PlannedCheck(BaseModel):
+    """One resolved verification check: what runs, and where it came from (ADR-0007).
+
+    The unit of the per-session verification plan. `provenance` names the artifact
+    the command was resolved from (`config:AVATAR_TEST_COMMAND`, `ci:.github/...`,
+    `Makefile:test`, `llm:<cited path>`), so every run's rubric is auditable.
+    """
+
+    name: str
+    command: str
+    kind: Literal["test", "lint"]
+    provenance: str
+
+
 class CheckResult(BaseModel):
     """One verifier check with an explicit status (§12).
 
@@ -97,6 +111,11 @@ class TaskState(BaseModel):
     decisions: list[DecisionRecord] = Field(default_factory=list)
     verifier_results: list[VerifierResult] = Field(default_factory=list)
 
+    # The per-session verification plan (ADR-0007). `None` = not yet resolved;
+    # `[]` = resolved and nothing was discovered (the verifier fails legibly).
+    # Frozen once via `freeze_verification_plan` — the rubric never moves mid-run.
+    verification_plan: list[PlannedCheck] | None = None
+
     current_plan: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     latest_error: str | None = None
@@ -116,6 +135,22 @@ class TaskState(BaseModel):
             kind: Evidence category, e.g. `feedback` or `blocker`.
         """
         self.evidence.append(Evidence(step=self.iterations, kind=kind, summary=summary, detail=detail))
+
+    def freeze_verification_plan(self, plan: list[PlannedCheck]) -> None:
+        """Freeze the resolved verification plan — once, before editing begins (ADR-0007).
+
+        The freeze is an authority transfer away from the model: after it, the
+        rubric cannot move. A second freeze attempt is a harness bug, not a retry.
+
+        Args:
+            plan: The resolved checks (may be empty: "nothing discovered").
+
+        Raises:
+            RuntimeError: When a plan is already frozen onto this state.
+        """
+        if self.verification_plan is not None:
+            raise RuntimeError("verification plan is already frozen")
+        self.verification_plan = list(plan)
 
     def block(self, reason: str) -> None:
         """Terminal: the task needs human input (§5 ask_user in a non-interactive run).

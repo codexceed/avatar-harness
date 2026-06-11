@@ -1,0 +1,81 @@
+---
+title: avatar_harness.planner
+---
+
+VerificationPlanner — per-session verification-plan resolution (ADR-0007).
+
+The harness-owned collaborator that resolves *what proves this repo's work*,
+once per session, before editing begins. Resolution is tiered:
+
+1. **Config override (always wins):** `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`,
+   per slot. The user's stated contract is never overridden.
+2. **Deterministic detection (no LLM, no Python assumption):** read repo artifacts —
+   CI workflows, `package.json`, `pyproject.toml`, tox/nox, `Cargo.toml`, `go.mod`,
+   `.pre-commit-config.yaml`, Makefile — and extract their *declared* test/lint
+   invocations. CI-derived commands rank above arbitrary Makefile targets (CI is
+   the gate the project actually trusts — least gameable).
+3. **LLM fallback (evidence-grounded only, opt-in via `AVATAR_PLANNER_MODEL`):** the
+   model may *propose* a command for a slot detection left empty, but only citing
+   the artifact it came from; the harness validates the citation before accepting.
+   A proposal without valid provenance is rejected. No model configured → this tier
+   simply does not exist (resolution stays deterministic and offline).
+
+The resolved plan is a list of `PlannedCheck` (name, command, kind, provenance).
+The *runner* freezes it onto `TaskState` at the investigating → editing boundary
+and journals it; the `Verifier` then executes it with zero language knowledge.
+Python-ecosystem tools are emitted as `python -m &lt;tool>` so an installed-but-not-
+on-PATH tool still resolves (the ADR's robustness floor).
+
+## Classes
+### `VerificationPlanner`
+
+Resolves the per-session verification plan (ADR-0007) — harness-owned.
+
+Args:
+    config: Harness config; `test_command`/`lint_command` are the override tier
+        and `planner_model` (unset by default) opts into the LLM fallback.
+    client: An injected OpenAI-compatible client for the fallback, or `None` to
+        build one lazily on first use (the `ModeClassifier` precedent; the
+        fallback is never consulted unless `planner_model` is set).
+
+```python
+VerificationPlanner(config: HarnessConfig | None = None, client: Any = None) -> None
+```
+
+#### `VerificationPlanner.resolve(self, ws: Workspace) -> list[PlannedCheck]`
+
+Resolve the verification plan for `ws`: override → detection → LLM fallback.
+
+Args:
+    ws: The run-scoped workspace whose repo artifacts are read.
+
+Returns:
+    The resolved checks, test slot first; empty when nothing is declared
+    anywhere (the verifier then fails legibly — never an invented default).
+
+## Functions
+### `config_override_checks(config: HarnessConfig | None) -> list[PlannedCheck]`
+
+The override tier: checks declared explicitly in config (always win, per slot).
+
+Shared by the planner (tier 1) and the verifier's no-plan fallback, so the
+two read the user's stated contract identically.
+
+Args:
+    config: The harness config, or `None` (no overrides).
+
+Returns:
+    Up to one test and one lint check, for the non-empty config commands.
+### `effective_invocation(command: str) -> tuple[str, list[str]]`
+
+The effective program + args of one command segment (program-position parse).
+
+Strips leading env-var assignments (`CI=1 pytest`) and unwraps runner wrappers
+(`sudo`, `uv run`, `npx`, `python -m &lt;module>`) so classification keys on what
+actually executes — never on a token appearing anywhere in the line.
+
+Args:
+    command: One command segment (no `&&`/`;` chaining).
+
+Returns:
+    `(program, args)` — program is the basename (empty when nothing remains).

@@ -10,6 +10,7 @@ command that could not run (timeout, target not found) is a failed `ToolResult`.
 from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
+from avatar_harness.planner import effective_invocation
 from avatar_harness.tools.base import ToolDefinition, ToolResult
 
 # Verification tools load in the editing and verifying phases (§21).
@@ -18,10 +19,34 @@ _VERIFY_PHASES = frozenset({"editing", "verifying"})
 _USAGE_ERROR_EXIT = 4  # pytest convention: usage error / target not found (model-correctable).
 _CONTENT_BUDGET = 2000
 
+# Programs whose CLI accepts positional file targets — only these get `target`
+# appended. A detected `make test` or `npm test` does not (PR-#40 review: appending
+# produced `make test tests/x.py`); the mismatch is fed back as model-correctable.
+_TARGETABLE_PROGRAMS = frozenset({"pytest"})
+
 
 def _excerpt(out: object) -> str:
     text = f"{getattr(out, 'stdout', '')}{getattr(out, 'stderr', '')}".strip()
     return text[:_CONTENT_BUDGET]
+
+
+def _resolved_command(deps: RunDeps, kind: str) -> str:
+    """The command for `kind`: config override first, else the frozen plan (ADR-0007).
+
+    Args:
+        deps: The run-scoped dependencies (config + mirrored verification plan).
+        kind: The slot to resolve (`test` or `lint`).
+
+    Returns:
+        The resolved command, or `""` when neither config nor plan declares one.
+    """
+    override = deps.config.test_command if kind == "test" else deps.config.lint_command
+    if override:
+        return override
+    for check in deps.verification_plan or []:
+        if check.kind == kind:
+            return check.command
+    return ""
 
 
 class RunTestsInput(BaseModel):
@@ -31,8 +56,29 @@ class RunTestsInput(BaseModel):
 
 
 def _run_tests(args: RunTestsInput, deps: RunDeps) -> ToolResult:
-    command = deps.config.test_command
+    command = _resolved_command(deps, "test")
+    if not command:
+        return ToolResult(
+            tool_name="run_tests",
+            success=False,
+            error=(
+                "no test command configured or discovered — set AVATAR_TEST_COMMAND or declare "
+                "one in the repo (CI workflow, package manifest, Makefile)"
+            ),
+        )
     if args.target:
+        program, _ = effective_invocation(command)
+        if program not in _TARGETABLE_PROGRAMS:
+            # Model-correctable (§10): the declared contract does not take file
+            # targets; the model retries without one (or uses run_command).
+            return ToolResult(
+                tool_name="run_tests",
+                success=False,
+                error=(
+                    f"the declared test command {command!r} does not accept a file target; "
+                    "call run_tests without a target to run the full declared contract"
+                ),
+            )
         command = f"{command} {args.target}"
     out = deps.workspace.run(command, timeout=deps.config.command_timeout_seconds)
     if out.timed_out:
@@ -64,7 +110,16 @@ class RunLinterInput(BaseModel):
 
 
 def _run_linter(args: RunLinterInput, deps: RunDeps) -> ToolResult:  # noqa: ARG001 — ToolHandler shape; run_linter takes no input
-    command = deps.config.lint_command
+    command = _resolved_command(deps, "lint")
+    if not command:
+        return ToolResult(
+            tool_name="run_linter",
+            success=False,
+            error=(
+                "no lint command configured or discovered — set AVATAR_LINT_COMMAND or declare "
+                "one in the repo (CI workflow, package manifest, Makefile)"
+            ),
+        )
     out = deps.workspace.run(command, timeout=deps.config.command_timeout_seconds)
     if out.timed_out:
         return ToolResult(tool_name="run_linter", success=False, error=f"lint timed out: {command!r}")

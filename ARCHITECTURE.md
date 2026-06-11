@@ -40,7 +40,8 @@ flowchart TD
     subgraph act["Execution & gates"]
         TR["ToolRuntime: typed, phase-gated tools"]
         PP["PermissionPolicy: before_tool_call gate"]
-        V["Verifier: external-evidence gate"]
+        VP["VerificationPlanner: resolves + freezes the rubric (ADR-0007)"]
+        V["Verifier: pure executor over the frozen plan"]
     end
 
     subgraph report["Reporting & observation"]
@@ -55,6 +56,7 @@ flowchart TD
     R --> MC
     R --> TR
     R --> PP
+    R --> VP
     R --> V
     R --> AM
     R -->|emits| EM
@@ -62,6 +64,7 @@ flowchart TD
     EM --> UI["Renderer / CLI display"]
     TR --> WS["Workspace: path-confined, diff/rollback, command exec"]
     V --> WS
+    VP --> WS
 
     %% force the tiers to stack vertically into one column
     turn ~~~ act
@@ -70,7 +73,7 @@ flowchart TD
     classDef done fill:#1b4332,stroke:#52b788,color:#d8f3dc;
     classDef todo fill:#343a40,stroke:#868e96,color:#dee2e6;
     class TS,EM,EL done;
-    class SESS,CLI,R,CB,MC,TR,PP,V,AM,UI,WS todo;
+    class SESS,CLI,R,CB,MC,TR,PP,VP,V,AM,UI,WS todo;
 ```
 
 > Status note: as of **Phase 2.6**, the whole non-interactive engine is **[Implemented]** and wired end-to-end — and now importable as a library via the **`Harness` facade** (`from avatar_harness import Harness`); the CLI delegates to it. The runner **advances and enforces `phase`** (`investigating → editing → verifying`, edit-intent detected by tier, emitting `phase_changed`; an out-of-phase call is model-correctable), honors wall-clock/context budgets and the cancellation token (→ `incomplete`), and `ToolRuntime` isolates handler exceptions as failed `ToolResult`s. The model boundary is neutral and kind-aware (`task_kind` on the `ContextPacket`), and `openai` is an optional extra (lazy client — a `Harness` builds without a key).
@@ -85,7 +88,8 @@ flowchart TD
 | `ModelClient` | Constrained decision protocol; streaming/delta assembly. | [Implemented] |
 | `ToolRuntime` | Executes typed tools against the workspace; isolates handler exceptions as failed `ToolResult`s. | [Implemented] |
 | `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4 + sensitive-path denylist over declared paths). | [Implemented] (synchronous; async with the REPL) |
-| `Verifier` | Proves completion via external evidence. | [Implemented] (`investigate`/`edit`/`test_only`) |
+| `Verifier` | Proves completion via external evidence; pure executor over the frozen verification plan. | [Implemented] (`investigate`/`edit`/`test_only`) |
+| `VerificationPlanner` | Resolves the per-session verification plan (config override → deterministic detection → cited LLM fallback); the runner freezes it at the editing boundary (ADR-0007). | [Implemented] |
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id`; `EventLog` round-trips typed events too. | [Implemented] |
 | `HarnessEvent` + `EventBus` | Typed lifecycle union (`event_types.py`) + bounded per-subscriber fan-out (`bus.py`) the async loop publishes through, with the privileged write-ahead `JsonlEventJournal` (`journal.py`). | [Implemented] (3.0 fan-out + Lane 1 bounded queues/drop policy/journal) |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
@@ -256,15 +260,37 @@ The key subtlety: **a skipped check is not a passed check.** A naive "nothing fa
 
 Always-on guards (no edits outside the workspace, no likely secrets) stay `required` for every kind. Checks that don't apply run as `optional` (recorded, never gating).
 
-### 4.3 Where do the verifier's commands come from? — an open question
+### 4.3 Where do the verifier's commands come from? — the frozen verification plan (ADR-0007)
 
-The verifier knows **which** checks to run (from `task_kind`) and the **pass rule** (fixed). But **how** it runs a check — the concrete command for *this* repo (e.g. `pytest tests/test_auth.py`, `ruff check`) — is **not yet specified in the design or the code.** The nearest anchors today:
+**[Implemented]** (was an open question through Phase 3.2; closed by ADR-0007). The verifier knows **which** checks to run (from `task_kind`) and the **pass rule** (fixed). The concrete commands for *this* repo come from a per-session **verification plan** — a list of `PlannedCheck(name, command, kind, provenance)` — resolved once by the harness-owned **`VerificationPlanner`** and **frozen** onto `TaskState` before editing begins. Three concerns are kept deliberately distinct (`§5` survives only if they are):
 
-- `§9` lists repo conventions (`pyproject.toml`, `Makefile`, `README`) the `ContextBuilder` *prefers* — but for context selection, not as a verification command source.
-- `§10` defines the `run_tests(target, timeout)` / `run_linter(timeout)` tools — the *mechanism*, but not which target/command is canonical.
-- Smart **test-target inference** ("which tests cover this diff?") is explicitly **deferred** (`§9`, `§21`).
+| Concern | Owner | Mechanism |
+| --- | --- | --- |
+| **Discovery** — propose candidate commands | `VerificationPlanner` | tiered resolution (below); only ever *proposes* |
+| **Commitment** — fix the rubric for the session | `AgentRunner` | freeze at the `investigating → editing` phase boundary; journaled |
+| **Execution + judgment** | `Verifier` | pure executor: runs the frozen commands via `ws.run`, reads real exit codes, applies §12 |
 
-So the command→task mapping is a real gap. The expected MVP resolution (not yet built): commands come from `HarnessConfig` defaults plus lightweight convention detection; until inference exists, the verifier runs a configured/default command or the target the model already used. **This is flagged here so it isn't mistaken for a solved mechanism.**
+Resolution tiers, in order:
+
+```mermaid
+flowchart TD
+    CO["1 · Config override — AVATAR_TEST_COMMAND / AVATAR_LINT_COMMAND (always wins, per slot)"]
+    DET["2 · Deterministic detection — CI workflow run: steps > manifests (package.json, pyproject/tox/nox, Cargo.toml, go.mod, pre-commit) > Makefile targets; program-position classification, no LLM, no Python assumption"]
+    LLM["3 · LLM fallback (opt-in: AVATAR_PLANNER_MODEL) — proposes for unresolved slots only, must cite the declaring artifact; the harness validates the citation or rejects"]
+    FRZ["freeze onto TaskState at investigating → editing; journal verification_plan_frozen (command + provenance per check)"]
+    CO -->|slot unresolved| DET -->|slot unresolved| LLM
+    CO --> FRZ
+    DET --> FRZ
+    LLM --> FRZ
+```
+
+Key properties:
+
+- **The model never authors the rubric.** It can pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one — freezing is an authority transfer away from the model, not a cache.
+- **Python-ecosystem commands are emitted `python -m <tool>`**, so an installed-but-not-on-PATH tool still resolves; a genuinely missing binary surfaces as a failed check (exit 127 from `Workspace.run`), never a crash into the loop.
+- **Nothing discovered → an empty plan freezes** and verification fails legibly ("no verification contract discovered — declare one via `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`"), keeping the structural guards (diff present, no secrets). The universal minimal signal for no-contract repos remains the ADR's open question.
+- **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.
+- Smart **test-target inference** ("which tests cover this diff?") remains **deferred** (`§9`, `§21`); the plan is per-session, not per-diff.
 
 ### 4.4 Interactive vs. autonomous authority (`§23.5`)
 
@@ -307,7 +333,7 @@ sequenceDiagram
 | diff exists | `Workspace` diff | **pass** — `auth/session.py` changed |
 | no unexpected files changed | diff vs. expected set | **pass** — only `auth/session.py` |
 | no placeholders/secrets | static scan over diff | **pass** |
-| targeted tests pass | run test command *(source: open §4.3)* | **pass** — `pytest tests/test_auth.py` green |
+| targeted tests pass | run the frozen plan's test command *(source: §4.3 verification plan)* | **pass** — `pytest tests/test_auth.py` green |
 | lint/types clean | run lint command | **pass** — `ruff` clean |
 
 Pass criterion: no required `fail` ✓ · no disallowed `skip` ✓ · positive signal present (the passing test) ✓ → **`passed = true`** → `outcome = success`.
@@ -331,11 +357,11 @@ What exists in `src/avatar_harness/` today (through Phase 3.2 — the MVP cockpi
 
 | Module | Contents | Maps to |
 | --- | --- | --- |
-| `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command`) | `§8` config |
-| `state.py` | `TaskState` + `Evidence` / `DecisionRecord` / `CommandRecord` / `CheckResult` / `VerifierResult`; `terminal`, `add_feedback`, `block` | `§7`, `§12` data shapes |
+| `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command` as the plan's override tier, `planner_model`) | `§8` config |
+| `state.py` | `TaskState` + `Evidence` / `DecisionRecord` / `CommandRecord` / `CheckResult` / `VerifierResult` / `PlannedCheck`; `terminal`, `add_feedback`, `block`, `freeze_verification_plan` | `§7`, `§12` data shapes |
 | `events.py` · `eventlog.py` | `Emitter` (observation-only, stamps `ts` + `session_id`) + `EventLog` (JSONL subscriber; CLI defaults to a per-session `events/<session_id>.jsonl` + `latest.jsonl` pointer) | `§13`, `§23` |
-| `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log`, clean-start assertion | `§8`, `§10`, `§15` |
-| `deps.py` | `RunDeps`, `CancellationToken` — run-scoped, no globals | `§8` |
+| `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log` (a missing binary / empty / unparseable command is a failed `CommandOutput` — exit 127 — never a raise), clean-start assertion | `§8`, `§10`, `§15` |
+| `deps.py` | `RunDeps` (incl. the mirrored frozen `verification_plan` for `run_tests`/`run_linter`), `CancellationToken` — run-scoped, no globals | `§8` |
 | `event_types.py` | Typed `HarnessEvent` discriminated union (closed/versioned) + `EventSink`/`ApprovalController` protocols + `parse_event`/`dump_event`/`load_events` | `§13`, ADR-0001/0002 |
 | `session.py` | `Session` (two-plane: `events()` out · `resolve_approval(remember=)`/`cancel()` in, optional `journal=`) + `ApprovalGrant` (session-scoped `[a] always`; the gate stays harness-owned, the Session answers from a remembered grant) | `§13`, `§23` |
 | `bus.py` | `EventBus` — bounded per-subscriber fan-out (soft cap sheds only `*_update`; lifecycle/control never dropped) + the privileged journal hook; non-blocking, slow/broken subscriber never stalls the loop | `§13`, ADR-0001 |
@@ -344,7 +370,8 @@ What exists in `src/avatar_harness/` today (through Phase 3.2 — the MVP cockpi
 | `permission.py` | `PermissionPolicy` + `ToolPermission` — the synchronous `before_tool_call` gate | `§11` |
 | `model_client.py` | Constrained decision union + `OpenAIModelClient` (lazy client — no key to construct); kind-aware prompt via `_KIND_FRAMING` | `§6` |
 | `context.py` | `ContextBuilder` + `ContextPacket` (carries `task_kind`) — compact, phase-gated per-turn packet | `§9` |
-| `verifier.py` | `Verifier` — `investigate`/`edit`/`test_only` gates; runs its own verification command | `§12` |
+| `verifier.py` | `Verifier` — `investigate`/`edit`/`test_only` gates; pure executor over the frozen verification plan (config override tier as the no-plan fallback) | `§12`, ADR-0007 |
+| `planner.py` | `VerificationPlanner` — per-session plan resolution: config override → deterministic detection (CI > manifests > Makefile, program-position classification) → citation-validated LLM fallback (`AVATAR_PLANNER_MODEL`, opt-in) | ADR-0007 |
 | `artifact.py` | `ArtifactManager` + `Artifact` — `status = state.outcome`, files/commands/verification/diff | `§14` |
 | `runner.py` | `AgentRunner` — the §5 loop as async `arun()` (sync `run()` wraps it); runner-owned mutation; gate consult + awaited approval; phase advance/enforce + `phase_changed`; budgets + cancellation; typed-event publishing; mirrors `ws.command_log` into `state.commands_run` | `§5`, `§8` |
 | `harness.py` | `Harness` facade — wires defaults, every seam overridable; `from_env()` / `run()` / `arun()` / `session()` | `§8` |

@@ -141,6 +141,32 @@ def test_workspace_run_times_out(tmp_path):
     assert out.exit_code is None
 
 
+def test_workspace_run_missing_binary_is_failed_output_not_crash(tmp_path):
+    # ADR-0007 robustness floor: a missing binary must surface as a failed
+    # CommandOutput (shell convention exit 127), never raise into the loop.
+    ws = Workspace(tmp_path)
+    out = ws.run("definitely-not-a-real-binary-xyz --version")
+    assert out.exit_code == 127
+    assert out.timed_out is False
+    assert "not found" in out.stderr
+    assert ws.command_log[-1] is out  # still recorded at the chokepoint
+
+
+def test_workspace_run_empty_command_is_failed_output(tmp_path):
+    ws = Workspace(tmp_path)
+    out = ws.run("")
+    assert out.exit_code == 127
+    assert out.stderr
+
+
+def test_workspace_run_unparseable_command_is_failed_output(tmp_path):
+    # shlex chokes on the unbalanced quote — that too is a legible failure, not a raise.
+    ws = Workspace(tmp_path)
+    out = ws.run("echo 'unclosed")
+    assert out.exit_code == 127
+    assert out.stderr
+
+
 def test_workspace_records_command_log(tmp_path):
     # Every command run through the workspace is recorded at the single chokepoint,
     # so the runner can surface the full command ledger (§7 commands_run, §14 artifact).
