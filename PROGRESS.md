@@ -335,4 +335,4 @@ From §21, one at a time, each justified by friction actually hit.
 
 ## Decision log
 
-Moved to [`DECISIONS.md`](DECISIONS.md) — the chronological record of *why* the build is shaped as it is. **Record major design decisions there, not here.** This file stays focused on *how far* the build has gotten (checklists).
+Design decisions live in [`docs/adr/`](docs/adr/) (ADRs — the record of *why* the build is shaped as it is); decisions through 2026-06-11 are in the frozen [`DECISIONS.md`](DECISIONS.md) archive. **Record major design decisions as ADRs, not here.** This file stays focused on *how far* the build has gotten (checklists).

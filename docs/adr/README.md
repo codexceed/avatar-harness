@@ -13,6 +13,9 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0005](0005-transient-edits-in-investigate.md) | Transient edits in `investigate` tasks (net-zero-diff relaxation) | Accepted — implemented 2026-06-11 |
 | [0006](0006-git-independent-project-scope.md) | Git-independent project scope for file discovery | Proposed |
 | [0007](0007-dynamic-verification-plan-resolution.md) | Dynamic, no-dependency verification-plan resolution | Accepted — implemented 2026-06-11 |
+| [0008](0008-non-executable-edit-verification.md) | Verification contract for non-executable edits | Proposed |
+| [0009](0009-execution-sandbox-isolation.md) | Execution sandbox isolation | Proposed |
+| [0010](0010-git-status-diff-as-model-tools.md) | `git_status` / `git_diff` as model-callable tools | Proposed |
 
 ## Conventions
 

@@ -1,0 +1,25 @@
+name: release-please
+
+# Conventional-commit-driven release automation: maintains CHANGELOG.md, bumps the
+# version (pyproject.toml + __init__.py), and opens a release PR. Merging that PR tags
+# the release and publishes a GitHub Release. See release-please-config.json.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Never cancel a release run mid-flight.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

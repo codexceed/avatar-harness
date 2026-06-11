@@ -1,8 +1,16 @@
-# DECISIONS — design decision log
+# DECISIONS — design decision log (FROZEN ARCHIVE)
 
-**The running record of *why* the build is shaped the way it is.** Each entry is a dated decision: the choice made, the alternatives weighed, the trade-off accepted. `PROGRESS.md` tracks *how far* the build has gotten (checklists); `HARNESS_DESIGN.md` is the *what/why* spec; `ARCHITECTURE.md` is the current system map. This file is the chronological ledger of decisions taken along the way.
+> **⚠️ Frozen as of 2026-06-11 — do not add entries.** This log conflated two
+> concerns and drifted into a proxy changelog. Going forward they are split:
+> - **Design decisions** (the *why* — chosen approach, rejected alternatives,
+>   trade-offs) are recorded as **ADRs** under [`docs/adr/`](docs/adr/).
+> - **Changes** (the *what* shipped) are the **`CHANGELOG.md`**, generated
+>   automatically by release-please from Conventional Commits.
+>
+> The entries below are retained as a historical archive — several ADRs link to
+> their dated bullets — but nothing new is appended here.
 
-> **When to add an entry:** whenever a **major design decision** is made — a chosen approach, a rejected alternative, a scope cut, a non-obvious trade-off, or a load-bearing clarification. Append a dated bullet (`- **YYYY-MM-DD** — …`) and keep the *why* and the alternatives, not just the *what*. Routine implementation that merely follows an existing decision needs no entry.
+**The running record of *why* the build was shaped the way it is** (through 2026-06-11). Each entry is a dated decision: the choice made, the alternatives weighed, the trade-off accepted. `PROGRESS.md` tracks *how far* the build got (checklists); `HARNESS_DESIGN.md` is the *what/why* spec; `ARCHITECTURE.md` is the current system map.
 
 ---
 
