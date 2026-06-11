@@ -1,6 +1,6 @@
 # ADR 0002 — Interactive TUI cockpit and the MVP coding-agent feature set
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented 2026-06-09 (Phase 3 MVP cockpit complete through 3.2e: Textual cockpit + modals, `run_command`, visible/correctable modes, plan mode, conversational-verification authority, CLI launch). D3's mode heuristic was later revised to LLM classification (`DECISIONS.md` 2026-06-10, PR #33 — the objection was hiddenness, not LLM-ness). Closed 2026-06-11.
 - **Date:** 2026-06-09
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — design; Codex (gpt-5.5, xhigh) — SOTA cross-validation against shipping coding-agent CLIs (Claude Code, OpenAI Codex CLI, Aider, Gemini CLI, Cursor CLI, OpenCode)
