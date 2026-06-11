@@ -4,7 +4,7 @@
 > **Scope:** A ground-up, minimally functional but correctly shaped coding agent harness — a new standalone Python project, not an extension of the current CLI chat app.
 > **Posture:** Build the *shape* completely (loop, structured state, permission gate, verification, event log, reversibility); keep each component's *implementation* thin. A shallow-but-complete harness beats a deep-but-partial one, because the shape is what's expensive to change later.
 
-This document is the canonical design/rationale spec. `PROGRESS.md` is the authoritative build ledger; `ARCHITECTURE.md` is the current system map with implementation-status markers; `README.md` is user-facing usage documentation. When the code and this document diverge, treat that as design drift to resolve explicitly, not as an implicit code change. Major decisions taken *after* this spec are recorded in `DECISIONS.md` and, for Phase 3, in `docs/adr/` (ADR-0001, ADR-0002); where an ADR and this spec disagree, the ADR is newer and wins for that decision.
+This document is the canonical design/rationale spec. `PROGRESS.md` is the authoritative build ledger; `ARCHITECTURE.md` is the current system map with implementation-status markers; `README.md` is user-facing usage documentation. When the code and this document diverge, treat that as design drift to resolve explicitly, not as an implicit code change. Major decisions taken *after* this spec are recorded as ADRs in `docs/adr/` (earlier ones, through 2026-06-11, are in the frozen `DECISIONS.md` archive); where an ADR and this spec disagree, the ADR is newer and wins for that decision.
 
 ## 1. Purpose
 

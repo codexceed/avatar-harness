@@ -15,7 +15,10 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 | `HARNESS_DESIGN.md` | Full design spec — every decision + rationale, cross-referenced by §N. Source of truth. | Implementing a component (read its §N first); resolving *why* a thing is shaped as it is. |
 | `ARCHITECTURE.md` | A synthesized, **visual** map: high-level component graph + deep dives on task execution and verification + a dry-run walkthrough, with current implementation status. | **Broad, global-context work** — feature implementation, deep debugging, deep Q&A, onboarding — where you need the whole-system picture. |
 | `PROGRESS.md` | Phased build ledger (checklists), TDD protocol. | Resuming work; knowing what's done and what's next. |
-| `DECISIONS.md` | The chronological design-decision log — *why* the build is shaped as it is (choices made, alternatives rejected, trade-offs accepted). | Resolving why a past decision was made; before re-litigating a settled choice. |
+| `docs/adr/` | Architecture Decision Records — *why* the build is shaped as it is (one decision per ADR: choice, rejected alternatives, trade-offs). The decision log going forward. | Resolving/recording why a design decision was made; before re-litigating a settled choice. |
+| `CHANGELOG.md` | The *what shipped* — generated automatically by release-please from Conventional Commits. Do not hand-edit. | Seeing what changed in a release. |
+
+> `DECISIONS.md` is a **frozen historical archive** (decisions through 2026-06-11); it is no longer appended to. New design decisions are ADRs; new changes are the changelog.
 
 **When to skip `ARCHITECTURE.md`:** highly targeted, local work — a specific edit, a single command, a localized bugfix — where whole-system context would only add noise. Reach for it only when the task spans the system.
 
@@ -23,7 +26,7 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 
 **Keep `README.md` current:** when a change is **user-facing**, update `README.md` as part of that same change. User-facing means anything that alters how someone installs, configures, or runs the tool — new/changed CLI commands or flags, env vars / config keys, requirements or supported platforms, the set of task kinds the CLI exposes, installation steps, or the project's status as advertised there. Internal refactors, test-only changes, and design-doc edits are not user-facing and need no README update.
 
-**Keep `DECISIONS.md` current:** when you make a **major design decision** — a chosen approach, a rejected alternative, a scope cut, a non-obvious trade-off, or a load-bearing clarification — append a dated entry to `DECISIONS.md` (the decision log lives there, **not** in `PROGRESS.md`), capturing the *why* and the alternatives, not just the *what*. Routine implementation that merely follows an existing decision needs no entry.
+**Record design decisions as ADRs:** when you make a **major design decision** — a chosen approach, a rejected alternative, a scope cut, a non-obvious trade-off, or a load-bearing clarification — write a new ADR under `docs/adr/` (Nygard-style, one decision per ADR; supersede rather than edit an accepted one) and add it to `docs/adr/README.md`. Capture the *why* and the alternatives, not just the *what*. Routine implementation that merely follows an existing decision needs no ADR. Do **not** append to `DECISIONS.md` (frozen) or hand-write changelog prose — the *what shipped* comes from Conventional Commit messages, which release-please rolls into `CHANGELOG.md`.
 
 ## Commands
 
