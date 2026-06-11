@@ -128,9 +128,10 @@ run_command = ToolDefinition(
     input_model=RunCommandInput,
     handler=_run_command,
     # editing/verifying only (ADR-0002): phase governs the *workflow contract* even though
-    # tier-3 is the security boundary — keeping it out of `investigating` keeps read-only
-    # planning read-only and avoids an investigate task reaching the (command-ungrounded)
-    # verifier dead-end. A pure-execution task is a later, explicit mode, not this tool.
+    # tier-3 is the security boundary. Deliberately NOT admitted in investigate tasks:
+    # ADR-0005 relaxes tier-1 writes only, so no command tool runs from `investigating` —
+    # the recorded ADR-0005 limitation (a true instrument→run→observe→revert loop needs a
+    # follow-up decision). A pure-execution task is a later, explicit mode, not this tool.
     phases=_VERIFY_PHASES,
     permission_tier=3,
 )

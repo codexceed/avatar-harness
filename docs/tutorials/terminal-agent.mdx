@@ -63,7 +63,9 @@ absorb:
   tests) run over it, never the model's say-so. "Done" is only ever a *proposal*
   the verifier disposes of.
 - **`task_kind` selects the verification contract.** `edit` (used here) requires
-  a verifiable diff with a passing check over it; `investigate` is read-only Q&A;
+  a verifiable diff with a passing check over it; `investigate` is grounded Q&A that must leave the tree
+  with zero net diff (transient instrumentation is legal but must be reverted
+  — ADR-0005);
   `test_only` requires new tests that pass.
 
 ## Part 2 — the streaming agent

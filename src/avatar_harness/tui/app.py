@@ -307,7 +307,7 @@ class CockpitApp(App):
             self.query_one("#status", Static).update(self._status_text())
 
     async def _run_plan_goal(self, text: str) -> None:
-        """Plan mode: stream the read-only plan → `PlanModal` → (on approve) stream the build.
+        """Plan mode: stream the no-net-change plan → `PlanModal` → (on approve) stream the build.
 
         On revise the plan is re-run with the revision; an empty/abnormal plan or a declined
         revision is surfaced without building. The goal's turn is recorded once via `record_goal`.
