@@ -360,6 +360,31 @@ def test_run_tests_falls_back_to_frozen_plan_command(git_repo):
     assert "plan tests ran" in result.content
 
 
+def test_run_tests_appends_target_to_pytest_style_command(git_repo):
+    # A pytest-style invocation accepts positional file targets — the target scopes it.
+    (git_repo / "tests").mkdir()
+    (git_repo / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    rt = _edit_runtime(git_repo, test_command="python -m pytest -q")
+    result = rt.execute("run_tests", {"target": "tests/test_ok.py"})
+    assert result.success
+    assert "1 passed" in result.content
+
+
+def test_run_tests_target_on_untargetable_command_is_model_correctable(git_repo):
+    # PR-#40 review: appending a file target to `make test` produces
+    # `make test tests/x.py` — broken. The mismatch is fed back as a
+    # model-correctable error naming the declared contract, never executed.
+    rt = _plan_runtime(
+        git_repo,
+        [{"name": "tests", "command": "make test", "kind": "test", "provenance": "Makefile:test"}],
+    )
+    result = rt.execute("run_tests", {"target": "tests/test_ok.py"})
+    assert result.success is False
+    assert "make test" in (result.error or "")
+    assert "target" in (result.error or "")
+    assert not any("tests/test_ok.py" in c.command for c in rt.deps.workspace.command_log)
+
+
 def test_run_tests_with_no_command_or_plan_fails_legibly(git_repo):
     rt = _edit_runtime(git_repo, test_command="", lint_command="")
     result = rt.execute("run_tests", {})

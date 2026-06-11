@@ -165,6 +165,78 @@ def test_planner_reads_ci_block_scalar_run_steps(tmp_path):
     assert _by_kind(_resolve(tmp_path))["test"].command == "npm test"
 
 
+def test_planner_ci_install_lines_are_not_test_commands(tmp_path):
+    # PR-#40 review (HIGH): `pip install pytest ruff` token-matched as the test
+    # command and won by rank — a vacuous always-passing check. Dependency/setup
+    # lines must be skipped; classification keys on the program position.
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - run: sudo apt-get update && sudo apt-get install -y ripgrep\n"
+        "      - run: pip install pytest ruff\n"
+        "      - run: uv sync --frozen\n"
+        "      - run: npm install eslint\n"
+        "      - run: cd subdir\n"
+        "      - run: export FOO=pytest\n"
+        "      - run: echo pytest done\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Makefile").write_text("test:\n\techo t\n", encoding="utf-8")
+    by_kind = _by_kind(_resolve(tmp_path))
+    # No CI candidate survives; detection falls through to the next tier.
+    assert by_kind["test"].command == "make test"
+    assert by_kind["test"].provenance == "Makefile:test"
+    assert "lint" not in by_kind
+
+
+def test_planner_ci_classifies_on_program_position(tmp_path):
+    # The invocation segment after setup steps (env prefix, && chaining) is the
+    # declared command; the install half of the line never is.
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - run: pip install -e . && CI=1 pytest -q tests/\n"
+        "      - run: npx eslint src\n",
+        encoding="utf-8",
+    )
+    by_kind = _by_kind(_resolve(tmp_path))
+    assert by_kind["test"].command == "CI=1 pytest -q tests/"
+    assert by_kind["lint"].command == "npx eslint src"
+
+
+def test_planner_malformed_package_json_never_raises(tmp_path):
+    # PR-#40 review: resolve() runs inside the loop and must never crash on a
+    # malformed repo artifact — the exact failure class ADR-0007 exists to remove.
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": {"cmd": "x"}, "lint": None}}), encoding="utf-8"
+    )
+    assert _resolve(tmp_path) == []
+    (tmp_path / "package.json").write_text('{"scripts": "not-a-table"}', encoding="utf-8")
+    assert _resolve(tmp_path) == []
+    (tmp_path / "package.json").write_text("{not json", encoding="utf-8")
+    assert _resolve(tmp_path) == []
+
+
+def test_planner_malformed_pyproject_never_raises(tmp_path):
+    # Non-table values where tables are expected must be skipped, not raised on —
+    # and a string `tool`/`project` must not substring-match into a detection.
+    (tmp_path / "pyproject.toml").write_text('project = "pytest"\ntool = "pytest"\n', encoding="utf-8")
+    assert _resolve(tmp_path) == []
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = "pytest"\n\n[project.optional-dependencies]\nx = "pytest"\n',
+        encoding="utf-8",
+    )
+    assert _resolve(tmp_path) == []
+    (tmp_path / "pyproject.toml").write_text("not toml [", encoding="utf-8")
+    assert _resolve(tmp_path) == []
+
+
 def test_planner_empty_repo_resolves_empty_plan(tmp_path):
     # No contract discovered → an EMPTY plan (the verifier fails legibly), never an
     # invented Python default (the old `pytest -q`/`ruff check` assumption).
