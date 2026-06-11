@@ -63,6 +63,49 @@ def test_list_files_dir_pattern_lists_contained_files(tmp_path):
     assert "pkg/sub/n.py" in result.content
 
 
+def test_list_files_wildcards_skip_hidden(tmp_path):
+    # pathlib glob matches dot-prefixed entries, unlike rg: a venv or .git inside the
+    # workspace turned `*`/`**/*` into thousands of junk paths (4k+ in a 5-file
+    # workspace, found following the tutorial 2026-06-10). Discovery mirrors rg's
+    # default: hidden is invisible to wildcards, readable when explicitly named.
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / ".venv" / "lib").mkdir(parents=True)
+    (tmp_path / ".venv" / "lib" / "x.py").write_text("", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / ".cache").mkdir()
+    (tmp_path / "src" / ".cache" / "junk.py").write_text("", encoding="utf-8")
+    runtime = _runtime(tmp_path)
+    top = runtime.execute("list_files", {"glob": "*"})
+    assert top.success
+    # `src` (non-hidden dir) still expands per Phase 2.5; `.venv` no longer does.
+    assert top.content.splitlines() == ["a.py", "src/m.py"]
+    recursive = runtime.execute("list_files", {"glob": "**/*"})
+    assert recursive.success
+    assert recursive.content.splitlines() == ["a.py", "src/m.py"]  # nested hidden also skipped
+
+
+def test_list_files_dir_expansion_skips_hidden_children(tmp_path):
+    # The Phase-2.5 directory expansion must not walk into hidden children either.
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "y.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / ".cache").mkdir()
+    (tmp_path / "pkg" / ".cache" / "z.py").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": "pkg"})
+    assert result.success
+    assert result.content == "pkg/y.py"
+
+
+def test_list_files_explicit_hidden_pattern_still_lists(tmp_path):
+    # The escape hatch: a glob that NAMES a dot-prefixed segment opts into hidden —
+    # `.github/*` must keep working (mirrors `rg pattern .github/` with an explicit path).
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": ".github/**/*"})
+    assert result.success
+    assert result.content == ".github/workflows/ci.yml"
+
+
 def test_list_files_result_is_capped_with_overflow_note(tmp_path, monkeypatch):
     # A directory match must not dump thousands of paths into context.
     monkeypatch.setattr(filesystem, "_LIST_CAP", 2)
