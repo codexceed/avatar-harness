@@ -210,15 +210,15 @@ class ScriptedModel(ModelClient):
         return d
 
 harness = Harness(
-    config=HarnessConfig(workspace_root=str(repo)),
+    config=HarnessConfig(workspace_root="."),
     model=ScriptedModel([
         ModelDecision(thought_summary="read it",
-                      action=ToolCall(name="read_file", input={"path": "calc.py"})),
+                      action=ToolCall(name="read_file", input={"path": "README.md"})),
         ModelDecision(thought_summary="answer",
-                      action=FinalAnswer(answer="calc.py defines add(); see lines 1-2.")),
+                      action=FinalAnswer(answer="Per README.md (line 1), this repo is …")),
     ]),
 )
-state = harness.run("what does calc.py do?")   # runs the real loop, verifier and all
+state = harness.run("what does this repo do?")   # runs the real loop, verifier and all
 ```
 
 This is exactly how the project's own test suite drives the engine.

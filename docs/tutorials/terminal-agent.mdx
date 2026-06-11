@@ -45,7 +45,7 @@ The smallest possible consumer — no streaming, no UI:
 ```python
 from avatar_harness import Harness
 
-state = Harness.from_env().run("what does calc.py do?", task_kind="investigate")
+state = Harness.from_env().run("what does this repo do?", task_kind="investigate")
 print(state.outcome, "\n", state.final_answer)
 ```
 
@@ -71,7 +71,8 @@ run_task = asyncio.create_task(session.run())     # drive the engine
 
 async for event in session.events():              # observe it
     if isinstance(event, ModelDecisionEvent):
-        print(f"  · {event.thought}")
+        if event.thought:                         # often empty under native tool-calling
+            print(f"  · {event.thought}")
     elif isinstance(event, ToolStart):
         print(f"  → {event.tool} {event.input}")
     elif isinstance(event, ToolEnd):
@@ -174,7 +175,7 @@ yet on the exported surface, so treat it as internal for now.
 
 ## The full listing
 
-Verified end-to-end (the offline run below):
+Verified end-to-end (the live run below, lightly elided):
 
 ```python  expandable
 """mini-agent: a bare-bones terminal agent on avatar-harness (~90 lines)."""
@@ -201,7 +202,8 @@ async def render(session) -> None:
     """The observation plane: draw each typed event; answer approvals on stdin."""
     async for event in session.events():
         if isinstance(event, ModelDecisionEvent):
-            print(f"  · {event.thought}")
+            if event.thought:  # often empty under native tool-calling
+                print(f"  · {event.thought}")
         elif isinstance(event, ToolStart):
             print(f"  → {event.tool} {event.input}")
         elif isinstance(event, ToolEnd):
@@ -245,24 +247,36 @@ async def main(goal: str, kind: str) -> int:
 
 
 if __name__ == "__main__":
-    goal = " ".join(sys.argv[1:]) or "what does calc.py do?"
+    goal = " ".join(sys.argv[1:]) or "what does this repo do?"
     raise SystemExit(asyncio.run(main(goal, "investigate")))
 ```
 
 ```text
-$ python mini_agent.py "what does calc.py do?"
-  · read the file first
-  → read_file {'path': 'calc.py'}
-  ✓ read calc.py
-  · answer with evidence
+$ python mini_agent.py "what does this repo do?"
+  → list_files {'glob': '**/*'}
+  ✓ 1525 file(s) matching '**/*'
+  → list_files {'glob': 'README*'}
+  ✓ 1 file(s) matching 'README*'
+  → read_file {'path': 'README.md'}
+  ✓ read README.md
+  → read_file {'path': 'README.md', 'line_range': [1, 120]}
+  ✓ read README.md
 — phase: investigating → verifying
 — verification ✓ verification passed
 
 outcome: success
 
-calc.py defines add(a, b) returning a + b (calc.py lines 1-2).
+This repo (`avatar-harness`) is a **Python coding-agent harness**: it provides
+the runtime around an LLM to turn natural-language repo tasks into a controlled
+loop of **inspect/edit/run/verify**.
+[…]
+Evidence inspected:
+- `README.md` lines 1–120 (title + opening description + Status + loop/design)
 verification: verification passed
 ```
+
+(Your output will differ — it's a live model run against your repo; the shape
+is what matters.)
 
 ## Sidebar — run it offline
 
@@ -282,18 +296,18 @@ class ScriptedModel(ModelClient):
         return d
 
 harness = Harness(
-    config=HarnessConfig(workspace_root="repo", test_command="", lint_command=""),
+    config=HarnessConfig(workspace_root=".", test_command="", lint_command=""),
     model=ScriptedModel([
-        ModelDecision(thought_summary="read the file first",
-                      action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(thought_summary="read the readme first",
+                      action=ToolCall(name="read_file", input={"path": "README.md"})),
         ModelDecision(thought_summary="answer with evidence",
-                      action=FinalAnswer(answer="calc.py defines add(a, b) (calc.py lines 1-2).")),
+                      action=FinalAnswer(answer="Per README.md (line 1), this repo is …")),
     ]),
 )
 ```
 
-Swap this `harness` into `main()` and the run above reproduces byte-for-byte —
-real loop, real verifier, real journal, zero network.
+Swap this `harness` into `main()` and the same flow runs offline — real loop,
+real verifier, real journal, zero network.
 
 ## Where to go from here
 
