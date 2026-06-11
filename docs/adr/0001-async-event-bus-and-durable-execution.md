@@ -1,6 +1,6 @@
 # ADR 0001 — Async lifecycle event bus, two-plane UX integration, and durable execution
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented 2026-06-09 through Phase 3.0–3.2 (async `arun()` core, typed event union, bounded `EventBus` + write-ahead `JsonlEventJournal`, two-plane `Session`; PRs #7, #11). The **durable-execution slice** (checkpoint + semantics-aware `resume()`) remains deferred to Phase 3.3 and is not yet built. Closed 2026-06-11.
 - **Date:** 2026-06-09
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — design; Codex (gpt-5.4, xhigh) — adversarial refinement
