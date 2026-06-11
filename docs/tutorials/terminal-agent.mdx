@@ -9,10 +9,13 @@ agent's activity, answers approval prompts on stdin, cancels gracefully on
 Ctrl-C, and leaves a replayable journal. Everything it uses is on the exported
 surface — no internals.
 
-The full listing is at the [end](#the-full-listing); each step below adds one
-capability.
+It comes in two parts: a four-line **one-shot** agent to ground the core ideas
+(Part 1), then a **streaming** agent built one capability at a time (Part 2).
+The two are separate programs — Part 1 is the black-box version, Part 2 shows the
+work. The full listing of the streaming agent is at the
+[end](#the-full-listing).
 
-## Step 0 — setup
+## Setup
 
 Not yet on PyPI — install from source (quote the extras; zsh glob-expands the
 brackets otherwise):
@@ -38,9 +41,10 @@ harness pins `HEAD` as its diff baseline (see the
 [quickstart](/guides/quickstart#first-run--the-cli) for the `allow_dirty`
 escape hatch).
 
-## Step 1 — one-shot batch agent
+## Part 1 — the one-shot agent
 
-The smallest possible consumer — no streaming, no UI:
+The smallest possible consumer — no streaming, no UI. Complete and runnable
+exactly as written:
 
 ```python
 from avatar_harness import Harness
@@ -58,45 +62,78 @@ Two things to absorb before adding anything:
   Q&A; `edit` requires a verifiable diff; `test_only` requires new tests that
   pass.
 
-## Step 2 — go async and stream events
+## Part 2 — the streaming agent
+
+Part 1 is a whole agent, but a black box: you get the verdict, never the work.
+The rest of the tutorial builds a **separate** program — a single-file terminal
+agent that shows each step as it happens. From here the code accretes toward the
+[full listing](#the-full-listing); each section adds one capability.
+
+### Stream the run
 
 `harness.session(...)` returns a not-yet-started `Session`: `run()` drives the
 engine while `events()` yields a typed stream you render. This split is the
 **two-plane contract** — the stream is observation-only and can never alter the
-run.
+run. Put the render loop in its own coroutine, and a `main()` that wires the
+goal and lets the two run together:
 
 ```python
-session = harness.session(goal, task_kind=kind)
-run_task = asyncio.create_task(session.run())     # drive the engine
+import asyncio
 
-async for event in session.events():              # observe it
-    if isinstance(event, ModelDecisionEvent):
-        if event.thought:                         # often empty under native tool-calling
-            print(f"  · {event.thought}")
-    elif isinstance(event, ToolStart):
-        print(f"  → {event.tool} {event.input}")
-    elif isinstance(event, ToolEnd):
-        print(f"  {'✓' if event.success else '✗'} {event.summary}")
-    elif isinstance(event, PhaseChanged):
-        print(f"— phase: {event.old} → {event.new}")
-    elif isinstance(event, VerificationEnd):
-        print(f"— verification {'✓' if event.passed else '✗'} {event.summary}")
-    elif isinstance(event, AgentEnd):
-        print(f"\noutcome: {event.outcome}")
+from avatar_harness import (
+    AgentEnd,
+    Harness,
+    ModelDecisionEvent,
+    PhaseChanged,
+    ToolEnd,
+    ToolStart,
+    VerificationEnd,
+)
 
-state = await run_task
+
+async def render(session) -> None:                    # the observation plane
+    async for event in session.events():
+        if isinstance(event, ModelDecisionEvent):
+            if event.thought:                         # often empty under native tool-calling
+                print(f"  · {event.thought}")
+        elif isinstance(event, ToolStart):
+            print(f"  → {event.tool} {event.input}")
+        elif isinstance(event, ToolEnd):
+            print(f"  {'✓' if event.success else '✗'} {event.summary}")
+        elif isinstance(event, PhaseChanged):
+            print(f"— phase: {event.old} → {event.new}")
+        elif isinstance(event, VerificationEnd):
+            print(f"— verification {'✓' if event.passed else '✗'} {event.summary}")
+        elif isinstance(event, AgentEnd):
+            print(f"\noutcome: {event.outcome}")
+
+
+async def main() -> int:
+    harness = Harness.from_env()
+    goal, kind = "what does this repo do?", "investigate"
+    session = harness.session(goal, task_kind=kind)
+
+    run_task = asyncio.create_task(session.run())     # drive the engine
+    await render(session)                             # observe it
+    state = await run_task
+    return 0 if state.outcome == "success" else 1
 ```
 
 `events()` subscribes **eagerly** — at call time, not first iteration — so
-creating the run task first loses nothing. The stream ends by itself after
-`agent_end`. The full event catalog is in the
+creating the run task before the loop loses nothing. The stream ends by itself
+after `agent_end`. The full event catalog is in the
 [SDK guide](/guides/sdk#the-event-catalog).
 
-## Step 3 — answer approvals
+Each section below extends this skeleton — a new branch in `render`, or a few
+lines in `main` — and the imports grow to match (the [full listing](#the-full-listing)
+has the complete set).
+
+### Answer approvals
 
 Gated calls (tier-3 tools like `run_command`, or a sensitive-path hit) are
 *announced* on the event stream as `ApprovalRequested`, and the run blocks until
-you decide via the **control plane**:
+you decide via the **control plane**. Add one more branch to `render`'s loop
+(and `ApprovalRequested` to the imports):
 
 ```python
 elif isinstance(event, ApprovalRequested):
@@ -125,12 +162,12 @@ elif isinstance(event, ApprovalRequested):
   watch it get refused.
 </Note>
 
-## Step 4 — cancel gracefully on Ctrl-C
+### Cancel gracefully on Ctrl-C
 
 `session.cancel()` trips the run's cancellation token; the loop observes it at
 the next checkpoint, records the interruption as feedback, and still settles to
 a terminal state — so `await run_task` always returns a `TaskState`, never
-hangs:
+hangs. Register the handler in `main`, before starting the run task:
 
 ```python
 asyncio.get_running_loop().add_signal_handler(
@@ -142,10 +179,11 @@ Any in-flight approval is denied on cancel, so a run blocked on the gate can't
 hang either. (`add_signal_handler` is POSIX-only; on Windows, catch
 `KeyboardInterrupt` around `asyncio.run` instead and accept the harder stop.)
 
-## Step 5 — journal the run
+### Journal the run
 
-Pass a `JsonlEventJournal` and every event is committed to disk **before** any
-subscriber renders it — a crash loses nothing:
+Pass a `JsonlEventJournal` to `harness.session(...)` in `main` and every event
+is committed to disk **before** any subscriber renders it — a crash loses
+nothing:
 
 ```python
 journal = JsonlEventJournal(Path("events") / "mini-agent.jsonl")
@@ -155,9 +193,10 @@ session = harness.session(goal, task_kind=kind, journal=journal)
 Reload it later with `load_events(path)` — the same typed objects, for replay,
 debugging, or evals.
 
-## Step 6 — the final report
+### The final report
 
-The terminal `TaskState` carries everything a report needs:
+The terminal `TaskState` carries everything a report needs — swap the bare
+`return` in `main` for a report:
 
 ```python
 if state.final_answer:
