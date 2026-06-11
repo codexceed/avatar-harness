@@ -25,16 +25,55 @@ def test_investigate_gate_fails_on_zero_evidence(tmp_path):
     assert report.recommended_next_action  # repair direction is provided
 
 
-def test_investigate_gate_fails_on_unintended_diff(tmp_path):
-    # Grounded answer, but the task modified a file — an investigate must not.
-    state = _investigate_state(
-        files_read={"auth/session.py"},
-        files_modified={"auth/session.py"},
-        final_answer="auth/session.py looked wrong so I changed it",
+def test_investigate_gate_fails_on_unintended_diff(git_repo):
+    # Grounded answer, but the working tree still differs from the pinned baseline —
+    # an investigation that LEAVES a change fails its contract, legibly, with repair
+    # direction pointing at the fix: revert (ADR-0005).
+    ws = Workspace(git_repo)
+    ws.apply_patch(
+        "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n+    print('probe')\n     return a - b\n"
     )
-    report = Verifier().verify(state, Workspace(tmp_path))
+    state = _investigate_state(
+        files_read={"calc.py"},
+        files_modified={"calc.py"},
+        final_answer="calc.py subtracts instead of adding",
+    )
+    report = Verifier().verify(state, ws)
     assert report.passed is False
     assert any(c.name == "no_unintended_diff" and c.status == "fail" for c in report.checks)
+    assert "no_unintended_diff" in report.summary  # the legible reason
+    assert "revert" in (report.recommended_next_action or "")  # repair-by-revert direction
+
+
+def test_investigate_gate_passes_after_net_zero_revert(git_repo):
+    # ADR-0005's key observation: the rule is "no diff at the END", not "no writes ever".
+    # A task that instrumented and then reverted has a non-empty files_modified ledger but
+    # a tree that nets to zero diff vs the pinned baseline — the contract is satisfied.
+    state = _investigate_state(
+        files_read={"calc.py"},
+        files_modified={"calc.py"},  # the transient instrumentation, already reverted
+        final_answer="instrumented calc.py briefly: the bug is the '-' in add()",
+    )
+    report = Verifier().verify(state, Workspace(git_repo))  # clean tree == pinned baseline
+    assert report.passed
+    assert any(c.name == "no_unintended_diff" and c.status == "pass" for c in report.checks)
+
+
+def test_investigate_gate_fails_on_secret_in_leftover_diff(git_repo):
+    # The always-on secret/placeholder diff guard (§12) applies to every kind that can
+    # write — including investigate now that ADR-0005 admits tier-1 tools.
+    ws = Workspace(git_repo)
+    ws.apply_patch(
+        "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n+    key = 'AKIA123'\n     return a - b\n"
+    )
+    state = _investigate_state(
+        files_read={"calc.py"},
+        files_modified={"calc.py"},
+        final_answer="calc.py holds the key logic",
+    )
+    report = Verifier().verify(state, ws)
+    assert report.passed is False
+    assert any(c.name == "no_secrets" and c.status == "fail" for c in report.checks)
 
 
 # --- edit gate (§12) ----------------------------------------------------

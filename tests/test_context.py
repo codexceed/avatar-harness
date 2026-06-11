@@ -63,13 +63,17 @@ def test_edit_task_advertises_apply_patch_in_investigating(tmp_path):
     assert "run_tests" not in names  # but ONLY the edit-intent tier bootstraps, not all editing tools
 
 
-def test_investigate_task_does_not_advertise_apply_patch(tmp_path):
-    # The mirror of the bootstrap: a non-edit kind gets no edit-intent surface, so an
-    # investigate task never sees apply_patch even though the runner shares the predicate.
+def test_investigate_task_advertises_tier1_tools(tmp_path):
+    # ADR-0005: transient edits are legal in investigate tasks, and advertised tools must
+    # mirror admitted tools (the PR-#6 invariant — one shared predicate feeds the runner's
+    # gate and this advertisement). So an investigate task in `investigating` is told about
+    # apply_patch/write_file — and ONLY the tier-1 tools ride the rule, not command tools.
     state = TaskState(goal="explain the loop", task_kind="investigate")
     packet = ContextBuilder().build(state, Workspace(tmp_path), default_registry())
+    assert state.phase == "investigating"
     names = {t.name for t in packet.allowed_tools}
-    assert "apply_patch" not in names
+    assert {"apply_patch", "write_file"} <= names
+    assert "run_tests" not in names
 
 
 # --- action ledger: the agent sees what it already did (Phase 2.5) -------------

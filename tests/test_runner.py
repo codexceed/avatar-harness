@@ -424,3 +424,63 @@ def test_cancellation_records_feedback(git_repo):
     state = TaskState(goal="look around", task_kind="investigate")
     result = _runner_with_token(git_repo, _edit_registry(), decisions, token).run(state)
     assert any(e.kind == "cancelled" for e in result.evidence)
+
+
+# --- ADR-0005: transient edits in investigate tasks (net-zero-diff relaxation) ----
+
+_PROBE = (
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n"
+    " def add(a, b):\n+    print('probe')\n     return a - b\n"
+)
+_UNPROBE = (
+    "--- a/calc.py\n+++ b/calc.py\n@@ -1,3 +1,2 @@\n"
+    " def add(a, b):\n-    print('probe')\n     return a - b\n"
+)
+
+
+def test_investigate_transient_edit_round_trip_verifies(git_repo):
+    # The ADR-0005 happy path end-to-end: instrument (apply_patch) -> observe -> revert ->
+    # final_answer. The gate admits the tier-1 calls, the phase never advances (the
+    # edit-intent bootstrap stays edit-kinds-only), and the unchanged net-zero-diff
+    # contract passes because the tree matches the pinned baseline at verification.
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _PROBE})),
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _UNPROBE})),
+        ModelDecision(action=FinalAnswer(answer="probed calc.py: add() subtracts; probe reverted")),
+    ]
+    events: list = []
+    emitter = Emitter()
+    emitter.subscribe(events.append)
+    state = TaskState(goal="why does add() return the wrong sum?", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions, emitter=emitter).run(state)
+    assert result.outcome == "success"
+    assert Workspace(git_repo, allow_dirty=True).diff() == ""  # net-zero at the end
+    assert "calc.py" in result.files_modified  # the transient writes are still on the ledger
+    # No `investigating -> editing` advance rode the tier-1 calls (investigate flow unchanged).
+    assert not any(
+        e["old"] == "investigating" and e["new"] == "editing"
+        for e in events
+        if e["type"] == "phase_changed"
+    )
+
+
+def test_investigate_leftover_diff_fails_then_repair_by_revert_succeeds(git_repo):
+    # An investigation that LEAVES its instrumentation fails verification with the
+    # legible no_unintended_diff reason, and the existing repair loop engages: the
+    # model reverts, finalizes again, and the unchanged contract passes.
+    decisions = [
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _PROBE})),
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="probed calc.py: add() subtracts")),  # forgot to revert
+        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _UNPROBE})),  # repair: revert
+        ModelDecision(action=FinalAnswer(answer="probed calc.py: add() subtracts; probe reverted")),
+    ]
+    state = TaskState(goal="why does add() return the wrong sum?", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions).run(state)
+    assert result.outcome == "success"
+    assert result.repair_failures == 1  # exactly one rejection before the revert repaired it
+    first = result.verifier_results[0]
+    assert first.passed is False
+    assert "no_unintended_diff" in first.summary  # the legible reason the model repairs from
+    assert Workspace(git_repo, allow_dirty=True).diff() == ""

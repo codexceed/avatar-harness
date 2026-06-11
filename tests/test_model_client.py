@@ -282,7 +282,9 @@ def test_parse_decision_ignores_model_supplied_retry_trace():
 def test_default_prompt_is_kind_aware():
     # task_kind is now carried on the ContextPacket, so the prompt frames the mission
     # per kind: an edit task is told to make a working change; an investigate task is
-    # told NOT to edit. An edit task must never be re-locked to READ-ONLY framing.
+    # told the repo must net to zero diff when it answers (ADR-0005: transient
+    # instrumentation is legal, leaving it is not). An edit task must never be
+    # re-locked to READ-ONLY framing.
     edit = ContextPacket(
         goal="fix the off-by-one in app.py",
         phase="editing",
@@ -299,7 +301,10 @@ def test_default_prompt_is_kind_aware():
     inv_sys = next(m["content"] for m in build_messages(inv) if m["role"] == "system")
     assert edit_sys != inv_sys  # framing genuinely varies by kind
     assert "READ-ONLY" not in edit_sys and "read-only" not in edit_sys.lower()
-    assert "without editing" in inv_sys.lower()  # investigate explicitly forbids mutation
+    # ADR-0005 framing: net-zero diff at the end, not "no writes ever".
+    assert "must be unchanged when you answer" in inv_sys.lower()
+    assert "revert any instrumentation" in inv_sys.lower()
+    assert "without editing" not in inv_sys.lower()  # the old blanket prohibition is gone
     assert "JSON" in edit_sys and "apply_patch" in edit_sys  # still schema-bearing
 
 

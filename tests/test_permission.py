@@ -4,7 +4,7 @@ from avatar_harness.permission import PermissionPolicy, ToolPermission
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolResult
 from avatar_harness.tools.commands import run_tests
-from avatar_harness.tools.edit import apply_patch
+from avatar_harness.tools.edit import apply_patch, write_file
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.workspace import Workspace
 
@@ -51,14 +51,23 @@ def test_apply_patch_blocked_when_path_escapes(git_repo):
     assert perm.reason  # explains the refusal
 
 
-def test_investigate_cannot_apply_patch(git_repo):
-    # An investigate task must not mutate: the gate blocks apply_patch (tier 1) up
-    # front — prevention, not just the verifier catching the diff after the fact.
+def test_investigate_can_apply_patch(git_repo):
+    # ADR-0005: tier-1 mutation is legal in an investigate task — prevention at the
+    # gate is traded for detection at the verifier, whose net-zero-diff contract
+    # (`no_unintended_diff`) is the enforcement point for transient instrumentation.
     diff = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x\n+y\n"
     state = TaskState(goal="why is it slow?", task_kind="investigate")
     perm = PermissionPolicy().check(apply_patch, {"diff": diff}, state, Workspace(git_repo))
-    assert perm.blocked is True
-    assert perm.reason
+    assert perm.blocked is False
+
+
+def test_investigate_can_write_file(git_repo):
+    # The other tier-1 tool rides the same ADR-0005 relaxation: a scratch probe
+    # script is legal as long as the tree nets to zero diff at verification.
+    state = TaskState(goal="why is it slow?", task_kind="investigate")
+    raw = {"path": "probe.py", "content": "print('probe')\n"}
+    perm = PermissionPolicy().check(write_file, raw, state, Workspace(git_repo))
+    assert perm.blocked is False
 
 
 def test_tier2_commands_allowed_with_timeout(git_repo):

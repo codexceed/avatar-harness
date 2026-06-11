@@ -7,7 +7,14 @@ from pydantic import BaseModel
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.tools import filesystem
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult, ToolRuntime
+from avatar_harness.tools.base import (
+    ToolDefinition,
+    ToolRegistry,
+    ToolResult,
+    ToolRuntime,
+    is_edit_intent,
+    phase_admits_tool,
+)
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import apply_patch, write_file
 from avatar_harness.tools.filesystem import list_files, read_file
@@ -370,3 +377,34 @@ def test_system_failure_is_surfaced_not_retried(tmp_path):
     assert result.success is False
     assert result.error is not None
     assert "RuntimeError" in result.error
+
+
+# --- ADR-0005: transient edits in investigate (tier-1 admission rides an explicit rule) ---
+
+
+def test_phase_admits_tier1_in_investigate_kind():
+    # ADR-0005: tier-1 mutation is legal in an investigate task — admitted from
+    # `investigating` via the explicit transient-edit rule (the verifier's net-zero-diff
+    # contract is the enforcement point, not the gate).
+    assert phase_admits_tool("investigating", "investigate", apply_patch) is True
+    assert phase_admits_tool("investigating", "investigate", write_file) is True
+
+
+def test_transient_edit_rule_is_not_edit_intent():
+    # The edit-intent phase bootstrap stays edit-kinds-only: an investigate apply_patch
+    # is NOT an edit intent (no `investigating -> editing` advance rides on it), and the
+    # transient rule covers only tier 1 — command tools do not leak into investigating.
+    assert is_edit_intent("investigate", apply_patch) is False
+    assert phase_admits_tool("investigating", "investigate", run_tests) is False
+
+
+def test_registry_admits_tier1_for_investigate():
+    # The registry mirror of the predicate: what `admitted_for` returns is exactly what
+    # the ContextBuilder advertises, so the model is told about apply_patch/write_file
+    # in an investigate task — and only the tier-1 tools, not the command tools.
+    reg = _registry()
+    for tool in (apply_patch, write_file, run_tests):
+        reg.register(tool)
+    admitted = {t.name for t in reg.admitted_for("investigating", "investigate")}
+    assert {"apply_patch", "write_file"} <= admitted
+    assert "run_tests" not in admitted
