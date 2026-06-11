@@ -75,6 +75,7 @@ def test_search_repo_searches_tree_when_stdin_is_a_pipe(tmp_path):
             capture_output=True,
             text=True,
             timeout=10,  # far below the tool's own 30s rg timeout: a stdin-read hang fails here
+            check=False,
         )
     finally:
         os.close(read_fd)
