@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
@@ -42,6 +46,43 @@ def test_search_repo_no_matches_is_clean_success(tmp_path):
     assert result.content == ""
 
 
+def test_search_repo_searches_tree_when_stdin_is_a_pipe(tmp_path):
+    # rg invoked with no explicit path falls back to searching STDIN whenever stdin
+    # isn't a tty — so in any embedding with a piped stdin (CI, cron, a supervising
+    # process) the search blocks on the silent pipe until the 30s timeout and never
+    # sees the tree (found following the tutorial, 2026-06-10). Run the handler in a
+    # child whose stdin is an open, never-written pipe: it must return tree matches
+    # promptly, proving the search reads the workspace, not stdin.
+    (tmp_path / "a.py").write_text("def login():\n    pass\n", encoding="utf-8")
+    code = (
+        "from avatar_harness.config import HarnessConfig\n"
+        "from avatar_harness.deps import CancellationToken, RunDeps\n"
+        "from avatar_harness.tools.base import ToolRegistry, ToolRuntime\n"
+        "from avatar_harness.tools.search import search_repo\n"
+        "from avatar_harness.workspace import Workspace\n"
+        f"ws = Workspace({str(tmp_path)!r})\n"
+        "deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())\n"
+        "reg = ToolRegistry()\n"
+        "reg.register(search_repo)\n"
+        "result = ToolRuntime(reg, deps).execute('search_repo', {'query': 'login'})\n"
+        "print('TREE-MATCH' if result.success and 'a.py' in result.content else f'MISS: {result!r}')\n"
+    )
+    read_fd, write_fd = os.pipe()  # parent keeps write_fd open: the child's stdin never EOFs
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            stdin=read_fd,
+            capture_output=True,
+            text=True,
+            timeout=10,  # far below the tool's own 30s rg timeout: a stdin-read hang fails here
+            check=False,
+        )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+    assert "TREE-MATCH" in proc.stdout, proc.stdout + proc.stderr
+
+
 def test_list_files_matches_glob(tmp_path):
     (tmp_path / "a.py").write_text("", encoding="utf-8")
     (tmp_path / "b.txt").write_text("", encoding="utf-8")
@@ -61,6 +102,49 @@ def test_list_files_dir_pattern_lists_contained_files(tmp_path):
     assert result.success
     assert "pkg/m.py" in result.content
     assert "pkg/sub/n.py" in result.content
+
+
+def test_list_files_wildcards_skip_hidden(tmp_path):
+    # pathlib glob matches dot-prefixed entries, unlike rg: a venv or .git inside the
+    # workspace turned `*`/`**/*` into thousands of junk paths (4k+ in a 5-file
+    # workspace, found following the tutorial 2026-06-10). Discovery mirrors rg's
+    # default: hidden is invisible to wildcards, readable when explicitly named.
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / ".venv" / "lib").mkdir(parents=True)
+    (tmp_path / ".venv" / "lib" / "x.py").write_text("", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / ".cache").mkdir()
+    (tmp_path / "src" / ".cache" / "junk.py").write_text("", encoding="utf-8")
+    runtime = _runtime(tmp_path)
+    top = runtime.execute("list_files", {"glob": "*"})
+    assert top.success
+    # `src` (non-hidden dir) still expands per Phase 2.5; `.venv` no longer does.
+    assert top.content.splitlines() == ["a.py", "src/m.py"]
+    recursive = runtime.execute("list_files", {"glob": "**/*"})
+    assert recursive.success
+    assert recursive.content.splitlines() == ["a.py", "src/m.py"]  # nested hidden also skipped
+
+
+def test_list_files_dir_expansion_skips_hidden_children(tmp_path):
+    # The Phase-2.5 directory expansion must not walk into hidden children either.
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "y.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / ".cache").mkdir()
+    (tmp_path / "pkg" / ".cache" / "z.py").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": "pkg"})
+    assert result.success
+    assert result.content == "pkg/y.py"
+
+
+def test_list_files_explicit_hidden_pattern_still_lists(tmp_path):
+    # The escape hatch: a glob that NAMES a dot-prefixed segment opts into hidden —
+    # `.github/*` must keep working (mirrors `rg pattern .github/` with an explicit path).
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text("", encoding="utf-8")
+    result = _runtime(tmp_path).execute("list_files", {"glob": ".github/**/*"})
+    assert result.success
+    assert result.content == ".github/workflows/ci.yml"
 
 
 def test_list_files_result_is_capped_with_overflow_note(tmp_path, monkeypatch):

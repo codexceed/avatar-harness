@@ -94,11 +94,18 @@ A glob that matches a *directory* expands to the files under it (recursively),
 so `list_files("pkg")` lists `pkg/`'s contents rather than silently returning
 nothing — the dogfood gap where `rich*` matched a dir and was dropped.
 
+Hidden (dot-prefixed) entries are skipped by wildcards, mirroring ripgrep's
+default — pathlib's glob matches them, so a venv or `.git` inside the workspace
+otherwise turns `*`/`**/*` into thousands of junk paths. A pattern that *names*
+a dot-prefixed segment (e.g. `.github/**/*`) opts into hidden, the same way an
+explicit path does for rg; `read_file` on an explicit hidden path always works.
+
 Args:
     glob: The glob pattern to match against the root.
 
 Returns:
-    Sorted workspace-relative paths of the matching files (dir matches expanded).
+    Sorted workspace-relative paths of the matching files (dir matches expanded;
+    hidden entries skipped unless the pattern names a dot-prefixed segment).
 
 #### `Workspace.read(self, path: str, line_range: tuple[int, int] | None = None) -> str`
 

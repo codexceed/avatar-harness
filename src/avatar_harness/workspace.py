@@ -184,19 +184,30 @@ class Workspace:
         so `list_files("pkg")` lists `pkg/`'s contents rather than silently returning
         nothing — the dogfood gap where `rich*` matched a dir and was dropped.
 
+        Hidden (dot-prefixed) entries are skipped by wildcards, mirroring ripgrep's
+        default — pathlib's glob matches them, so a venv or `.git` inside the workspace
+        otherwise turns `*`/`**/*` into thousands of junk paths. A pattern that *names*
+        a dot-prefixed segment (e.g. `.github/**/*`) opts into hidden, the same way an
+        explicit path does for rg; `read_file` on an explicit hidden path always works.
+
         Args:
             glob: The glob pattern to match against the root.
 
         Returns:
-            Sorted workspace-relative paths of the matching files (dir matches expanded).
+            Sorted workspace-relative paths of the matching files (dir matches expanded;
+            hidden entries skipped unless the pattern names a dot-prefixed segment).
         """
+        show_hidden = any(seg.startswith(".") for seg in glob.split("/"))
         found: set[Path] = set()
         for p in self.root.glob(glob):
             if p.is_file():
                 found.add(p)
             elif p.is_dir():
                 found.update(q for q in p.rglob("*") if q.is_file())
-        return sorted(str(p.relative_to(self.root)) for p in found)
+        rels = (p.relative_to(self.root) for p in found)
+        if not show_hidden:
+            rels = (r for r in rels if not any(part.startswith(".") for part in r.parts))
+        return sorted(str(r) for r in rels)
 
     # --- patch application (tier 1, §10) ---------------------------------
 
