@@ -463,3 +463,90 @@ def test_exhausted_parse_failure_carries_usage():
     usage = exc_info.value.usage
     assert usage is not None
     assert usage.prompt_tokens == 3000 and usage.completion_tokens == 90
+
+
+# --- decision transport recording (loop-determinism hardening) ------------------------------
+#
+# The silent native -> JSON-envelope fallback (model_client._decide_native) means two runs of
+# the same task can ride different transports — with different system prompts — depending on
+# provider behavior. The fix is observability first: every decision records which transport
+# produced it, the runner journals it, and parse_decision clears a model-claimed value (the
+# field is harness-owned, like usage/retry_trace).
+
+
+def test_decision_records_native_transport():
+    reply = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([reply]))
+
+    decision = client.decide(_packet())
+
+    assert decision.transport == "native"
+
+
+def test_decision_records_json_fallback_transport():
+    # An endpoint that ignores `tools=` and answers in prose: the decision still parses,
+    # but the transport flip is RECORDED, never silent.
+    content = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=_fake_openai_messages([_msg(content=content)])
+    )
+
+    decision = client.decide(_packet())
+
+    assert decision.transport == "json_fallback"
+
+
+def test_decision_records_json_transport_when_native_disabled():
+    content = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
+    config = HarnessConfig(model="m", native_tool_calls=False)
+    client = OpenAIModelClient(config, client=_fake_openai_messages([_msg(content=content)]))
+
+    decision = client.decide(_packet())
+
+    assert decision.transport == "json"
+
+
+def test_parse_decision_clears_model_claimed_transport():
+    # `transport` is a harness-owned channel: a model emitting the field must not
+    # impersonate a transport (same rule as retry_trace/usage).
+    raw = (
+        '{"thought_summary": "ok", "transport": "native",'
+        ' "action": {"type": "final_answer", "answer": "done"}}'
+    )
+    decision = parse_decision(raw)
+    assert decision.transport == ""
+
+
+# --- per-action retry excerpt cap (loop-determinism hardening) ------------------------------
+#
+# A failed apply_patch/write_file attempt is most useful WITH its diff: the flat 2000-char
+# excerpt cut real patches mid-hunk, so the model retried blind and re-emitted the same
+# error. Patch-bearing actions get a higher cap; any cut is marked loudly (same rule as
+# context compaction: never cut silently).
+
+
+def test_patch_retry_excerpt_keeps_long_diff():
+    bad_args = '{"diff": "' + ("x" * 5800) + 'TAIL_MARKER'  # truncated JSON — malformed
+    bad = _msg(tool_calls=[_tc("apply_patch", bad_args, call_id="c1")])
+    good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([bad, good]))
+
+    decision = client.decide(_packet())
+
+    assert len(decision.retry_trace) == 1
+    assert "TAIL_MARKER" in decision.retry_trace[0].raw  # the tail survived the cap
+
+
+def test_truncated_retry_excerpt_is_marked():
+    # Non-patch raw past the cap is still cut — but the cut is explicit, never silent.
+    long_invalid = "not json " + ("y" * 4000)
+    bad = _msg(content=long_invalid)
+    good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([bad, good]))
+
+    decision = client.decide(_packet())
+
+    assert len(decision.retry_trace) == 1
+    raw = decision.retry_trace[0].raw
+    assert len(raw) < len(long_invalid)  # still capped
+    assert "[truncated" in raw  # but loudly

@@ -278,3 +278,15 @@ async def test_usage_reaches_legacy_emitter(tmp_path):
     await runner.arun(TaskState(goal="g", task_kind="investigate"))
     usage_events = [e for e in seen if e.get("type") == "model_usage"]
     assert usage_events and usage_events[0]["prompt_tokens"] == 500
+
+
+async def test_model_decision_event_carries_transport(tmp_path):
+    # The transport that produced each decision is journaled (loop-determinism hardening):
+    # a silent native->JSON flip is a run-to-run consistency hazard, so it must be visible
+    # in the flight recorder.
+    decision = ModelDecision(action=FinalAnswer(answer="done"), transport="native")
+    bus = EventBus(session_id="sess")
+    runner = _runner(tmp_path, _read_registry(tmp_path), [decision], event_sink=bus)
+    await runner.arun(TaskState(goal="g", task_kind="investigate"))
+    published = [e for e in bus.history if e.type == "model_decision"]
+    assert published and published[0].transport == "native"
