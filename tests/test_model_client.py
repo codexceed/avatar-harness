@@ -526,7 +526,7 @@ def test_parse_decision_clears_model_claimed_transport():
 
 
 def test_patch_retry_excerpt_keeps_long_diff():
-    bad_args = '{"diff": "' + ("x" * 5800) + 'TAIL_MARKER'  # truncated JSON — malformed
+    bad_args = '{"diff": "' + ("x" * 5800) + "TAIL_MARKER"  # truncated JSON — malformed
     bad = _msg(tool_calls=[_tc("apply_patch", bad_args, call_id="c1")])
     good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
     client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([bad, good]))

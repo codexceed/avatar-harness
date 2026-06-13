@@ -16,6 +16,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # `ContextBuilder`'s bare-constructor defaults read, so the two can't drift.
 DEFAULT_CONTEXT_MAX_DETAIL_CHARS = 16_000
 DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET = 48_000
+# How many recent verifier outputs stay verbatim through compaction: a repair loop
+# needs "what did I try before and why did it fail", not just the latest verdict.
+DEFAULT_CONTEXT_VERIFIER_PIN_COUNT = 2
 
 DEFAULT_SENSITIVE_PATH_GLOBS: list[str] = [
     ".env",
@@ -96,6 +99,7 @@ class HarnessConfig(BaseSettings):
     # detail. `max_context_tokens` still bounds the whole packet.
     context_max_detail_chars: int = DEFAULT_CONTEXT_MAX_DETAIL_CHARS
     context_detail_char_budget: int = DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET
+    context_verifier_pin_count: int = DEFAULT_CONTEXT_VERIFIER_PIN_COUNT
 
     # Mode routing (revises ADR-0002 D3). The REPL classifies each goal's task_kind with
     # one cheap, schema-constrained call on this model (same base_url/api_key); the

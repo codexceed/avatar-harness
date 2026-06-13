@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from avatar_harness.config import (
     DEFAULT_CONTEXT_DETAIL_CHAR_BUDGET,
     DEFAULT_CONTEXT_MAX_DETAIL_CHARS,
+    DEFAULT_CONTEXT_VERIFIER_PIN_COUNT,
 )
 from avatar_harness.state import Evidence, TaskState
 from avatar_harness.tools.base import ToolRegistry
@@ -51,7 +52,7 @@ class ContextBuilder:
 
     Evidence is compacted *less-lossily* (Phase 2.5): recent items keep full detail
     until a char budget is spent, older items degrade to their summary line (not
-    dropped), the latest verifier output is pinned verbatim, and adjacent duplicates
+    dropped), the last N verifier outputs are pinned verbatim, and adjacent duplicates
     collapse to one `... (xN)` line. Action history is cheap (one line each) so it is
     kept on a longer horizon than evidence.
 
@@ -61,6 +62,9 @@ class ContextBuilder:
         max_detail_chars: Per-item detail truncation budget.
         max_evidence_lines: Hard cap on rendered evidence lines (newest kept).
         max_actions: Max prior-action lines to surface.
+        verifier_pin_count: How many recent verifier outputs keep detail verbatim
+            regardless of budget — a repair loop needs its recent failure history,
+            not just the latest verdict.
     """
 
     def __init__(
@@ -69,11 +73,13 @@ class ContextBuilder:
         max_detail_chars: int = DEFAULT_CONTEXT_MAX_DETAIL_CHARS,
         max_evidence_lines: int = 40,
         max_actions: int = 25,
+        verifier_pin_count: int = DEFAULT_CONTEXT_VERIFIER_PIN_COUNT,
     ) -> None:
         self.detail_char_budget = detail_char_budget
         self.max_detail_chars = max_detail_chars
         self.max_evidence_lines = max_evidence_lines
         self.max_actions = max_actions
+        self.verifier_pin_count = verifier_pin_count
 
     def _render_action(self, decision: object) -> str:
         chosen = getattr(decision, "chosen", "")
@@ -85,7 +91,7 @@ class ContextBuilder:
 
         Collapses adjacent duplicates, spends `detail_char_budget` on the most recent
         items (showing detail), degrades older items to summary-only, and pins the
-        latest verifier item's detail verbatim regardless of budget.
+        last `verifier_pin_count` verifier items' detail verbatim regardless of budget.
 
         Args:
             evidence: The full evidence list (oldest-first).
@@ -103,12 +109,12 @@ class ContextBuilder:
 
         lines_newest_first: list[str] = []
         spent = 0
-        pinned_verifier = False
+        pinned_verifier = 0  # how many verifier outputs have been pinned so far (newest-first)
         for item, count in reversed(collapsed):
             if len(lines_newest_first) >= self.max_evidence_lines:
                 break
             suffix = f" ... (x{count})" if count > 1 else ""
-            pin = item.kind in _VERIFIER_KINDS and not pinned_verifier
+            pin = item.kind in _VERIFIER_KINDS and pinned_verifier < self.verifier_pin_count
             if item.detail and (spent < self.detail_char_budget or pin):
                 detail = item.detail[: self.max_detail_chars]
                 # The marker chars are not charged to the budget, and the pre-spend check
@@ -122,7 +128,7 @@ class ContextBuilder:
                     # where tool-specific advice ("re-read with line_range") would mislead.
                     detail += f"\n… [truncated: {len(detail)}/{len(item.detail)} chars shown]"
                 if item.kind in _VERIFIER_KINDS:
-                    pinned_verifier = True
+                    pinned_verifier += 1
                 lines_newest_first.append(f"{item.summary}{suffix}\n{detail}")
             else:
                 # Degrade is loud too: a summary-only line that HAD detail says so, or the
