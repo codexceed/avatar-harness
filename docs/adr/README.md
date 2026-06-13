@@ -16,6 +16,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0008](0008-non-executable-edit-verification.md) | Verification contract for non-executable edits | Proposed |
 | [0009](0009-execution-sandbox-isolation.md) | Execution sandbox isolation | Proposed |
 | [0010](0010-git-status-diff-as-model-tools.md) | `git_status` / `git_diff` as model-callable tools | Proposed |
+| [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed |
 
 ## Conventions
 
