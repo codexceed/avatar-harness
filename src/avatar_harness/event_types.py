@@ -78,6 +78,7 @@ class ModelDecisionEvent(EventBase):
     thought: str = ""
     action_type: str = ""
     action: str = ""
+    transport: str = ""  # which decision transport produced it (native/json_fallback/json)
 
 
 class ModelUpdate(EventBase):

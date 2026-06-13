@@ -30,7 +30,8 @@ class DecisionRecord(BaseModel):
 
     step: int
     rationale: str
-    chosen: str
+    chosen: str  # human-readable brief, shown in the action ledger
+    key: str = ""  # canonical, order-independent identity for repeat detection
     rejected: list[str] = Field(default_factory=list)
     outcome: str = ""
 

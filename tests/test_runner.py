@@ -612,3 +612,21 @@ def test_runner_leaves_plan_unfrozen_for_investigate(git_repo):
     result = _runner(git_repo, _edit_registry(), decisions).run(state)
     assert result.outcome == "success"
     assert result.verification_plan is None
+
+
+# --- canonical repeat detection (loop-determinism hardening) --------------------------------
+
+
+def test_repeat_detected_despite_input_key_reorder(tmp_path, read_registry):
+    # The anti-loop nudge must compare ACTIONS, not dict-insertion-order string forms:
+    # the same call with reordered input keys is the same call.
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    first = ToolCall(name="read_file", input={"path": "app.py", "line_range": [1, 1]})
+    reordered = ToolCall(name="read_file", input={"line_range": [1, 1], "path": "app.py"})
+    decisions = [
+        ModelDecision(action=first),
+        ModelDecision(action=reordered),
+        ModelDecision(action=FinalAnswer(answer="read app.py, x is set")),
+    ]
+    state = _runner(tmp_path, read_registry, decisions).run(TaskState(goal="x", task_kind="investigate"))
+    assert any(e.kind == "repeat" for e in state.evidence)

@@ -67,10 +67,49 @@ class ModelDecision(BaseModel):
     action: ToolCall | FinalAnswer | AskUser = Field(discriminator="type")
     retry_trace: list[DecisionRetryNote] = Field(default_factory=list)
     usage: DecisionUsage | None = None  # harness-owned, like retry_trace; set by the client
+    # Which transport produced this decision: "native" (provider function-calling),
+    # "json_fallback" (native asked, endpoint ignored tools= → legacy parse), or "json"
+    # (native disabled). Harness-owned (like usage); journaled so a silent native↔JSON
+    # flip — a run-to-run consistency hazard with different prompts — stays visible.
+    transport: str = ""
 
 
 # Cap on the raw-reply excerpt kept per malformed attempt (journal/evidence detail).
+# A patch-bearing attempt gets a higher cap: a failed `apply_patch`/`write_file` is only
+# useful to retry WITH its diff, and the flat cap cut real patches mid-hunk, so the model
+# retried blind and re-emitted the same error (loop-determinism hardening).
 _RAW_EXCERPT_CAP = 2000
+_PATCH_EXCERPT_CAP = 12000
+# Markers that say a raw reply is carrying a patch (so a content-mode excerpt keeps it whole).
+_PATCH_MARKERS = ('"diff"', "*** Begin Patch", "apply_patch", "write_file")
+
+
+def _excerpt(raw: str, *, patch: bool = False) -> str:
+    """Cap a raw malformed-attempt excerpt, marking any cut loudly (never silent).
+
+    Args:
+        raw: The raw model reply to excerpt.
+        patch: Whether the attempt carries a patch (a higher cap, so the diff survives).
+
+    Returns:
+        `raw` whole if within the cap, else a truncated, explicitly-marked excerpt.
+    """
+    cap = _PATCH_EXCERPT_CAP if patch else _RAW_EXCERPT_CAP
+    if len(raw) <= cap:
+        return raw
+    return raw[:cap] + f"\n… [truncated: {cap}/{len(raw)} chars shown]"
+
+
+def _carries_patch(raw: str) -> bool:
+    """Whether a raw reply looks like it carries a patch (content-mode excerpt sizing).
+
+    Args:
+        raw: The raw model reply to inspect.
+
+    Returns:
+        `True` if `raw` contains a patch marker, else `False`.
+    """
+    return any(marker in raw for marker in _PATCH_MARKERS)
 
 
 class DecisionParseError(Exception):
@@ -110,10 +149,11 @@ def parse_decision(raw: str) -> ModelDecision:
         decision = ModelDecision.model_validate(data)
     except ValidationError as exc:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
-    # `retry_trace`/`usage` are harness-owned channels: a model emitting the fields
-    # must not plant fake history or bill itself kindly.
+    # `retry_trace`/`usage`/`transport` are harness-owned channels: a model emitting the
+    # fields must not plant fake history, bill itself kindly, or impersonate a transport.
     decision.retry_trace = []
     decision.usage = None
+    decision.transport = ""
     return decision
 
 
@@ -499,7 +539,8 @@ class OpenAIModelClient(ModelClient):
                 except DecisionParseError as exc:
                     last_error = exc
                     raw = f"{call.function.name}({call.function.arguments or ''})"
-                    trace.append(DecisionRetryNote(error=str(exc), raw=raw[:_RAW_EXCERPT_CAP]))
+                    is_patch = call.function.name in ("apply_patch", "write_file")
+                    trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=is_patch)))
                     messages = [
                         *messages,
                         _assistant_call_message(message, call),
@@ -515,13 +556,14 @@ class OpenAIModelClient(ModelClient):
                     continue
                 decision.retry_trace = trace
                 decision.usage = tally.total()
+                decision.transport = "native"
                 return decision
             raw = message.content or ""
             try:
                 decision = parse_decision(raw)  # endpoint ignored tools= — legacy fallback
             except DecisionParseError as exc:
                 last_error = exc
-                trace.append(DecisionRetryNote(error=str(exc), raw=raw[:_RAW_EXCERPT_CAP]))
+                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
                 retry = (
                     f"That was not a valid decision ({exc}). Call one of the provided tools "
                     "— re-send the SAME intended action, do not switch to a different one."
@@ -534,6 +576,7 @@ class OpenAIModelClient(ModelClient):
                 continue
             decision.retry_trace = trace
             decision.usage = tally.total()
+            decision.transport = "json_fallback"  # native asked, endpoint answered in prose
             return decision
         text = str(last_error) if last_error else "model returned no valid decision"
         raise DecisionParseError(text, usage=tally.total()) from last_error
@@ -570,7 +613,7 @@ class OpenAIModelClient(ModelClient):
                 last_error = exc
                 # Annotate, don't swallow: the runner records each note as evidence and
                 # journals it, so a failed (e.g. truncated-patch) attempt stays visible.
-                trace.append(DecisionRetryNote(error=str(exc), raw=raw[:_RAW_EXCERPT_CAP]))
+                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
                 retry = (
                     f"That was not a valid decision ({exc}). Re-send the SAME intended "
                     "action as one valid JSON decision — do not switch to a different action."
@@ -583,6 +626,7 @@ class OpenAIModelClient(ModelClient):
             else:
                 decision.retry_trace = trace
                 decision.usage = tally.total()
+                decision.transport = "json"  # native disabled (the legacy escape hatch)
                 return decision
         # The loop only exits without returning via the except branch, which always
         # sets last_error; the fallback keeps this total without an (O-stripped) assert.
