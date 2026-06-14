@@ -198,6 +198,10 @@ _SMOKE_SYSTEM = (
 
 # Trivially-vacuous programs: pass (exit 0) without exercising anything → not a smoke check.
 _VACUOUS_SMOKE = frozenset({"true", "false", ":", "echo", "exit", "test", "["})
+# Shells: a `sh -c true` / `bash -lc 'echo ok'` wrapper must be judged on its INNER program,
+# not the shell, or the vacuous-command guard is trivially side-stepped (PR #50 review).
+_SMOKE_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+_MAX_SHELL_UNWRAP = 4  # recursion bound for unwrapping nested shell `-c` wrappers
 
 
 class VerificationPlanner:
@@ -923,22 +927,63 @@ def _is_runnable_smoke(command: str) -> bool:
     The floor's only authorship guard: the harness runs the command and the real exit
     code is the verdict, so a *broken* command simply fails — but a trivially-vacuous
     one (`true`, `:`, bare `echo`) would pass without exercising anything, so it is
-    rejected outright (ADR-0014's bounded vacuous-check mitigation).
+    rejected outright (ADR-0014's bounded vacuous-check mitigation). A shell wrapper
+    (`sh -c true`, `bash -lc 'echo ok'`) is judged on its INNER program, not the shell.
 
     Args:
         command: The model-proposed command.
 
     Returns:
-        `True` for a parseable command whose program is not trivially vacuous.
+        `True` for a parseable command whose effective program is not trivially vacuous.
+    """
+    program = _effective_smoke_program(command)
+    return bool(program) and program not in _VACUOUS_SMOKE
+
+
+def _effective_smoke_program(command: str, _depth: int = 0) -> str:
+    """The leaf program a smoke command runs, unwrapping `sh -c` / `bash -lc` wrappers.
+
+    A wrapper runs its inner script, not the shell, so vacuousness must be judged on the
+    inner program — otherwise `sh -c true` defeats the guard (PR #50 review). Bounded
+    recursion guards against pathological nesting.
+
+    Args:
+        command: The command (or unwrapped inner script) to inspect.
+        _depth: Internal recursion guard.
+
+    Returns:
+        The basename of the effective leaf program, or `""` when empty/unparseable.
     """
     try:
         tokens = shlex.split(command)
     except ValueError:
-        return False
+        return ""
     if not tokens:
-        return False
+        return ""
     program = tokens[0].rsplit("/", 1)[-1]
-    return program not in _VACUOUS_SMOKE
+    if program in _SMOKE_SHELLS and _depth < _MAX_SHELL_UNWRAP:
+        script = _shell_c_script(tokens[1:])
+        if script is not None:
+            return _effective_smoke_program(script, _depth + 1)
+    return program
+
+
+def _shell_c_script(args: list[str]) -> str | None:
+    """The inline script of a shell `-c` / `-lc` invocation, or `None` when there is none.
+
+    Args:
+        args: The shell's arguments (everything after the shell program itself).
+
+    Returns:
+        The script string following the first `-c`-style flag; `None` when the shell
+        runs a file (`sh script.sh`) or no `-c` flag is present.
+    """
+    for i, tok in enumerate(args):
+        if not tok.startswith("-"):
+            return None  # running a script file, not an inline `-c` command
+        if "c" in tok.lstrip("-"):
+            return args[i + 1] if i + 1 < len(args) else None
+    return None
 
 
 def _artifact_excerpts(root: Path) -> str:

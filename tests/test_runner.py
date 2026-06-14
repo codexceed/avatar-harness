@@ -614,6 +614,41 @@ def test_runner_journals_frozen_plan_as_typed_event(git_repo):
     assert [c.command for c in frozen.checks] == ["make test"]
 
 
+def test_smoke_floor_journaled_to_typed_sink(git_repo):
+    # The late-bound floor must reach the typed sink too, not just the legacy emitter, so
+    # journal/cockpit/eval replay see the real rubric — not the earlier empty plan (PR #50).
+    config = HarnessConfig()
+    deps = RunDeps(workspace=Workspace(git_repo), config=config, cancellation=CancellationToken())
+    sink = _SinkStub()
+    reg = _edit_registry()
+    reg.register(write_file)
+    runner = AgentRunner(
+        model_client=ScriptedModel(
+            [
+                ModelDecision(
+                    action=ToolCall(name="write_file", input={"path": "main.py", "content": "x = 1\n"})
+                ),
+                ModelDecision(action=FinalAnswer(answer="created main.py")),
+            ]
+        ),
+        registry=reg,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+        event_sink=sink,
+        planner=_smoke_planner("python -m py_compile main.py"),
+    )
+    runner.run(TaskState(goal="write a module", task_kind="edit"))
+    frozen = [e for e in sink.events if isinstance(e, VerificationPlanFrozen)]
+    # Two freezes: the empty plan (tiers 1-3 found nothing), then the late-bound floor.
+    assert [c.command for c in frozen[-1].checks] == ["python -m py_compile main.py"]
+    assert frozen[-1].checks[-1].provenance == "model-smoke"
+    types = [type(e) for e in sink.events]
+    assert types.index(VerificationPlanFrozen) < types.index(VerificationStart)  # before verify
+
+
 def test_runner_empty_plan_fails_verification_legibly(git_repo):
     # Nothing resolves (no config, no artifacts) AND the greenfield floor declines
     # (ADR-0014) → the empty plan stays empty and the edit fails verification with a

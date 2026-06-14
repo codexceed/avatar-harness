@@ -340,6 +340,17 @@ def test_smoke_floor_rejects_vacuous_command(tmp_path):
     assert _propose_smoke(tmp_path, _CountingClient([{"command": "echo ok"}])) is None
 
 
+def test_smoke_floor_rejects_shell_wrapped_noop(tmp_path):
+    # A shell wrapper is judged on its INNER program — `sh -c true` is still vacuous (PR #50).
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    assert _propose_smoke(tmp_path, _CountingClient([{"command": "sh -c true"}])) is None
+    assert _propose_smoke(tmp_path, _CountingClient([{"command": "bash -lc 'echo ok'"}])) is None
+    # ...but a wrapper around a real check is fine (the inner program does the work).
+    wrapped = _propose_smoke(tmp_path, _CountingClient([{"command": "sh -c 'python -m py_compile main.py'"}]))
+    assert wrapped is not None
+    assert wrapped.command == "sh -c 'python -m py_compile main.py'"
+
+
 def test_smoke_floor_none_when_model_makes_no_call(tmp_path):
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
     assert _propose_smoke(tmp_path, _CountingClient()) is None

@@ -570,7 +570,10 @@ class AgentRunner:
         state.add_feedback(
             f"greenfield smoke floor: `{check.command}` [{check.provenance}]", kind="verification_plan"
         )
+        # Both channels, exactly as _freeze_plan: the legacy emitter AND the typed sink, so a
+        # journaled/cockpit run records the floor as the rubric — not the earlier empty plan.
         self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in floor])
+        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=floor))
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).
