@@ -21,6 +21,12 @@ TASK ?= Describe this repository.
 run:
 	uv run avatar-harness "$(TASK)"
 
+# Run the Eval-0 task suite (live; needs AVATAR_API_KEY + spend). Multi-model matrix:
+#   make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3-pro" SEEDS=3
+EVAL_ARGS = $(if $(MODELS),--models "$(MODELS)") $(if $(SEEDS),--seeds $(SEEDS))
+eval:
+	uv run python -m evals.run $(EVAL_ARGS)
+
 # --- Individual checks ---
 
 # Lint.

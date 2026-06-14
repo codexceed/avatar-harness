@@ -38,6 +38,7 @@ def test_taskspec_loads_and_validates(tmp_path):
     assert isinstance(spec, TaskSpec)
     assert spec.id == "create-chatbot"
     assert spec.task_kind == "edit"
+    assert spec.success_probe is not None
     assert spec.success_probe.endswith("chatbot_smoke.py")
     assert spec.budgets["max_iterations"] == 30
     assert spec.fixture == "empty"  # default
@@ -147,7 +148,12 @@ def test_result_row_is_jsonl_roundtrippable():
 
 def _row(task: str, seed: int, solved: bool) -> ResultRow:
     return ResultRow(
-        task=task, model="m", seed=seed, solved=solved, outcome="success" if solved else "failed", iterations=1
+        task=task,
+        model="m",
+        seed=seed,
+        solved=solved,
+        outcome="success" if solved else "failed",
+        iterations=1,
     )
 
 

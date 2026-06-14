@@ -1,0 +1,11 @@
+id = "create-chatbot"
+guards = "file creation end-to-end; edit-primitive robustness (dogfood 2026-06-13, 0/3)"
+goal = "Write a python script for an OpenAI API compatible chatbot"
+task_kind = "edit"
+fixture = "empty"
+# Functional probe: a turn must round-trip against a mocked client (not merely parse).
+success_probe = "python evals/probes/chatbot_smoke.py"
+
+[budgets]
+max_iterations = 30
+max_wall_clock_seconds = 300

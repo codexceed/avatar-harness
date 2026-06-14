@@ -92,6 +92,10 @@ ignore = [
 "src/avatar_harness/cli.py" = ["T201"]
 # Build tooling, not library code: relax annotation/print/complexity strictness.
 "scripts/**" = ["ANN", "T20", "C901", "PLR0912", "PLR0913", "PLR0915"]
+# Eval tooling (dev, not shipped): running external commands and printing a report is the
+# feature; it validates its own argv. The probe is a script that hooks imports/stdin.
+"evals/**" = ["S603", "S607", "T201"]
+"evals/probes/**" = ["S603", "S607", "T201", "ANN", "ARG", "PLR2004", "PLC0415"]
 
 # Pin first-party detection so import sorting is identical everywhere. Auto-detection
 # varies by environment (editable install vs clean CI checkout), which can make a
@@ -133,7 +137,9 @@ check-class-attributes = false
 project-includes = ["src", "tests"]
 # `tests` is an import root too, so shared test stubs in `tests/conftest.py` (e.g. ScriptedModel,
 # imported as `from conftest import ...`) resolve under the type checker as they do under pytest.
-search-path = ["src", "tests"]
+# `.` makes the root-level `evals` package importable from tests without type-checking it
+# (it's dev tooling, lint-gated by ruff but kept out of project-includes).
+search-path = ["src", "tests", "."]
 python-version = "3.12"
 
 # --- deptry: dependency hygiene — unused/missing/transitive (#5). ---
