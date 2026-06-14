@@ -10,17 +10,21 @@ import tempfile
 from pathlib import Path
 
 
-def provision(fixture: Path | None) -> Path:
+def provision(fixture: Path | None, *, parent: Path | None = None, label: str = "eval_") -> Path:
     """Create a fresh scratch git repo seeded from `fixture`, committed clean.
 
     Args:
         fixture: A directory whose tree is copied into the scratch repo, or `None`
             for a bare repo (an empty initial commit — the creation-from-nothing case).
+        parent: The directory to create the scratch repo under (the run workspace); `None`
+            uses the system temp dir.
+        label: Filename prefix for the scratch repo (e.g. `model__task__seedN__`) so a kept
+            run workspace is inspectable.
 
     Returns:
         The path to the provisioned scratch repo (a clean git baseline).
     """
-    repo = Path(tempfile.mkdtemp(prefix="eval_"))
+    repo = Path(tempfile.mkdtemp(prefix=label, dir=parent))
     if fixture is not None and Path(fixture).exists():
         shutil.copytree(fixture, repo, dirs_exist_ok=True)
     _git(repo, "init", "-q")

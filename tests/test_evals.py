@@ -211,10 +211,14 @@ def test_run_task_provisions_under_workspace_root(tmp_path):
     run_dir.mkdir()
     spec = TaskSpec(id="create-chatbot", goal="g", task_kind="edit", fixture="empty")
     decisions = [
-        ModelDecision(action=ToolCall(name="write_file", input={"path": "chatbot.py", "content": "import openai\n"})),
+        ModelDecision(
+            action=ToolCall(name="write_file", input={"path": "chatbot.py", "content": "import openai\n"})
+        ),
         ModelDecision(action=FinalAnswer(answer="done")),
     ]
-    row = run_task(spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir)
+    row = run_task(
+        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+    )
     assert row.workspace is not None
     assert Path(row.workspace).parent == run_dir  # provisioned UNDER the run workspace
     assert (Path(row.workspace) / "chatbot.py").exists()

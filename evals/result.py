@@ -15,6 +15,7 @@ class ResultRow(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     probe_exit: int | None = None
+    workspace: str | None = None  # the scratch repo this ran in (for inspecting the agent's output)
 
     def to_jsonl(self) -> str:
         """Serialize to a single JSONL line.
