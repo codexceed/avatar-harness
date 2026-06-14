@@ -48,8 +48,13 @@ def _search_repo(args: SearchRepoInput, deps: RunDeps) -> ToolResult:
     # The "./" the explicit search path prefixes onto every hit is stripped first, so the
     # model-visible paths and the denylist matcher see the same relative form as before.
     globs = deps.config.sensitive_path_globs
+    ws = deps.workspace
     lines = (line.removeprefix("./") for line in proc.stdout.splitlines())
-    kept = [line for line in lines if not path_is_sensitive(line.split(":", 1)[0], globs)]
+    kept = [
+        line
+        for line in lines
+        if not path_is_sensitive((p := line.split(":", 1)[0]), globs) and not ws.is_ignored(p)
+    ]
     return ToolResult(
         tool_name="search_repo",
         success=True,

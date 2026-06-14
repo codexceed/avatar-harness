@@ -72,6 +72,12 @@ class HarnessConfig(BaseSettings):
     # Session / UX (§23).
     interactive: bool = True
 
+    # The active event-journal path, set by the entry point after it resolves the per-session
+    # log location. Threaded into the `Workspace` so the harness's own journal (default
+    # `events/<session_id>.jsonl` + `events/latest.jsonl`) is hidden from the agent's file
+    # tools — it is harness plumbing, not the user's project. `None` hides nothing.
+    log_path: str | None = None
+
     # Workspace (§15).
     workspace_root: str = "."
 

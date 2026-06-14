@@ -117,6 +117,20 @@ def test_edit_gate_fails_on_failing_tests(git_repo):
     assert report.passed is False
 
 
+def test_edit_gate_gives_smoke_specific_hint_on_failing_floor(git_repo):
+    # A failing greenfield smoke check (ADR-0014) gets a smoke-specific repair hint, not the
+    # generic "ensure a test/lint check passes" advice that misleads a no-contract repo (PR #50).
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [PlannedCheck(name="smoke", command=_FAIL, kind="smoke", provenance="model-smoke")]
+    )
+    report = Verifier(HarnessConfig()).verify(state, ws)
+    assert report.passed is False
+    assert any(c.name == "smoke" and c.status == "fail" for c in report.checks)
+    assert "smoke check failed" in (report.recommended_next_action or "")
+
+
 def test_edit_gate_passes_on_clean_lint_when_no_test_target(git_repo):
     ws = Workspace(git_repo)
     state = _edit(ws)

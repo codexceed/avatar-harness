@@ -28,6 +28,31 @@ def test_workspace_reads_inside_root(tmp_path):
     assert ws.read("hello.txt") == "line1\nline2\n"
 
 
+def test_workspace_hides_harness_journal_from_tools(tmp_path):
+    # The harness writes its journal under the workspace; the file tools hide exactly the
+    # active log + its `latest.jsonl` pointer (Q1) — never a whole `events/` dir a project owns.
+    (tmp_path / "events").mkdir()
+    for name in ("abc.jsonl", "latest.jsonl", "user_data.jsonl"):
+        (tmp_path / "events" / name).write_text("{}\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    ws = Workspace(tmp_path, log_path="events/abc.jsonl")
+
+    listed = ws.list_files("**/*")
+    assert "app.py" in listed
+    assert "events/abc.jsonl" not in listed  # the active journal — hidden
+    assert "events/latest.jsonl" not in listed  # its pointer — hidden
+    assert "events/user_data.jsonl" in listed  # a real project file — visible
+    with pytest.raises(FileNotFoundError):
+        ws.read("events/abc.jsonl")  # invisible to read, too
+
+
+def test_workspace_hides_nothing_without_log_path(tmp_path):
+    (tmp_path / "events").mkdir()
+    (tmp_path / "events" / "abc.jsonl").write_text("{}\n", encoding="utf-8")
+    ws = Workspace(tmp_path)  # no log_path → no journal to hide
+    assert "events/abc.jsonl" in ws.list_files("**/*")
+
+
 def test_workspace_refuses_path_outside_root(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()

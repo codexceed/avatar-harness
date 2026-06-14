@@ -85,6 +85,8 @@ class Workspace:
         sensitive_path_globs: The denylist refused on read/patch (resolved-path check,
             §11). Defaults to the built-in set (secure by default); the runner threads
             `HarnessConfig.sensitive_path_globs` through to match the permission gate.
+        log_path: The harness's own event-journal path (`HarnessConfig.log_path`), hidden
+            from the agent's file tools so it can't list/read/search the harness's plumbing.
     """
 
     def __init__(
@@ -93,11 +95,17 @@ class Workspace:
         *,
         allow_dirty: bool = False,
         sensitive_path_globs: Sequence[str] | None = None,
+        log_path: Path | str | None = None,
     ) -> None:
         self.root = Path(root).resolve()
         self._sensitive = list(
             DEFAULT_SENSITIVE_PATH_GLOBS if sensitive_path_globs is None else sensitive_path_globs
         )
+        # The harness's own journal lives under the workspace (default `events/<id>.jsonl`);
+        # hide exactly that file + its `latest.jsonl` pointer from the file tools so the agent
+        # never lists/reads/searches its own event log (never a whole `events/` dir — a real
+        # project may own one).
+        self._ignored_relpaths = _journal_ignores(self.root, log_path)
         # The ledger of every command run through this handle, in order — the runner
         # reads it into `state.commands_run` so the artifact/log reflect what ran (§7).
         self.command_log: list[CommandOutput] = []
@@ -168,8 +176,13 @@ class Workspace:
 
         Returns:
             The file text, sliced to `line_range` when given.
+
+        Raises:
+            FileNotFoundError: When the path is the harness's own (hidden) journal.
         """
         resolved = self._resolve(path)
+        if self.is_ignored(resolved.relative_to(self.root).as_posix()):
+            raise FileNotFoundError(f"{path}: no such file")  # the harness journal is invisible
         self._assert_not_sensitive(resolved)  # resolved-path check closes the symlink bypass
         text = resolved.read_text(encoding="utf-8")
         if line_range is None:
@@ -207,7 +220,18 @@ class Workspace:
         rels = (p.relative_to(self.root) for p in found)
         if not show_hidden:
             rels = (r for r in rels if not any(part.startswith(".") for part in r.parts))
-        return sorted(str(r) for r in rels)
+        return sorted(s for r in rels if not self.is_ignored(s := r.as_posix()))
+
+    def is_ignored(self, relpath: str) -> bool:
+        """Whether `relpath` (workspace-relative POSIX) is hidden harness plumbing.
+
+        Args:
+            relpath: A workspace-relative POSIX path.
+
+        Returns:
+            `True` for the harness's own journal file or its `latest.jsonl` pointer.
+        """
+        return relpath in self._ignored_relpaths
 
     # --- patch application (tier 1, §10) ---------------------------------
 
@@ -460,3 +484,30 @@ def _parse_patch_targets(diff: str) -> set[str]:
                 raw = raw[2:]
             targets.add(raw)
     return targets
+
+
+def _journal_ignores(root: Path, log_path: Path | str | None) -> set[str]:
+    """Workspace-relative paths of the harness's own journal, to hide from the file tools.
+
+    The harness writes its event journal under the workspace (default `events/<id>.jsonl`
+    plus an `events/latest.jsonl` pointer). Those are harness plumbing, not the user's
+    project — so the file tools skip exactly the active log file and its pointer. A whole
+    `events/` directory is never hidden, since a real project may legitimately own one.
+
+    Args:
+        root: The resolved workspace root.
+        log_path: The active journal path (root/cwd-relative or absolute), or `None`.
+
+    Returns:
+        Workspace-relative POSIX paths to hide; empty when the journal is outside the root.
+    """
+    if not log_path:
+        return set()
+    base = Path(log_path)
+    base = base if base.is_absolute() else (root / base)
+    out: set[str] = set()
+    for candidate in (base, base.parent / "latest.jsonl"):
+        resolved = candidate.resolve()
+        if resolved.is_relative_to(root):
+            out.add(resolved.relative_to(root).as_posix())
+    return out

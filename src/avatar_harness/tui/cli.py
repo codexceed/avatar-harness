@@ -62,6 +62,7 @@ def main(
     config = config or HarnessConfig()
     session_id = uuid4().hex
     log_path = resolve_log_path(args.log, session_id)
+    config.log_path = str(log_path)  # hide the harness's own journal from the agent's file tools
     journal = JsonlEventJournal(log_path)
     harness = Harness(config=config, model=model_client)
     repl = ReplSession(

@@ -592,6 +592,7 @@ class ReplSession:
             self.harness.config.workspace_root,
             allow_dirty=True,  # /diff is a read-only inspection — never refuse on a dirty tree
             sensitive_path_globs=self.harness.config.sensitive_path_globs,
+            log_path=self.harness.config.log_path,
         )
         return ws.diff()
 
@@ -622,6 +623,7 @@ class ReplSession:
             self.harness.config.workspace_root,
             allow_dirty=True,  # grounding is a read-only inspection — tolerate a dirty tree
             sensitive_path_globs=self.harness.config.sensitive_path_globs,
+            log_path=self.harness.config.log_path,
         )
         for path in refs:
             try:

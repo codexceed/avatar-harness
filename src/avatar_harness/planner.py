@@ -155,6 +155,72 @@ _PROPOSE_SYSTEM = (
     "actually declare, with the citing source_path. If nothing is declared, make no call."
 )
 
+# The greenfield floor (ADR-0014): the model AUTHORS one smoke command for code it just
+# wrote in a repo that declares no contract; the harness runs it and the real exit code is
+# the signal (never the model's say-so). A single constrained tool call — the `_PROPOSE_TOOL`
+# precedent, authoring instead of citing — which the model may decline by making no call.
+_SMOKE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_smoke_check",
+        "description": (
+            "Propose ONE command that smoke-tests the code just written by parsing / compiling / "
+            "type-checking it (a NON-executing check) and exiting non-zero if it is broken — never "
+            "a no-op you assert passes. The harness runs it and reads the real exit code."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "A single shell command that runs the new code and exits 0 on success.",
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "What passing this command proves about the code.",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+_SMOKE_SYSTEM = (
+    "You verify freshly-written code in a repository that declares no test or lint contract. "
+    "Given the files just written, call propose_smoke_check ONCE with a single command that "
+    "parses / compiles / type-checks what was written and fails (non-zero exit) if it is broken. "
+    "For SAFETY the harness runs only NON-executing checkers — pick one of: "
+    "`python -m py_compile <files>`, `ruff check`, `node --check <file>`, `tsc --noEmit`, "
+    "`go vet ./...` / `go build ./...`, `gofmt -l <files>`, `ruby -c <file>`, `perl -c <file>`, "
+    "`php -l <file>`, `deno check <file>`. Reference the files just written, and prefer a "
+    "DEPENDENCY-FREE check (compiling/parsing won't fail on uninstalled third-party imports). "
+    "Do NOT use code runners (`python -c`, `node -e`, `pytest`, a shell `-c` wrapper) — they are "
+    "rejected. If none of these fit the stack, make no call."
+)
+
+# The floor runs a MODEL-AUTHORED command unattended, outside the before_tool_call permission
+# gate (invariant #4, ADR-0014 §security). A denylist cannot bound that — `python -c "..."`,
+# `node -e "..."`, `bash -c "..."` are each a SINGLE argv, so arbitrary execution hides behind an
+# allowed program name. So the floor is an ALLOWLIST: after `effective_invocation` unwraps
+# `python -m`/`npx`/`uv run`/`sudo`, the program must be a known NON-executing checker (parses /
+# compiles / type-checks without running the project's code). A runner safe only in a check
+# sub-mode carries its required token(s); `None` = safe in any invocation. Deliberately excluded:
+# tools with a code-exec escape hatch — pylint (`--init-hook`), mypy/pyright (config-declared
+# plugins), eslint/biome (repo-config plugins), cargo (build.rs / proc-macros run at check time).
+_SMOKE_ALLOWED: dict[str, set[str] | None] = {
+    "py_compile": None,  # python -m py_compile <files> — compiles, never executes
+    "compileall": None,  # python -m compileall — same, over a tree
+    "ruff": None,  # Rust static analyzer; no code-execution escape
+    "gofmt": None,  # format check; runs nothing
+    "tsc": {"--noEmit"},  # type-check without emit/run
+    "node": {"--check"},  # parse-only; bare `node FILE` would execute
+    "deno": {"check"},
+    "go": {"vet", "build"},  # neither runs the program (unlike `go run`/`go test`)
+    "ruby": {"-c"},  # syntax check only
+    "perl": {"-c"},
+    "php": {"-l"},  # lint / syntax check
+}
+
 
 class VerificationPlanner:
     """Resolves the per-session verification plan (ADR-0007) — harness-owned.
@@ -260,6 +326,53 @@ class VerificationPlanner:
             base_url = self.config.base_url if self.config else None
             self._client = OpenAI(api_key=api_key, base_url=base_url)
         return self._client
+
+    # --- tier 4: greenfield smoke floor (ADR-0014) ------------------------
+
+    def propose_smoke_check(self, ws: Workspace, files_modified: list[str]) -> PlannedCheck | None:
+        """Have the model author ONE executable smoke check for freshly-written code.
+
+        The greenfield floor: used only when tiers 1-3 resolved nothing and the run
+        wrote code, so there is genuinely no declared contract to discover. The model
+        chooses *which* command; the harness still runs it and reads the real exit code,
+        so this is author-and-run, never the self-certification §5 forbids. Resolved at
+        verification time (the artifact under test does not exist at the freeze boundary).
+        Runs on `config.model` (the main model) so the floor needs zero extra config; any
+        endpoint failure degrades to "no floor", never blocks.
+
+        Args:
+            ws: The run-scoped workspace whose just-written files are excerpted.
+            files_modified: The repo-relative paths the run created or changed.
+
+        Returns:
+            The `model-smoke` check, or `None` when nothing runnable was proposed.
+        """
+        model = self.config.model if self.config else None
+        if not model or not files_modified:
+            return None
+        excerpts = _modified_excerpts(ws.root, files_modified)
+        if not excerpts:
+            return None
+        try:
+            response = self._ensure_client().chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _SMOKE_SYSTEM},
+                    {"role": "user", "content": f"Files just written:\n{excerpts}"},
+                ],
+                tools=[_SMOKE_TOOL],
+                temperature=0,
+            )
+            calls = getattr(response.choices[0].message, "tool_calls", None) or []
+            if not calls:
+                return None
+            args = json.loads(calls[0].function.arguments or "{}")
+        except Exception:  # any failure degrades to "no floor", never blocks (tier-3 contract)
+            return None
+        command = (args.get("command") or "").strip()
+        if not _is_safe_smoke(command):
+            return None
+        return PlannedCheck(name="smoke", command=command, kind="smoke", provenance="model-smoke")
 
 
 def config_override_checks(config: HarnessConfig | None) -> list[PlannedCheck]:
@@ -800,6 +913,70 @@ def _citation_valid(root: Path, command: str, source: str) -> bool:
     meaningful = [t for t in tokens if t not in _RUNNER_TOKENS and not t.startswith("-")]
     candidates = meaningful or [t for t in tokens if not t.startswith("-")]
     return any(token in text for token in candidates)
+
+
+# --- greenfield smoke floor helpers (ADR-0014) -----------------------------
+
+
+def _modified_excerpts(root: Path, files_modified: list[str]) -> str:
+    """Bounded excerpts of the files a run just wrote, for the smoke-floor prompt.
+
+    Args:
+        root: The workspace root the paths are relative to.
+        files_modified: The repo-relative paths the run created or changed.
+
+    Returns:
+        Concatenated `=== path ===` excerpt blocks; empty when none are readable files.
+    """
+    blocks: list[str] = []
+    for rel in sorted(files_modified):
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = _read(path)
+        if text:
+            blocks.append(f"=== {rel} ===\n{text[:_EXCERPT_CHARS]}")
+    return "\n\n".join(blocks)
+
+
+def _is_safe_smoke(command: str) -> bool:
+    """Whether `command` is an allowlisted, non-executing verification command (ADR-0014).
+
+    The floor runs this unattended, outside the permission gate, so it is bounded by an
+    ALLOWLIST, never a denylist: the command must resolve (after `effective_invocation`
+    unwraps `python -m`/`npx`/`uv run`/`sudo`) to a known checker that does not execute the
+    project's code, must stay inside the workspace, and — for a runner safe only in a check
+    sub-mode — must carry the required token. Arbitrary execution (`python -c`, `node -e`, a
+    shell `-c` wrapper, any unlisted program) is rejected, yielding no floor.
+
+    Args:
+        command: The model-proposed command.
+
+    Returns:
+        `True` only for an allowlisted, workspace-confined, non-executing invocation.
+    """
+    program, cmd_args = effective_invocation(command)
+    if program not in _SMOKE_ALLOWED:
+        return False
+    if any(_escapes_workspace(a) for a in cmd_args):
+        return False
+    required = _SMOKE_ALLOWED[program]
+    return required is None or any(token in required for token in cmd_args)
+
+
+def _escapes_workspace(arg: str) -> bool:
+    """Whether a command argument points outside the workspace (absolute / parent escape).
+
+    Args:
+        arg: One command argument (a flag or a path).
+
+    Returns:
+        `True` for an absolute path, a `~` expansion, or a `..` parent escape; `False`
+        for a flag or a workspace-relative path.
+    """
+    if arg.startswith("-"):
+        return False  # a flag, not a path
+    return arg.startswith(("/", "~")) or ".." in arg.split("/")
 
 
 def _artifact_excerpts(root: Path) -> str:

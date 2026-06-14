@@ -335,6 +335,10 @@ _FAIL_HINTS = {
     ),
     "tests": "the tests fail; fix the change so the test command passes",
     "lint": "lint/type checks fail; clean up the diff",
+    "smoke": (
+        "the greenfield smoke check failed; fix the code so it parses/compiles, or declare a "
+        "real contract via AVATAR_TEST_COMMAND / AVATAR_LINT_COMMAND"
+    ),
 }
 
 
