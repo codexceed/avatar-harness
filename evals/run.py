@@ -16,6 +16,7 @@ from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
 from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.model_client import ModelClient
+from evals.classify import failure_histogram
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, write_results
@@ -253,6 +254,9 @@ def main(argv: list[str] | None = None) -> int:
         mrows = [r for r in rows if r.model == model]
         print(f"  {model}: pass@1={pass_at_1(mrows):.2f}  pass^k={pass_caret_k(mrows):.2f}  (n={len(mrows)})")
     print(f"overall pass@1={pass_at_1(rows):.2f}  (n={len(rows)})")
+    hist = failure_histogram(rows)
+    if hist:
+        print("failure modes: " + ", ".join(f"{k}={v}" for k, v in sorted(hist.items())))
 
     if args.cleanup:
         _cleanup_workspaces(rows, run_workspace, preexisting=preexisting)

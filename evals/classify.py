@@ -1,0 +1,68 @@
+"""Failure-mode classification — bucket a non-solved run mechanically, no model.
+
+Base buckets come from the `ResultRow` alone, so they survive workspace cleanup. When the
+run's journal events are supplied, an ``incomplete`` run is refined into ``loop_oscillation``
+or ``decision_error`` — distinctions only the trajectory reveals.
+"""
+
+from collections import Counter
+from collections.abc import Sequence
+
+from evals.result import ResultRow
+
+_LOOP_THRESHOLD = 3  # the same action chosen this many times in a run reads as oscillation
+_DECISION_ERROR_THRESHOLD = 3  # this many malformed decisions reads as a decision-format problem
+
+
+def classify(row: ResultRow, events: Sequence[dict] | None = None) -> str:
+    """Bucket a run by failure mode (or ``"solved"``).
+
+    Args:
+        row: The scored result row.
+        events: The run's journal events (optional). When present, an ``incomplete`` run is
+            refined into ``loop_oscillation`` / ``decision_error``.
+
+    Returns:
+        One of: ``solved``, ``verification_failed``, ``budget_exhausted``, ``loop_oscillation``,
+        ``decision_error``, ``blocked``, ``probe_failed``, ``harness_error``, ``unknown``.
+    """
+    if row.solved:
+        return "solved"
+    outcome = row.outcome or ""
+    if outcome.startswith("error"):  # the eval runner caught an exception (e.g. a provider 400)
+        return "harness_error"
+    if outcome == "incomplete":
+        return _refine_incomplete(events)
+    if outcome == "success" and row.probe_exit not in (None, 0):
+        return "probe_failed"  # the agent declared done, but the probe says the code doesn't work
+    return {"blocked": "blocked", "failed": "verification_failed"}.get(outcome, "unknown")
+
+
+def _refine_incomplete(events: Sequence[dict] | None) -> str:
+    """Refine an ``incomplete`` run into a specific bucket using the journal, if available.
+
+    Args:
+        events: The run's journal events, or `None`.
+
+    Returns:
+        ``loop_oscillation``, ``decision_error``, or the base ``budget_exhausted``.
+    """
+    if events:
+        actions = [e.get("action") for e in events if e.get("type") == "model_decision" and e.get("action")]
+        if actions and max(Counter(actions).values()) >= _LOOP_THRESHOLD:
+            return "loop_oscillation"
+        if sum(1 for e in events if e.get("type") == "decision_error") >= _DECISION_ERROR_THRESHOLD:
+            return "decision_error"
+    return "budget_exhausted"
+
+
+def failure_histogram(rows: Sequence[ResultRow]) -> dict[str, int]:
+    """Count failure modes across the non-solved rows.
+
+    Args:
+        rows: The result rows.
+
+    Returns:
+        A bucket → count mapping over the rows that did not solve (solved runs excluded).
+    """
+    return dict(Counter(classify(r) for r in rows if not r.solved))

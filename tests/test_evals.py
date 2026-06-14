@@ -288,7 +288,9 @@ def test_load_results_skips_blank_lines(tmp_path):
 
 
 def _frow(outcome: str, solved: bool, probe_exit=None) -> ResultRow:
-    return ResultRow(task="t", model="m", seed=0, solved=solved, outcome=outcome, iterations=1, probe_exit=probe_exit)
+    return ResultRow(
+        task="t", model="m", seed=0, solved=solved, outcome=outcome, iterations=1, probe_exit=probe_exit
+    )
 
 
 @pytest.mark.parametrize(

@@ -103,8 +103,10 @@ across cleanup** — only scratch repos are cleaned). One row per `(model, task,
  "probe_exit":0,"workspace":"/…/eval_run_…/openai-gpt-5.1__create-chatbot__seed0__ab12"}
 ```
 
-The runner prints a per-model summary (`pass@1`, `pass^k`). A bad model slug or run error becomes an
-`outcome: "error: …"` row and the matrix continues.
+The runner prints a per-model summary (`pass@1`, `pass^k`) and a **failure-mode histogram** over the
+non-solved runs (`verification_failed`, `budget_exhausted`, `loop_oscillation`, `decision_error`,
+`blocked`, `probe_failed`, `harness_error`). A bad model slug or run error becomes an
+`outcome: "error: …"` row (`harness_error`) and the matrix continues.
 
 > **Cross-run reading:** `evals.result.load_results(path)` reads a `<ts>.jsonl` back into
 > `ResultRow`s (the inverse of `to_jsonl`). The run summary still aggregates only the current run's
@@ -165,8 +167,9 @@ evals/
   spec.py            TaskSpec + TOML loader
   provision.py       fresh clean scratch git repo per run
   score.py           is_solved (verifier/probe) + run_probe
-  result.py          ResultRow (+ JSONL)
+  result.py          ResultRow (+ JSONL load/write)
   metrics.py         pass@1, pass^k
+  classify.py        failure-mode bucketing + histogram
   run.py             run_task + the `make eval` matrix driver (main)
   tasks/*.toml       task specs
   probes/*.py        deterministic success probes
