@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**In active development — TDD, phased.** Phase 0 (the walking skeleton) is implemented. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
+**In active development — TDD, phased.** The engine is built through Phase 3.2 (the MVP cockpit), plus post-MVP dogfood hardening; durable crash-resume (3.3) is the remaining increment. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
 
 ## Documentation map — which doc, when
 
@@ -35,10 +35,10 @@ This project uses `uv`; `uv.lock` is committed. Dev tools live in `[dependency-g
 ```bash
 make install                     # uv sync (deps + dev group)
 make test                        # run the test suite
-make run TASK="explain the loop" # run the CLI on a task (Phase 0: echoes the task back)
+make run TASK="explain the loop" # run the CLI on a task (drives the full agent loop)
 make lint                        # ruff check
 make format                      # ruff format
-make typecheck                   # pyright (standard mode; src + tests)
+make typecheck                   # pyrefly check (src + tests)
 make check                       # lint + typecheck + test — run before committing
 
 uv run pytest tests/test_x.py::test_name   # run a single test
@@ -82,7 +82,7 @@ Conflating them is what leaves budget-exhaustion vs. verification-failure ambigu
 
 ### Other design choices worth knowing before editing
 
-- **`task_kind`** (`edit` / `investigate` / `explain` / `test_only`) selects the verification contract (§12) — it prevents edit-shaped verification ("a diff must exist") from being forced onto investigative/explanatory tasks. The verifier passes only on *required* checks with positive external signal, never vacuously on skipped checks.
+- **`task_kind`** (`edit` / `investigate` / `test_only`) selects the verification contract (§12) — it prevents edit-shaped verification ("a diff must exist") from being forced onto investigative/explanatory tasks. (`investigate` subsumes pure explanation; there is no separate `explain` kind.) The verifier passes only on *required* checks with positive external signal, never vacuously on skipped checks.
 - **`ModelDecision` is a constrained, validated union** (`tool_call` / `final_answer` / `ask_user`). `thought_summary` is for logging/context only — never for control flow. Invalid decisions are fed back as recoverable errors, never executed.
 - **Retry semantics are narrow (§10):** only *model-correctable* errors (stale patch context, missing arg, bad path format, test target not found) loop back through the model. *System failures* (permission denied, timeout, network blocked, tool bug) are surfaced, never auto-retried.
 - **`ToolResult.content` vs `details`:** the model only ever sees `content` (or a context-builder summary); `details`/`stdout`/`stderr` are retained for the event log, rendering, and artifacts — kept out of the model's context.

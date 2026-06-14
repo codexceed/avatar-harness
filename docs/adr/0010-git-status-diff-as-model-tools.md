@@ -1,6 +1,6 @@
 # ADR 0010 — `git_status` / `git_diff` as model-callable tools
 
-- **Status:** Proposed
+- **Status:** Accepted (deferred) — the decision (leave them unregistered until a task earns them) is in force; registration is the deferred build
 - **Date:** 2026-06-11
 - **Deciders:** Sarthak Joshi
 - **Related:** `HARNESS_DESIGN.md` §10 (tool table lists both at tier 0), §14 (artifact diff), §23.4 (`/diff` meta command).
