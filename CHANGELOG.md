@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/codexceed/avatar-harness/compare/v0.1.1...v0.1.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* **runner:** harden loop determinism (transport, repeat key, verifier pin, excerpt cap) ([#45](https://github.com/codexceed/avatar-harness/issues/45)) ([f63a1e6](https://github.com/codexceed/avatar-harness/commit/f63a1e6e15b1145128c603c401dddd656a5b202f))
+
 ## [0.1.1](https://github.com/codexceed/avatar-harness/compare/v0.1.0...v0.1.1) (2026-06-11)
 
 
