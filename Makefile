@@ -51,11 +51,11 @@ typecheck:
 
 # Docstring<->signature agreement (Google style).
 docstrings:
-	uv run pydoclint src
+	uv run pydoclint src evals
 
 # Dependency hygiene (unused / missing / transitive).
 deps:
-	uv run deptry src
+	uv run deptry src evals
 
 # Generate Mintlify API-reference MDX from docstrings (source of truth = the code).
 docs-api:
@@ -71,7 +71,7 @@ docs-validate:
 
 # Stage 0: compiles AND imports — the cheap "does it run" gate, before tests.
 smoke:
-	uv run python -m compileall -q src tests
+	uv run python -m compileall -q src tests evals
 	uv run python -c "import importlib, pkgutil, avatar_harness as p; [importlib.import_module(m.name) for m in pkgutil.walk_packages(p.__path__, p.__name__ + '.')]"
 
 # --- HARD gate: fail-fast, staged. Run before committing. ---
@@ -81,8 +81,8 @@ check-hard:
 	uv run ruff check .
 	$(MAKE) smoke
 	uv run pyrefly check
-	uv run pydoclint src
-	uv run deptry src
+	uv run pydoclint src evals
+	uv run deptry src evals
 	uv run pytest
 
 # --- SOFT gate: report only, never blocks (note the leading `-`). ---

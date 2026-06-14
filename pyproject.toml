@@ -122,6 +122,9 @@ convention = "google"
 # Types live in signatures (Pyrefly checks them), NOT duplicated in docstrings.
 [tool.pydoclint]
 style = "google"
+# evals library modules are gated like src; its probes (lightweight scripts) and fixtures
+# (sample data) are excluded, mirroring the ruff carve-outs for those paths.
+exclude = '\.venv|evals/fixtures|evals/probes'
 arg-type-hints-in-docstring = false
 check-return-types = false
 check-yield-types = false
@@ -137,17 +140,25 @@ check-class-attributes = false
 
 # --- Pyrefly: sole hard type gate (#1). Pinned to 1.0.x; bump deliberately. ---
 [tool.pyrefly]
-project-includes = ["src", "tests"]
+# `evals` (dev tooling) is held to the same type gate as `src` — except its probes (runtime
+# scripts that import agent-generated modules, e.g. `import calc`, unresolvable statically) and
+# its fixtures (deliberately-imperfect sample repos), excluded as ruff excludes them.
+project-includes = ["src", "tests", "evals"]
+project-excludes = ["**/__pycache__/**", "**/.[!/.]*/**", "evals/fixtures", "evals/probes"]
 # `tests` is an import root too, so shared test stubs in `tests/conftest.py` (e.g. ScriptedModel,
 # imported as `from conftest import ...`) resolve under the type checker as they do under pytest.
-# `.` makes the root-level `evals` package importable from tests without type-checking it
-# (it's dev tooling, lint-gated by ruff but kept out of project-includes).
+# `.` makes the root-level `evals` package importable from tests.
 search-path = ["src", "tests", "."]
 python-version = "3.12"
 
 # --- deptry: dependency hygiene — unused/missing/transitive (#5). ---
 [tool.deptry]
-# Defaults are sensible; add per-rule ignores here as the dependency graph grows.
+# `evals` is a first-party package living outside `src/` (dev tooling); without this deptry
+# reads its intra-package imports as a missing third-party dep.
+known_first_party = ["evals"]
+# Probes (which import agent-generated modules like `calc`) and fixtures aren't dep-checked,
+# mirroring the ruff/pyrefly/pydoclint carve-outs for those paths.
+extend_exclude = ["evals/fixtures", "evals/probes"]
 
 # --- interrogate: docstring coverage ratchet (soft). Run via uvx. ---
 [tool.interrogate]
