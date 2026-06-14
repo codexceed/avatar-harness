@@ -1,0 +1,46 @@
+name: release-please-approve
+
+# Auto-approve release-please's release PR so it satisfies required-review branch
+# protection. GitHub forbids the default GITHUB_TOKEN — and the github-actions[bot]
+# that authors the PR — from submitting an approving review, so this authenticates
+# with a PAT stored as the RELEASE_APPROVE_TOKEN secret, issued from a separate
+# identity with `pull-requests: write` on this repo. See release-please.yml.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+# One approval per PR is enough; never cancel an in-flight approval.
+concurrency:
+  group: release-please-approve-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    # Gate to the release-please PR only: authored by the actions bot, on its branch.
+    if: >-
+      github.event.pull_request.user.login == 'github-actions[bot]' &&
+      startsWith(github.head_ref, 'release-please--')
+    steps:
+      - name: Approve the release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_APPROVE_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::RELEASE_APPROVE_TOKEN not set — skipping auto-approval. \
+          Add a PAT (pull-requests: write) from a non-bot identity to enable it."
+            exit 0
+          fi
+          # Idempotent: don't stack a second review if the PR is already approved.
+          approved=$(gh pr view "$PR_URL" --json reviews \
+            --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+          if [ "${approved:-0}" -gt 0 ]; then
+            echo "Release PR already approved — nothing to do."
+            exit 0
+          fi
+          gh pr review "$PR_URL" --approve --body "Auto-approving the release-please PR."
