@@ -1,0 +1,11 @@
+id = "modify-existing"
+guards = "modify existing code (apply_patch dialect / hunk-header regression, dogfood 041fde1e)"
+goal = """The `add` function in calc.py has a bug: it subtracts instead of adding. Fix it so that \
+add(a, b) returns the sum of a and b."""
+task_kind = "edit"
+fixture = "modify-existing"
+success_probe = "python evals/probes/calc_fixed.py"
+
+[budgets]
+max_iterations = 20
+max_wall_clock_seconds = 240

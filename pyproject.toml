@@ -56,6 +56,9 @@ packages = ["src/avatar_harness"]
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+# Eval fixtures are deliberately-imperfect sample repos the agent operates on (a buggy
+# function, a secret file) — input data, not code we maintain. Don't lint or format them.
+extend-exclude = ["evals/fixtures"]
 
 [tool.ruff.lint]
 select = [
