@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/codexceed/avatar-harness/compare/v0.1.2...v0.2.0) (2026-06-14)
+
+
+### Features
+
+* **evals:** Eval-0 harness — deterministic-verifier, model-agnostic eval loop (Slice 1) ([#47](https://github.com/codexceed/avatar-harness/issues/47)) ([b4fe5dc](https://github.com/codexceed/avatar-harness/commit/b4fe5dc3e1f30bec17785f74595cc757b5420dfc))
+
 ## [0.1.2](https://github.com/codexceed/avatar-harness/compare/v0.1.1...v0.1.2) (2026-06-14)
 
 
