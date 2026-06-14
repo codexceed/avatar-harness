@@ -24,6 +24,10 @@ class TaskSpec(BaseModel):
     fixture: str = "empty"
     success_probe: str | None = None
     budgets: dict[str, int] = Field(default_factory=dict)
+    # Runtime env for the task's program (injected into the success-probe subprocess), so a
+    # task can declare what its program needs to run — e.g. a dummy OPENAI_API_KEY. The user
+    # sets it explicitly; it is environment, not a hint to the agent (the agent never sees it).
+    env: dict[str, str] = Field(default_factory=dict)
     fail_to_pass: list[str] = Field(default_factory=list)
     pass_to_pass: list[str] = Field(default_factory=list)
     oracle: list[str] = Field(default_factory=list)

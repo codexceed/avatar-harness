@@ -5,8 +5,10 @@ the agent loop, so it also catches a verifier that passed for the wrong reason (
 `probe_failed` leakage proxy, ADR-0011).
 """
 
+import os
 import shlex
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 _PROBE_TIMEOUT_SECONDS = 120
@@ -28,12 +30,14 @@ def is_solved(verifier_passed: bool, probe_exit: int | None) -> bool:
     return verifier_passed and (probe_exit is None or probe_exit == 0)
 
 
-def run_probe(command: str, cwd: Path) -> int:
+def run_probe(command: str, cwd: Path, *, env: Mapping[str, str] | None = None) -> int:
     """Run a success probe in `cwd`, returning its exit code (never raises).
 
     Args:
         command: The probe command (argv form, no shell metacharacters).
         cwd: The directory to run it in (the scratch repo).
+        env: Extra environment for the probe, layered over the current environment
+            (the task's declared runtime env, e.g. a dummy OPENAI_API_KEY); `None` = inherit.
 
     Returns:
         The probe's exit code; 127 for an empty/missing program, 124 on timeout.
@@ -41,10 +45,12 @@ def run_probe(command: str, cwd: Path) -> int:
     argv = shlex.split(command)
     if not argv:
         return _EXIT_NOT_FOUND
+    run_env = {**os.environ, **env} if env else None
     try:
         proc = subprocess.run(
             argv,
             cwd=str(cwd),
+            env=run_env,
             capture_output=True,
             text=True,
             timeout=_PROBE_TIMEOUT_SECONDS,

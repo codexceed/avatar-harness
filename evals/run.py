@@ -85,7 +85,9 @@ def run_task(
     state = asyncio.run(session.run())
 
     verifier_passed = state.outcome == "success"
-    probe_exit = run_probe(_resolve_probe(spec.success_probe), repo) if spec.success_probe else None
+    probe_exit = (
+        run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
+    )
     return ResultRow(
         task=spec.id,
         model=cfg.model,
