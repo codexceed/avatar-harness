@@ -84,7 +84,9 @@ def test_runner_emits_model_decisions(tmp_path, read_registry):
     (tmp_path / "app.py").write_text("def handler():\n    return 1\n", encoding="utf-8")
     decisions = [
         ModelDecision(
-            thought_summary="check app.py", action=ToolCall(name="read_file", input={"path": "app.py"})
+            thought_summary="check app.py",
+            action=ToolCall(name="read_file", input={"path": "app.py"}),
+            transport="native",
         ),
         ModelDecision(action=FinalAnswer(answer="the handler is in app.py")),
     ]
@@ -98,6 +100,7 @@ def test_runner_emits_model_decisions(tmp_path, read_registry):
     assert logged
     assert logged[0]["thought"] == "check app.py"
     assert "read_file" in logged[0]["action"]
+    assert logged[0]["transport"] == "native"
 
 
 class _RaisingModel(ModelClient):

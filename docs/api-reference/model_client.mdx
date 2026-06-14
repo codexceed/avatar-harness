@@ -113,7 +113,7 @@ can record them as evidence and journal them (invariant #5). It is never accepte
 from raw model output — `parse_decision` clears it.
 
 ```python
-ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, usage: DecisionUsage | None = None) -> None
+ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, usage: DecisionUsage | None = None, transport: str = '') -> None
 ```
 
 **Fields**
@@ -124,6 +124,7 @@ ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | Ask
 | `action` | `ToolCall | FinalAnswer | AskUser` | yes |
 | `retry_trace` | `list[DecisionRetryNote]` | no |
 | `usage` | `DecisionUsage | None` | no |
+| `transport` | `str` | no |
 ### `OpenAIModelClient`
 
 Calls an OpenAI-compatible endpoint and validates the reply (§6, §18).

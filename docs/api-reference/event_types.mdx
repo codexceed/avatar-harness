@@ -229,7 +229,7 @@ Returns:
 The model chose an action this turn (thought + a one-line brief).
 
 ```python
-ModelDecisionEvent(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['model_decision'] = 'model_decision', thought: str = '', action_type: str = '', action: str = '') -> None
+ModelDecisionEvent(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['model_decision'] = 'model_decision', thought: str = '', action_type: str = '', action: str = '', transport: str = '') -> None
 ```
 
 **Fields**
@@ -246,6 +246,7 @@ ModelDecisionEvent(*, schema_version: Literal[1] = 1, event_id: int = 0, session
 | `thought` | `str` | no |
 | `action_type` | `str` | no |
 | `action` | `str` | no |
+| `transport` | `str` | no |
 ### `ModelUpdate`
 
 A streamed model-output delta — display only; never private chain-of-thought (ADR-0001 D6).

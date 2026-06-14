@@ -295,6 +295,7 @@ class AgentRunner:
                 thought=decision.thought_summary,
                 action_type=action.type,
                 action=brief,
+                transport=decision.transport,
             )
             self._publish(
                 ModelDecisionEvent(

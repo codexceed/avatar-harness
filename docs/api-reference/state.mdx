@@ -54,7 +54,7 @@ Why the agent chose what it chose, and how it turned out (§7).
 verdict, block reason) so the action ledger can show `chosen → outcome`.
 
 ```python
-DecisionRecord(*, step: int, rationale: str, chosen: str, rejected: list[str] = <factory>, outcome: str = '') -> None
+DecisionRecord(*, step: int, rationale: str, chosen: str, key: str = '', rejected: list[str] = <factory>, outcome: str = '') -> None
 ```
 
 **Fields**
@@ -64,6 +64,7 @@ DecisionRecord(*, step: int, rationale: str, chosen: str, rejected: list[str] = 
 | `step` | `int` | yes |
 | `rationale` | `str` | yes |
 | `chosen` | `str` | yes |
+| `key` | `str` | no |
 | `rejected` | `list[str]` | no |
 | `outcome` | `str` | no |
 ### `Evidence`
