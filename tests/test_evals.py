@@ -74,15 +74,19 @@ def test_empty_fixture_yields_bare_repo():
 @pytest.mark.parametrize(
     ("verifier_passed", "probe_exit", "expected"),
     [
+        # A probe, when declared, is the AUTHORITATIVE signal (option A): the verifier
+        # verdict is ignored — a fresh creation can't satisfy the edit gate, so a working
+        # probe-passing chatbot must still score solved.
         (True, 0, True),
+        (False, 0, True),  # verifier failed (no test contract) but the probe passed -> solved
         (True, 1, False),
-        (False, 0, False),
         (False, 1, False),
-        (True, None, True),  # no probe declared -> verifier alone decides
+        # No probe -> the harness verifier decides (e.g. investigate's grounded-answer gate).
+        (True, None, True),
         (False, None, False),
     ],
 )
-def test_score_requires_verifier_pass_and_probe_zero(verifier_passed, probe_exit, expected):
+def test_probe_is_authoritative_when_present_else_verifier(verifier_passed, probe_exit, expected):
     assert is_solved(verifier_passed, probe_exit) is expected
 
 
