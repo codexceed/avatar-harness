@@ -160,7 +160,17 @@ def main(argv: list[str] | None = None) -> int:
         cfg = base.model_copy(update={"model": model})
         for spec in specs:
             for seed in range(args.seeds):
-                row = run_task(spec, config=cfg, seed=seed)
+                try:
+                    row = run_task(spec, config=cfg, seed=seed)
+                except Exception as exc:  # one bad model/run must not lose the whole matrix
+                    row = ResultRow(
+                        task=spec.id,
+                        model=model,
+                        seed=seed,
+                        solved=False,
+                        outcome=f"error: {type(exc).__name__}: {exc}"[:200],
+                        iterations=0,
+                    )
                 rows.append(row)
                 print(f"{model}  {spec.id}  seed={seed}  -> {'PASS' if row.solved else row.outcome}")
 
