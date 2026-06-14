@@ -153,25 +153,42 @@ flowchart TD
 
 ## 7. Task spec schema
 
-```yaml
-# evals/tasks/create-chatbot.yaml
-id: create-chatbot
-guards: "file creation end-to-end; edit-primitive robustness (dogfood 2026-06-13)"
-goal: "Write a python script for an OpenAI API compatible chatbot"
-task_kind: edit            # or "auto" to exercise mode routing
-fixture: create-chatbot    # evals/fixtures/create-chatbot/  (or "empty")
-budgets:
-  max_iterations: 30
-  max_wall_clock_seconds: 300
-# Deterministic success signal run AFTER the agent finishes, in the scratch repo:
-success_probe: "python evals/probes/chatbot_smoke.py"
-# SWE-bench-style partition (optional; for tasks with a pre-existing suite):
-fail_to_pass: []           # commands that must flip fail->pass
-pass_to_pass: []           # commands that must stay green
-# ADR-0011 integrity (optional; protected + fingerprinted grading surface):
-oracle: []                 # files the agent must not edit (write-protected + hashed)
-hidden: []                 # oracle files withheld from the agent, injected only at scoring
+Specs are **TOML** (stdlib `tomllib`), not YAML — zero new dependencies (Principle C); the
+eval tooling stays dependency-free. Fields map one-for-one to the original YAML sketch.
+
+```toml
+# evals/tasks/create-chatbot.toml
+id = "create-chatbot"
+guards = "file creation end-to-end; edit-primitive robustness (dogfood 2026-06-13)"
+# The prompt NAMES the entry file (option (a)): the probe runs exactly that file, so there
+# is no discovery heuristic. An explicit contract, not implementation-prescription.
+goal = "Create a runnable Python CLI chatbot in a file named `chatbot.py` using the openai SDK …"
+task_kind = "edit"
+fixture = "empty"
+# Deterministic success signal run AFTER the agent finishes, in the scratch repo. The probe
+# takes the entry filename as an argument and asserts a turn round-trips (no LLM judge).
+success_probe = "python evals/probes/chatbot_smoke.py chatbot.py"
+
+[budgets]
+max_iterations = 30
+max_wall_clock_seconds = 300
+
+# Runtime env for the program under test (the user sets it; never shown to the agent), so the
+# canonical os.environ["OPENAI_API_KEY"] pattern runs instead of crashing at startup.
+[env]
+OPENAI_API_KEY = "sk-eval-dummy"
+
+# SWE-bench-style partition + ADR-0011 integrity (optional; carried now, used in later slices):
+#   fail_to_pass = []   # commands that must flip fail->pass
+#   pass_to_pass = []   # commands that must stay green
+#   oracle = []         # files the agent must not edit (write-protected + hashed)
+#   hidden = []         # oracle files withheld from the agent, injected only at scoring
 ```
+
+**Entry-point convention (option (a), 2026-06-14):** the prompt names the entry file and the
+probe runs that exact file. A name-agnostic probe (run every candidate, pass if any
+round-trips) was considered and deferred to the later, more open-ended verification work — the
+deterministic named-file contract is the right fit for Eval-0.
 
 Seed set (from ADR-0004 + the dogfood), `create-chatbot` leading:
 

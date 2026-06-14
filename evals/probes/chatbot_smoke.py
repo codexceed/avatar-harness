@@ -1,12 +1,13 @@
 """Functional success probe for `create-chatbot` — a turn must round-trip.
 
-Run with the scratch repo as cwd. Injects a fake ``openai`` module, feeds a couple of user
-lines on stdin, runs the agent's script as ``__main__``, and exits 0 iff the fake client
-received a chat/completions call (a turn actually round-tripped). Strict by design:
-"parses + imports a client" is not enough — the dogfood showed scripts that look right but
-never run a turn.
+Usage: ``python chatbot_smoke.py <entry_file>`` with the scratch repo as cwd. The entry file
+is named by the task (the prompt tells the agent the filename), so there is no discovery
+guesswork — the probe runs exactly that file. It injects a fake ``openai`` module, feeds user
+lines on stdin, runs ``<entry_file>`` as ``__main__``, and exits 0 iff the fake client
+received a chat/completions call (a turn actually round-tripped). Strict by design: "parses +
+imports a client" is not enough — the dogfood showed scripts that look right but never run a turn.
 
-Exit codes: 0 = a turn round-tripped; 1 = no usable script / no call observed.
+Exit codes: 0 = a turn round-tripped; 1 = missing entry file / no call observed.
 """
 
 import io
@@ -71,18 +72,16 @@ def _install_fake_openai() -> None:
     sys.modules["openai"] = mod
 
 
-def _find_script() -> Path | None:
-    """Find the agent's chatbot script: a .py in cwd that references an OpenAI client.
+def _target_script() -> Path | None:
+    """The entry file named on the command line, resolved against cwd (the scratch repo).
 
     Returns:
-        The most likely script, or `None` if none reference openai.
+        The entry file path if it was named and exists, else `None`.
     """
-    candidates = [p for p in sorted(Path.cwd().rglob("*.py")) if ".git" not in p.parts]
-    for path in candidates:
-        text = path.read_text(encoding="utf-8", errors="ignore").lower()
-        if "openai" in text or "chat.completions" in text:
-            return path
-    return None
+    if len(sys.argv) < 2:
+        return None
+    candidate = Path.cwd() / sys.argv[1]
+    return candidate if candidate.is_file() else None
 
 
 def main() -> int:
@@ -92,9 +91,9 @@ def main() -> int:
         0 if a turn round-tripped against the mocked client, else 1.
     """
     _install_fake_openai()
-    script = _find_script()
+    script = _target_script()
     if script is None:
-        print("probe: no openai-using script found")
+        print(f"probe: entry file not found (expected argv[1]; got {sys.argv[1:]})")
         return 1
 
     sys.stdin = io.StringIO("hello\nquit\nexit\n")
