@@ -50,12 +50,14 @@ class PlannedCheck(BaseModel):
 
     The unit of the per-session verification plan. `provenance` names the artifact
     the command was resolved from (`config:AVATAR_TEST_COMMAND`, `ci:.github/...`,
-    `Makefile:test`, `llm:<cited path>`), so every run's rubric is auditable.
+    `Makefile:test`, `llm:<cited path>`, `model-smoke`), so every run's rubric is
+    auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored check the
+    harness still runs itself, resolved at verification time rather than frozen up front.
     """
 
     name: str
     command: str
-    kind: Literal["test", "lint"]
+    kind: Literal["test", "lint", "smoke"]
     provenance: str
 
 
@@ -152,6 +154,24 @@ class TaskState(BaseModel):
         if self.verification_plan is not None:
             raise RuntimeError("verification plan is already frozen")
         self.verification_plan = list(plan)
+
+    def set_smoke_floor(self, checks: list[PlannedCheck]) -> None:
+        """Late-bind the greenfield smoke floor onto an otherwise-empty frozen plan (ADR-0014).
+
+        The one sanctioned exception to "the rubric never moves mid-run": it applies
+        ONLY when tiers 1-3 discovered nothing (`verification_plan == []`), turning the
+        empty no-contract plan into a model-authored smoke check resolved at verify time.
+        A non-empty (a real contract won) or unfrozen (`None`) plan is never touched.
+
+        Args:
+            checks: The resolved smoke check(s) to bind.
+
+        Raises:
+            RuntimeError: When the frozen plan is not the empty no-contract plan.
+        """
+        if self.verification_plan != []:
+            raise RuntimeError("smoke floor applies only to an empty frozen plan")
+        self.verification_plan = list(checks)
 
     def block(self, reason: str) -> None:
         """Terminal: the task needs human input (§5 ask_user in a non-interactive run).

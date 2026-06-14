@@ -517,6 +517,7 @@ class AgentRunner:
         # A run can claim done without ever editing — the plan still freezes before
         # the verifier runs, so the rubric is fixed and journaled in every case.
         self._freeze_plan(state, ws)
+        await self._maybe_add_smoke_floor(state, ws)
         self._set_phase(state, "verifying")
         self.emitter.emit("verification_start")
         self._publish(VerificationStart(task_id=state.task_id))
@@ -542,6 +543,34 @@ class AgentRunner:
             if report.recommended_next_action:
                 state.add_feedback(report.recommended_next_action, kind="repair_hint")
             self._set_phase(state, "editing")
+
+    async def _maybe_add_smoke_floor(self, state: TaskState, ws: Workspace) -> None:
+        """Bind the greenfield smoke floor when tiers 1-3 resolved nothing (ADR-0014).
+
+        The lowest-precedence tier: only when the frozen plan is the *empty* no-contract
+        plan AND an `edit` run actually wrote code does the model get to AUTHOR one
+        executable smoke check. The harness still runs it (the verifier reads the real
+        exit code), so this is author-and-run, never self-certification (§5). Late-bound
+        on purpose — the artifact under test did not exist at the freeze boundary. A real
+        contract (non-empty plan) is never touched; resolution failure leaves the empty
+        plan as-is (the legible no-contract path).
+
+        Args:
+            state: The task state whose empty frozen plan may gain the floor.
+            ws: The run-scoped workspace the proposal excerpts and the verifier runs in.
+        """
+        if state.task_kind != "edit" or state.verification_plan != [] or not state.files_modified:
+            return
+        check = await asyncio.to_thread(self.planner.propose_smoke_check, ws, sorted(state.files_modified))
+        if check is None:
+            return
+        floor = [check]
+        state.set_smoke_floor(floor)
+        self.deps.verification_plan = floor  # mirror, as _freeze_plan does
+        state.add_feedback(
+            f"greenfield smoke floor: `{check.command}` [{check.provenance}]", kind="verification_plan"
+        )
+        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in floor])
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).

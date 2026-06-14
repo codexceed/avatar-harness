@@ -80,7 +80,7 @@ flowchart TD
 | `ToolRuntime` | Executes typed tools against the workspace; isolates handler exceptions as failed `ToolResult`s. | [Implemented] |
 | `PermissionPolicy` | `before_tool_call` control gate (tiers 0–4 + sensitive-path denylist over declared paths). | [Implemented] (synchronous; async with the REPL) |
 | `Verifier` | Proves completion via external evidence; pure executor over the frozen verification plan. | [Implemented] (`investigate`/`edit`/`test_only`) |
-| `VerificationPlanner` | Resolves the per-session verification plan (config override → deterministic detection → cited LLM fallback); the runner freezes it at the editing boundary (ADR-0007). | [Implemented] |
+| `VerificationPlanner` | Resolves the per-session verification plan (config override → deterministic detection → cited LLM fallback); the runner freezes it at the editing boundary (ADR-0007). Plus the greenfield smoke floor — a model-authored, harness-run check resolved at verify time when nothing else did (ADR-0014). | [Implemented] |
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id`; `EventLog` round-trips typed events too. | [Implemented] |
 | `HarnessEvent` + `EventBus` | Typed lifecycle union (`event_types.py`) + bounded per-subscriber fan-out (`bus.py`) the async loop publishes through, with the privileged write-ahead `JsonlEventJournal` (`journal.py`). | [Implemented] (3.0 fan-out + Lane 1 bounded queues/drop policy/journal) |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
@@ -269,17 +269,19 @@ flowchart TD
     DET["2 · Deterministic detection — CI workflow run: steps > manifests (package.json, pyproject/tox/nox, Cargo.toml, go.mod, pre-commit) > Makefile targets; program-position classification, no LLM, no Python assumption"]
     LLM["3 · LLM fallback (opt-in: AVATAR_PLANNER_MODEL) — proposes for unresolved slots only, must cite the declaring artifact; the harness validates the citation or rejects"]
     FRZ["freeze onto TaskState at investigating → editing; journal verification_plan_frozen (command + provenance per check)"]
+    SMK["4 · Greenfield smoke floor (ADR-0014) — empty plan + an edit that wrote code: the model AUTHORS one executable smoke check (provenance=model-smoke); resolved at VERIFY time, run by the harness"]
     CO -->|slot unresolved| DET -->|slot unresolved| LLM
     CO --> FRZ
     DET --> FRZ
     LLM --> FRZ
+    FRZ -->|froze empty + code written| SMK
 ```
 
 Key properties:
 
-- **The model never authors the rubric.** It can pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one — freezing is an authority transfer away from the model, not a cache.
+- **The model never authors the rubric — with one bounded exception (ADR-0014).** For tiers 1–3 it can only pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one. The greenfield smoke floor (tier 4) is the exception: when nothing else resolved, the model *authors* one check — but the harness still **runs** it and reads the real exit code, so it is author-and-run, never self-assertion (the model can't forge a process result). Lowest precedence (any real contract displaces it) and tagged `provenance=model-smoke` so the weak signal is legible.
 - **Python-ecosystem commands are emitted `python -m <tool>`**, so an installed-but-not-on-PATH tool still resolves; a genuinely missing binary surfaces as a failed check (exit 127 from `Workspace.run`), never a crash into the loop.
-- **Nothing discovered → an empty plan freezes** and verification fails legibly ("no verification contract discovered — declare one via `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`"), keeping the structural guards (diff present, no secrets). The universal minimal signal for no-contract repos remains the ADR's open question.
+- **Nothing discovered → the greenfield floor, else a legible failure.** An empty plan over an `edit` that wrote code triggers the tier-4 smoke floor (resolved at verify time, not the freeze boundary — the only late-bound tier). If the floor also declines (non-code task, or the model proposes nothing runnable), the empty plan stands and verification fails legibly ("no verification contract discovered — declare one via `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`"), keeping the structural guards (diff present, no secrets).
 - **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.
 - Smart **test-target inference** ("which tests cover this diff?") remains **deferred** (`§9`, `§21`); the plan is per-session, not per-diff.
 

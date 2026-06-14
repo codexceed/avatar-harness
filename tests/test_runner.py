@@ -1,4 +1,6 @@
+import json
 import subprocess
+from types import SimpleNamespace
 
 from conftest import ScriptedModel
 from pydantic import BaseModel
@@ -16,8 +18,9 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
+from avatar_harness.planner import VerificationPlanner
 from avatar_harness.runner import AgentRunner
-from avatar_harness.state import TaskState
+from avatar_harness.state import PlannedCheck, TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import apply_patch, write_file
@@ -26,7 +29,9 @@ from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
 
-def _runner(tmp_path, registry: ToolRegistry, decisions, *, emitter=None, **config_kw) -> AgentRunner:
+def _runner(
+    tmp_path, registry: ToolRegistry, decisions, *, emitter=None, planner=None, **config_kw
+) -> AgentRunner:
     config = HarnessConfig(**config_kw)
     deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
     return AgentRunner(
@@ -37,7 +42,28 @@ def _runner(tmp_path, registry: ToolRegistry, decisions, *, emitter=None, **conf
         verifier=Verifier(config),
         emitter=emitter or Emitter(),
         config=config,
+        planner=planner,
     )
+
+
+def _smoke_client(command: str | None):
+    """An OpenAI-compatible stub: replays `command` as the smoke proposal, or declines."""
+    tool_calls = (
+        [SimpleNamespace(function=SimpleNamespace(arguments=json.dumps({"command": command})))]
+        if command is not None
+        else None
+    )
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=tool_calls))])
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_kw: response)))
+
+
+def _smoke_planner(command: str | None) -> VerificationPlanner:
+    """A planner whose greenfield floor authors `command` (or declines when `None`).
+
+    Injected so the verify-time floor (ADR-0014) is deterministic in tests — never a
+    live model call from the default planner.
+    """
+    return VerificationPlanner(HarnessConfig(), client=_smoke_client(command))
 
 
 def test_investigate_loop_runs_to_answer_and_verifies(tmp_path, read_registry):
@@ -589,16 +615,22 @@ def test_runner_journals_frozen_plan_as_typed_event(git_repo):
 
 
 def test_runner_empty_plan_fails_verification_legibly(git_repo):
-    # Nothing resolves (no config, no artifacts) → an empty plan freezes and the
-    # edit fails verification with a pointer to declaring a contract — never a crash,
-    # never an invented Python default.
+    # Nothing resolves (no config, no artifacts) AND the greenfield floor declines
+    # (ADR-0014) → the empty plan stays empty and the edit fails verification with a
+    # pointer to declaring a contract — never a crash, never an invented default.
     decisions = [
         ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
         ModelDecision(action=FinalAnswer(answer="fixed")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")
     result = _runner(
-        git_repo, _edit_registry(), decisions, test_command="", lint_command="", max_repair_attempts=1
+        git_repo,
+        _edit_registry(),
+        decisions,
+        planner=_smoke_planner(None),  # model authors no floor → empty plan holds
+        test_command="",
+        lint_command="",
+        max_repair_attempts=1,
     ).run(state)
     assert result.outcome == "failed"
     assert result.verification_plan == []
@@ -633,3 +665,29 @@ def test_repeat_detected_despite_input_key_reorder(tmp_path, read_registry):
     ]
     state = _runner(tmp_path, read_registry, decisions).run(TaskState(goal="x", task_kind="investigate"))
     assert any(e.kind == "repeat" for e in state.evidence)
+
+
+def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
+    # ADR-0014: an empty repo declares no test/lint contract, so tiers 1-3 resolve nothing.
+    # The model AUTHORS one executable smoke check; the harness runs it and the real exit
+    # code is the positive signal — author-and-run, never self-certification (§5).
+    decisions = [
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "main.py", "content": "x = 1\n"})),
+        ModelDecision(action=FinalAnswer(answer="created main.py")),
+    ]
+    reg = _edit_registry()
+    reg.register(write_file)
+    state = TaskState(goal="write a module", task_kind="edit")
+    result = _runner(git_repo, reg, decisions, planner=_smoke_planner("python -m py_compile main.py")).run(
+        state
+    )
+
+    assert result.outcome == "success"  # verified on the model-authored floor, run by the harness
+    assert state.verification_plan == [
+        PlannedCheck(
+            name="smoke", command="python -m py_compile main.py", kind="smoke", provenance="model-smoke"
+        )
+    ]
+    report = result.verifier_results[-1]
+    assert report.passed is True
+    assert any(c.name == "smoke" and c.status == "pass" for c in report.checks)

@@ -155,6 +155,50 @@ _PROPOSE_SYSTEM = (
     "actually declare, with the citing source_path. If nothing is declared, make no call."
 )
 
+# The greenfield floor (ADR-0014): the model AUTHORS one executable smoke command for
+# code it just wrote in a repo that declares no contract; the harness runs it and the
+# real exit code is the signal (never the model's say-so). One forced call, constrained
+# schema — the `_PROPOSE_TOOL` precedent, but authoring instead of citing.
+_SMOKE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_smoke_check",
+        "description": (
+            "Propose ONE shell command that smoke-tests the code just written. It must EXECUTE "
+            "the code and exit non-zero if the code is broken — never a no-op you assert passes. "
+            "The harness runs it and reads the real exit code."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "A single shell command that runs the new code and exits 0 on success.",
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "What passing this command proves about the code.",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+_SMOKE_SYSTEM = (
+    "You verify freshly-written code in a repository that declares no test or lint contract. "
+    "Given the files just written, call propose_smoke_check ONCE with a single shell command "
+    "that actually runs what was written and fails (non-zero exit) if it is broken. Prefer a "
+    "DEPENDENCY-FREE check — parse / compile / syntax (`python -m py_compile <file>`, "
+    "`node --check <file>`, `ruff check`/`tsc --noEmit` only if obviously present) — because "
+    "third-party dependencies are usually NOT installed in this workspace, so an `import` that "
+    "pulls a missing package would fail for the wrong reason. Never propose a no-op "
+    "(`true`, `:`, bare `echo`). If nothing can be meaningfully smoke-tested, make no call."
+)
+
+# Trivially-vacuous programs: pass (exit 0) without exercising anything → not a smoke check.
+_VACUOUS_SMOKE = frozenset({"true", "false", ":", "echo", "exit", "test", "["})
+
 
 class VerificationPlanner:
     """Resolves the per-session verification plan (ADR-0007) — harness-owned.
@@ -260,6 +304,53 @@ class VerificationPlanner:
             base_url = self.config.base_url if self.config else None
             self._client = OpenAI(api_key=api_key, base_url=base_url)
         return self._client
+
+    # --- tier 4: greenfield smoke floor (ADR-0014) ------------------------
+
+    def propose_smoke_check(self, ws: Workspace, files_modified: list[str]) -> PlannedCheck | None:
+        """Have the model author ONE executable smoke check for freshly-written code.
+
+        The greenfield floor: used only when tiers 1-3 resolved nothing and the run
+        wrote code, so there is genuinely no declared contract to discover. The model
+        chooses *which* command; the harness still runs it and reads the real exit code,
+        so this is author-and-run, never the self-certification §5 forbids. Resolved at
+        verification time (the artifact under test does not exist at the freeze boundary).
+        Runs on `config.model` (the main model) so the floor needs zero extra config; any
+        endpoint failure degrades to "no floor", never blocks.
+
+        Args:
+            ws: The run-scoped workspace whose just-written files are excerpted.
+            files_modified: The repo-relative paths the run created or changed.
+
+        Returns:
+            The `model-smoke` check, or `None` when nothing runnable was proposed.
+        """
+        model = self.config.model if self.config else None
+        if not model or not files_modified:
+            return None
+        excerpts = _modified_excerpts(ws.root, files_modified)
+        if not excerpts:
+            return None
+        try:
+            response = self._ensure_client().chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _SMOKE_SYSTEM},
+                    {"role": "user", "content": f"Files just written:\n{excerpts}"},
+                ],
+                tools=[_SMOKE_TOOL],
+                temperature=0,
+            )
+            calls = getattr(response.choices[0].message, "tool_calls", None) or []
+            if not calls:
+                return None
+            args = json.loads(calls[0].function.arguments or "{}")
+        except Exception:  # any failure degrades to "no floor", never blocks (tier-3 contract)
+            return None
+        command = (args.get("command") or "").strip()
+        if not _is_runnable_smoke(command):
+            return None
+        return PlannedCheck(name="smoke", command=command, kind="smoke", provenance="model-smoke")
 
 
 def config_override_checks(config: HarnessConfig | None) -> list[PlannedCheck]:
@@ -800,6 +891,54 @@ def _citation_valid(root: Path, command: str, source: str) -> bool:
     meaningful = [t for t in tokens if t not in _RUNNER_TOKENS and not t.startswith("-")]
     candidates = meaningful or [t for t in tokens if not t.startswith("-")]
     return any(token in text for token in candidates)
+
+
+# --- greenfield smoke floor helpers (ADR-0014) -----------------------------
+
+
+def _modified_excerpts(root: Path, files_modified: list[str]) -> str:
+    """Bounded excerpts of the files a run just wrote, for the smoke-floor prompt.
+
+    Args:
+        root: The workspace root the paths are relative to.
+        files_modified: The repo-relative paths the run created or changed.
+
+    Returns:
+        Concatenated `=== path ===` excerpt blocks; empty when none are readable files.
+    """
+    blocks: list[str] = []
+    for rel in sorted(files_modified):
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = _read(path)
+        if text:
+            blocks.append(f"=== {rel} ===\n{text[:_EXCERPT_CHARS]}")
+    return "\n\n".join(blocks)
+
+
+def _is_runnable_smoke(command: str) -> bool:
+    """Whether `command` is a non-vacuous, parseable smoke command.
+
+    The floor's only authorship guard: the harness runs the command and the real exit
+    code is the verdict, so a *broken* command simply fails — but a trivially-vacuous
+    one (`true`, `:`, bare `echo`) would pass without exercising anything, so it is
+    rejected outright (ADR-0014's bounded vacuous-check mitigation).
+
+    Args:
+        command: The model-proposed command.
+
+    Returns:
+        `True` for a parseable command whose program is not trivially vacuous.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    program = tokens[0].rsplit("/", 1)[-1]
+    return program not in _VACUOUS_SMOKE
 
 
 def _artifact_excerpts(root: Path) -> str:

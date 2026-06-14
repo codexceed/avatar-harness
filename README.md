@@ -40,7 +40,7 @@ AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbat
 
 Point at OpenAI instead: `AVATAR_BASE_URL=https://api.openai.com/v1`, `AVATAR_MODEL=gpt-4o-mini`.
 
-For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile); a greenfield repo with no declared contract needs `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` set. The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `src/avatar_harness/config.py` is the source of truth.
+For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile); a greenfield repo that declares no contract gets a model-authored **smoke check**, run by the harness, as a fallback floor (ADR-0014) — so a from-scratch project verifies out of the box. Set `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` for a stronger, declared contract (it always wins over the floor). The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `src/avatar_harness/config.py` is the source of truth.
 
 ## Usage
 

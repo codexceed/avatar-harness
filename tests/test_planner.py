@@ -313,3 +313,81 @@ def test_verification_plan_frozen_event_round_trips():
     reparsed = parse_event(dump_event(event))
     assert reparsed == event
     assert reparsed.type == "verification_plan_frozen"
+
+
+# --- tier 4: greenfield smoke floor (ADR-0014) -----------------------------
+
+
+def _propose_smoke(tmp_path, client, files=("main.py",), config=None):
+    planner = VerificationPlanner(config or _config(), client=client)
+    return planner.propose_smoke_check(Workspace(tmp_path), list(files))
+
+
+def test_smoke_floor_authors_model_check(tmp_path):
+    # No declared contract; the model authors one executable check the harness will run.
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    client = _CountingClient([{"command": "python -m py_compile main.py", "rationale": "compiles"}])
+    check = _propose_smoke(tmp_path, client)
+    assert check == PlannedCheck(
+        name="smoke", command="python -m py_compile main.py", kind="smoke", provenance="model-smoke"
+    )
+
+
+def test_smoke_floor_rejects_vacuous_command(tmp_path):
+    # A no-op passes (exit 0) without exercising anything → rejected, not a smoke check.
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    assert _propose_smoke(tmp_path, _CountingClient([{"command": "true"}])) is None
+    assert _propose_smoke(tmp_path, _CountingClient([{"command": "echo ok"}])) is None
+
+
+def test_smoke_floor_none_when_model_makes_no_call(tmp_path):
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    assert _propose_smoke(tmp_path, _CountingClient()) is None
+
+
+def test_smoke_floor_none_when_no_readable_files(tmp_path):
+    # Nothing on disk to excerpt → no call is even made (no floor, no spend).
+    client = _CountingClient([{"command": "python -m py_compile main.py"}])
+    assert _propose_smoke(tmp_path, client, files=("ghost.py",)) is None
+    assert client.calls == 0
+
+
+def test_smoke_floor_degrades_on_client_error(tmp_path):
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+
+    def _boom(**_kw):
+        raise RuntimeError("endpoint down")
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=_boom)))
+    assert _propose_smoke(tmp_path, client) is None
+
+
+# --- late-binding the floor onto an empty frozen plan (ADR-0014) -----------
+
+
+def _smoke() -> PlannedCheck:
+    return PlannedCheck(
+        name="smoke", command="python -m py_compile main.py", kind="smoke", provenance="model-smoke"
+    )
+
+
+def test_set_smoke_floor_binds_over_empty_plan():
+    state = TaskState(goal="g", task_kind="edit")
+    state.freeze_verification_plan([])  # tiers 1-3 discovered nothing
+    state.set_smoke_floor([_smoke()])
+    assert state.verification_plan == [_smoke()]
+
+
+def test_set_smoke_floor_rejected_over_real_contract():
+    state = TaskState(goal="g", task_kind="edit")
+    state.freeze_verification_plan(
+        [PlannedCheck(name="tests", command="make test", kind="test", provenance="Makefile:test")]
+    )
+    with pytest.raises(RuntimeError):  # a declared/detected contract is never displaced
+        state.set_smoke_floor([_smoke()])
+
+
+def test_set_smoke_floor_rejected_before_freeze():
+    state = TaskState(goal="g", task_kind="edit")  # plan is None (unfrozen)
+    with pytest.raises(RuntimeError):
+        state.set_smoke_floor([_smoke()])
