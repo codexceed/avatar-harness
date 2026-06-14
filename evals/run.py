@@ -176,7 +176,12 @@ def main(argv: list[str] | None = None) -> int:
 
     out = _write_results(rows)
     print(f"\nwrote {len(rows)} rows -> {out}")
-    print(f"pass@1={pass_at_1(rows):.2f}  pass^k={pass_caret_k(rows):.2f}  (n={len(rows)})")
+    # Per-model: a global pass^k conflates models (all rows of one task collapse into one
+    # group), so report each model on its own — pass@1 (capability) and pass^k (reliability).
+    for model in models:
+        mrows = [r for r in rows if r.model == model]
+        print(f"  {model}: pass@1={pass_at_1(mrows):.2f}  pass^k={pass_caret_k(mrows):.2f}  (n={len(mrows)})")
+    print(f"overall pass@1={pass_at_1(rows):.2f}  (n={len(rows)})")
     return 0
 
 
