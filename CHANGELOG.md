@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/codexceed/avatar-harness/compare/v0.2.0...v0.3.0) (2026-06-14)
+
+
+### Features
+
+* **verifier:** greenfield self-authored smoke floor (ADR-0014) ([#50](https://github.com/codexceed/avatar-harness/issues/50)) ([b70b0ca](https://github.com/codexceed/avatar-harness/commit/b70b0ca5f6acc9982dd1bff3631e61a0860c51e4))
+
 ## [0.2.0](https://github.com/codexceed/avatar-harness/compare/v0.1.2...v0.2.0) (2026-06-14)
 
 
