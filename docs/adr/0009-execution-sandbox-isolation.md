@@ -1,6 +1,6 @@
 # ADR 0009 — Execution sandbox isolation
 
-- **Status:** Proposed
+- **Status:** Accepted (deferred) — the decision (keep the in-process model for the MVP; isolate behind `Workspace` when needed) is in force; the container/VM backend is the deferred build
 - **Date:** 2026-06-11
 - **Deciders:** Sarthak Joshi
 - **Related:** `HARNESS_DESIGN.md` §15 ("Honest gap: true isolation"); ADR-0001 (Workspace as chokepoint).
