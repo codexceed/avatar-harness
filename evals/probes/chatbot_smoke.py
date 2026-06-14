@@ -10,6 +10,7 @@ imports a client" is not enough — the dogfood showed scripts that look right b
 Exit codes: 0 = a turn round-tripped; 1 = missing entry file / no call observed.
 """
 
+import contextlib
 import io
 import runpy
 import sys
@@ -17,6 +18,7 @@ import types
 from pathlib import Path
 
 _calls: list[object] = []
+_REPLY = "Hello from the mock."  # the canned assistant reply; a passing chatbot prints it
 
 
 def _make_response() -> object:
@@ -30,7 +32,7 @@ def _make_response() -> object:
         def __getattr__(self, key: str) -> object:
             return self[key]
 
-    return _Duck(choices=[_Duck(message=_Duck(content="Hello from the mock."), text="Hello from the mock.")])
+    return _Duck(choices=[_Duck(message=_Duck(content=_REPLY), text=_REPLY)])
 
 
 def _record_call(*args: object, **kwargs: object) -> object:
@@ -87,6 +89,9 @@ def _target_script() -> Path | None:
 def main() -> int:
     """Run the probe.
 
+    A turn must genuinely round-trip: the client is called AND the assistant's reply is printed.
+    (Requiring the reply in stdout rejects a script that fires a call but crashes before using it.)
+
     Returns:
         0 if a turn round-tripped against the mocked client, else 1.
     """
@@ -97,17 +102,27 @@ def main() -> int:
         return 1
 
     sys.stdin = io.StringIO("hello\nquit\nexit\n")
+    out = io.StringIO()
+    raised: Exception | None = None
     try:
-        runpy.run_path(str(script), run_name="__main__")
+        with contextlib.redirect_stdout(out):
+            runpy.run_path(str(script), run_name="__main__")
     except (EOFError, SystemExit, KeyboardInterrupt):
         pass
-    except Exception as exc:  # a script error after a call still counts; we check _calls below
-        print(f"probe: script raised after import: {exc}")
+    except Exception as exc:  # printed reply still counts as a round-trip; checked below
+        raised = exc
 
-    if _calls:
-        print(f"probe: round-trip ok ({len(_calls)} call(s)) via {script.name}")
+    printed_reply = _REPLY in out.getvalue()
+    if _calls and printed_reply:
+        print(f"probe: round-trip ok ({len(_calls)} call(s), reply printed) via {script.name}")
         return 0
-    print(f"probe: no chat/completions call observed in {script.name}")
+    if not _calls:
+        reason = "no chat/completions call observed"
+    elif raised is not None:
+        reason = f"call fired but the script crashed before printing the reply ({raised})"
+    else:
+        reason = "call fired but the reply was not printed"
+    print(f"probe: {reason} in {script.name}")
     return 1
 
 

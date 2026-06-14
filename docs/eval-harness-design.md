@@ -24,7 +24,7 @@ column, not an assertion.
 
 **Goals (Eval-0):**
 - A `make eval` runner that scores N task specs hermetically and emits one JSONL row per run.
-- Score = **deterministic**: `verifier.passed AND success_probe exit 0`. No LLM judge.
+- Score = **deterministic** (option A): when a task declares a success probe, the **probe is authoritative** (`solved = probe exit 0`) and the agent runs **non-strict**; a no-probe task is graded by the harness verifier. No LLM judge.
 - A **multi-model matrix** (`make eval MODELS=...`) → pass@1 × $/solve grid; default model chosen empirically.
 - Statistically honest reporting: pass@1 ± clustered CI, **pass^k** (reliability), paired regression detection.
 - A mechanical **failure-mode histogram** read from the journal.
@@ -58,7 +58,7 @@ flowchart TB
     subgraph runner["Eval runner (net-new) — evals/run.py · make eval"]
         LOAD["TaskSpec loader<br/>(pydantic)"]
         PROV["Fixture provisioner<br/>mkdtemp → git init → commit"]
-        SCORE["Scorer<br/>verifier.passed AND probe==0"]
+        SCORE["Scorer<br/>probe==0 if probe else verifier.passed"]
         PROBE["Success-probe executor<br/>(shell exit code)"]
         CLS["Failure-mode classifier<br/>(reads journal)"]
         WRITE["Result writer<br/>evals/results/&lt;ts&gt;-&lt;model&gt;.jsonl"]
@@ -66,7 +66,7 @@ flowchart TB
     end
 
     subgraph core["Existing harness (REUSED — no changes)"]
-        H["Harness.session(...)<br/>conversational=False (strict §12)"]
+        H["Harness.session(...)<br/>non-strict if probe, else strict §12"]
         AR["AgentRunner.arun()"]
         V["Verifier — deterministic scorer"]
         J["JsonlEventJournal — dataset"]
@@ -126,30 +126,40 @@ sequenceDiagram
     deactivate H
     R->>Pr: run success_probe in scratch repo
     Pr-->>R: exit code
-    R->>R: score = TaskState verifier-pass AND probe==0
+    R->>R: score = probe==0 (probe tasks, option A) else verifier-pass
     R->>Out: append JSONL row (+ failure bucket, tokens, $/solve)
 ```
 
 ## 6. The scoring model — what "solved" means
 
-Two independent deterministic signals, both required. We adopt the SWE-bench partition,
-which maps directly onto the verifier's frozen plan:
+**Option A (decided 2026-06-14, after the first live smoke):** a task-authored **success probe is
+authoritative when present** — `solved = probe exit 0`, and the agent runs **non-strict** (it
+delivers its best and we grade it, rather than thrashing toward an edit gate a fresh creation can't
+satisfy). A **no-probe** task is graded by the harness **verifier** (e.g. investigate's
+grounded-answer gate), and runs strict. Both signals are deterministic; no LLM judge.
 
 ```mermaid
 flowchart TD
-    START([run finished]) --> VP{"Verifier passed?<br/>(FAIL_TO_PASS flipped,<br/>PASS_TO_PASS green,<br/>no secret/bad-skip)"}
-    VP -- no --> FAIL[score = 0]
-    VP -- yes --> PB{"success_probe<br/>exit 0?"}
-    PB -- no --> FAIL
+    START([run finished]) --> Q{"probe declared?"}
+    Q -- "yes (non-strict run)" --> PB{"success_probe<br/>exit 0?"}
     PB -- yes --> PASS[score = 1 · solved]
+    PB -- no --> FAIL[score = 0]
+    Q -- "no (strict run)" --> VP{"verifier passed?"}
+    VP -- yes --> PASS
+    VP -- no --> FAIL
 
-    FAIL --> CLS["classify failure from journal →<br/>budget_exhausted · verification_failed ·<br/>blocked · decision_error · loop_oscillation ·<br/>probe_failed"]
+    FAIL --> CLS["classify failure from row (+journal) →<br/>budget_exhausted · verification_failed ·<br/>blocked · decision_error · loop_oscillation ·<br/>probe_failed · harness_error"]
 ```
 
-- **FAIL_TO_PASS** = the check(s) that must flip fail→pass — the verifier's required *positive signal*.
-- **PASS_TO_PASS** = checks already green that must stay green — regression guards.
-- **success_probe** = a final, task-authored deterministic check *outside* the agent's loop (guards the specific dogfood incident, and catches a verifier that passed for the wrong reason).
-- For a **creation** task (`create-chatbot`) where there's no pre-existing test, the probe is the authoritative signal (e.g. import + smoke-call against a mocked client); see §7.
+- **success_probe** = a final, task-authored deterministic check *outside* the agent's loop; for a
+  probe-bearing task it is the success signal (it also catches a run that *declared* completion but
+  whose output doesn't work — `probe_failed`).
+- The verifier still **runs and is journaled** for probe tasks (advisory), but doesn't veto a
+  probe-passing result — a fresh creation can't satisfy the edit gate's positive-signal rule.
+- **FAIL_TO_PASS / PASS_TO_PASS** (the SWE-bench partition; carried in the spec) become meaningful
+  for *modify-existing* tasks with a pre-existing suite; for creation, the probe carries the signal.
+- Why option A and not "verifier AND probe": the live smoke scored a *working* chatbot `failed`
+  because the edit verifier has no test contract on a fresh repo — see the decision trail in this PR.
 
 ## 7. Task spec schema
 

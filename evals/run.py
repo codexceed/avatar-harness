@@ -7,6 +7,8 @@ deterministic verifier plus the task's success probe.
 
 import argparse
 import asyncio
+import json
+import re
 import shlex
 import shutil
 from datetime import UTC, datetime
@@ -62,6 +64,35 @@ def _resolve_probe(command: str) -> str:
     return " ".join(str(_REPO_ROOT / p) if p.startswith("evals/") else p for p in parts)
 
 
+def _slug(model: str) -> str:
+    """A filesystem-safe label fragment for a model id.
+
+    Args:
+        model: The model id (may contain ``/``, ``:``, etc.).
+
+    Returns:
+        The id with any run of non ``[A-Za-z0-9._-]`` characters collapsed to ``-``.
+    """
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", model)
+
+
+def _journal_events(row: ResultRow) -> list[dict]:
+    """Load a row's journal events from its scratch repo, if still present.
+
+    Args:
+        row: The result row (its ``workspace`` points at the scratch repo).
+
+    Returns:
+        The parsed journal events, or ``[]`` when the journal is gone (e.g. cleaned up).
+    """
+    if not row.workspace:
+        return []
+    journal = Path(row.workspace) / "journal.jsonl"
+    if not journal.exists():
+        return []
+    return [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def run_task(
     spec: TaskSpec,
     *,
@@ -84,38 +115,53 @@ def run_task(
     Returns:
         The scored `ResultRow` (its `workspace` field points at the scratch repo).
     """
-    label = f"{config.model.replace('/', '-')}__{spec.id}__seed{seed}__"
+    label = f"{_slug(config.model)}__{spec.id}__seed{seed}__"
     repo = provision(_fixture_path(spec.fixture), parent=workspace_root, label=label)
-    cfg = config.model_copy(update={"workspace_root": str(repo), **spec.budgets})
-    harness = Harness(config=cfg, model=model_client) if model_client is not None else Harness(config=cfg)
-    # Option A: a probe-bearing task is graded by the probe, so the agent runs *non-strict* —
-    # it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh
-    # creation can't satisfy. A no-probe task stays strict (the verifier is the grader).
-    conversational = spec.success_probe is not None
-    session = harness.session(
-        spec.goal,
-        task_kind=spec.task_kind,
-        conversational=conversational,
-        journal=JsonlEventJournal(repo / "journal.jsonl"),
-    )
-    state = asyncio.run(session.run())
-
-    verifier_passed = state.outcome == "success"
-    probe_exit = (
-        run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
-    )
-    return ResultRow(
-        task=spec.id,
-        model=cfg.model,
-        seed=seed,
-        solved=is_solved(verifier_passed, probe_exit),
-        outcome=state.outcome,
-        iterations=state.iterations,
-        prompt_tokens=state.prompt_tokens,
-        completion_tokens=state.completion_tokens,
-        probe_exit=probe_exit,
-        workspace=str(repo),
-    )
+    # Errors after provisioning still produce a row that carries the scratch path, so it maps to
+    # its files and the cleanup contract holds (provision-stage failures propagate to the caller).
+    try:
+        cfg = config.model_copy(update={"workspace_root": str(repo), **spec.budgets})
+        client = Harness(config=cfg, model=model_client) if model_client is not None else Harness(config=cfg)
+        # Option A: a probe-bearing task is graded by the probe, so the agent runs *non-strict* —
+        # it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh
+        # creation can't satisfy. A no-probe task stays strict (the verifier is the grader).
+        conversational = spec.success_probe is not None
+        session = client.session(
+            spec.goal,
+            task_kind=spec.task_kind,
+            conversational=conversational,
+            journal=JsonlEventJournal(repo / "journal.jsonl"),
+        )
+        state = asyncio.run(session.run())
+        # `outcome == "success"` is the verifier's verdict only for a no-probe (strict) task; in
+        # conversational mode it just means the agent reached `final_answer`. `is_solved` uses it
+        # ONLY when there is no probe — probe-bearing tasks are graded by the probe (option A).
+        reached_success = state.outcome == "success"
+        probe_exit = (
+            run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
+        )
+        return ResultRow(
+            task=spec.id,
+            model=cfg.model,
+            seed=seed,
+            solved=is_solved(reached_success, probe_exit),
+            outcome=state.outcome,
+            iterations=state.iterations,
+            prompt_tokens=state.prompt_tokens,
+            completion_tokens=state.completion_tokens,
+            probe_exit=probe_exit,
+            workspace=str(repo),
+        )
+    except Exception as exc:  # one bad run must not lose the matrix; keep the scratch path on the row
+        return ResultRow(
+            task=spec.id,
+            model=config.model,
+            seed=seed,
+            solved=False,
+            outcome=f"error: {type(exc).__name__}: {exc}"[:200],
+            iterations=0,
+            workspace=str(repo),
+        )
 
 
 def _load_specs() -> list[TaskSpec]:
@@ -234,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
             for seed in range(args.seeds):
                 try:
                     row = run_task(spec, config=cfg, seed=seed, workspace_root=run_workspace)
-                except Exception as exc:  # one bad model/run must not lose the whole matrix
+                except Exception as exc:  # provision-stage failure (run_task handles run errors itself)
                     row = ResultRow(
                         task=spec.id,
                         model=model,
@@ -254,7 +300,9 @@ def main(argv: list[str] | None = None) -> int:
         mrows = [r for r in rows if r.model == model]
         print(f"  {model}: pass@1={pass_at_1(mrows):.2f}  pass^k={pass_caret_k(mrows):.2f}  (n={len(mrows)})")
     print(f"overall pass@1={pass_at_1(rows):.2f}  (n={len(rows)})")
-    hist = failure_histogram(rows)
+    # Classify with each row's journal events (read before cleanup) so loop_oscillation /
+    # decision_error are reachable, not just the row-only buckets.
+    hist = failure_histogram(rows, events_for=_journal_events)
     if hist:
         print("failure modes: " + ", ".join(f"{k}={v}" for k, v in sorted(hist.items())))
 

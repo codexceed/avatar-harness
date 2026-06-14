@@ -1,8 +1,10 @@
-"""Scoring — deterministic, no model: verifier pass AND success-probe exit 0.
+"""Scoring — deterministic, no model (option A: the probe is authoritative when present).
 
-Two independent signals, both required. The probe is authored per task and run *outside*
-the agent loop, so it also catches a verifier that passed for the wrong reason (the
-`probe_failed` leakage proxy, ADR-0011).
+When a task declares a success probe, the probe *is* the success signal (``solved = probe exit
+0``) and the agent runs non-strict; the harness verifier's verdict is used only for no-probe
+tasks (e.g. investigate's grounded-answer gate). The probe is authored per task and run *after*
+the agent finishes, in the scratch repo — so it also catches a run that declared completion but
+whose output does not actually work.
 """
 
 import os

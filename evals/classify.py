@@ -6,7 +6,7 @@ or ``decision_error`` — distinctions only the trajectory reveals.
 """
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from evals.result import ResultRow
 
@@ -56,13 +56,19 @@ def _refine_incomplete(events: Sequence[dict] | None) -> str:
     return "budget_exhausted"
 
 
-def failure_histogram(rows: Sequence[ResultRow]) -> dict[str, int]:
+def failure_histogram(
+    rows: Sequence[ResultRow],
+    events_for: Callable[[ResultRow], Sequence[dict] | None] | None = None,
+) -> dict[str, int]:
     """Count failure modes across the non-solved rows.
 
     Args:
         rows: The result rows.
+        events_for: Optional resolver of a row's journal events; when given, an ``incomplete``
+            run can be refined into ``loop_oscillation`` / ``decision_error`` (the live runner
+            passes a reader so those buckets are reachable, not just the row-only ones).
 
     Returns:
         A bucket → count mapping over the rows that did not solve (solved runs excluded).
     """
-    return dict(Counter(classify(r) for r in rows if not r.solved))
+    return dict(Counter(classify(r, events_for(r) if events_for else None) for r in rows if not r.solved))

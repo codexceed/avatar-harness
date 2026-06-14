@@ -21,7 +21,7 @@ from evals.classify import classify, failure_histogram
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, load_results
-from evals.run import _cleanup_workspaces, _resolve_run_workspace, run_task
+from evals.run import _cleanup_workspaces, _journal_events, _resolve_run_workspace, run_task
 from evals.score import is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
 from evals.stats import mcnemar, mean_ci
@@ -397,3 +397,60 @@ def test_no_secret_leak_probe(tmp_path):
     assert run_probe(f"python {_PROBES / 'no_secret_leak.py'}", tmp_path) == 1  # leaked
     (tmp_path / "journal.jsonl").write_text('{"x":"clean"}\n', encoding="utf-8")
     assert run_probe(f"python {_PROBES / 'no_secret_leak.py'}", tmp_path) == 0  # safe
+
+
+# --- K. review follow-ups: live histogram path + probe-bearing scoring contract -----
+
+
+def test_failure_histogram_uses_events_resolver():
+    # DO3: with an events resolver, an incomplete run refines to loop_oscillation (unreachable
+    # row-only). This is the live-path behavior run.py now exercises.
+    row = _frow("incomplete", False)
+    events = [{"type": "model_decision", "action": "read_file({})"} for _ in range(4)]
+    assert failure_histogram([row], events_for=lambda _r: events) == {"loop_oscillation": 1}
+
+
+def test_journal_events_reads_row_workspace(tmp_path):
+    (tmp_path / "journal.jsonl").write_text('{"type":"model_decision","action":"x"}\n\n', encoding="utf-8")
+    row = ResultRow(
+        task="t", model="m", seed=0, solved=False, outcome="incomplete", iterations=1, workspace=str(tmp_path)
+    )
+    assert _journal_events(row) == [{"type": "model_decision", "action": "x"}]
+
+
+def test_journal_events_missing_is_empty():
+    row = ResultRow(task="t", model="m", seed=0, solved=False, outcome="incomplete", iterations=1)
+    assert _journal_events(row) == []
+
+
+def test_run_task_with_probe_scores_via_probe(tmp_path):
+    # Locks the scoring contract: a probe-bearing task is graded by the probe (option A) and the
+    # agent runs non-strict; a valid chatbot -> solved, with the scratch path on the row.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    chatbot = (
+        "import openai, sys\n"
+        "client = openai.OpenAI()\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if line in ('quit', 'exit'):\n"
+        "        break\n"
+        "    r = client.chat.completions.create(model='gpt', messages=[{'role': 'user', 'content': line}])\n"
+        "    print(r.choices[0].message.content)\n"
+    )
+    spec = TaskSpec(
+        id="create-chatbot",
+        goal="g",
+        task_kind="edit",
+        fixture="empty",
+        success_probe="python evals/probes/chatbot_smoke.py chatbot.py",
+    )
+    decisions = [
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "chatbot.py", "content": chatbot})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    row = run_task(
+        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+    )
+    assert row.solved is True and row.probe_exit == 0
+    assert row.workspace is not None and Path(row.workspace).parent == run_dir

@@ -1,6 +1,6 @@
 # ADR 0004 — Internal eval harness: dogfood incidents as a scored regression suite
 
-- **Status:** Proposed (design accepted for capture; implementation deliberately deferred by maintainer call, 2026-06-10)
+- **Status:** Accepted — implemented as the **Eval-0 harness** (Slices 1 + 2, PR #47). The *Decision*'s scoring rule below is **revised by option-A** (a task-authored success **probe is authoritative when present**, and the agent runs non-strict) after the first live smoke scored a working chatbot `failed`; the verifier remains the grader for no-probe tasks. Implementation spec: `docs/eval-harness-design.md`.
 - **Date:** 2026-06-10
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — design; grounded in five dogfood post-mortems
