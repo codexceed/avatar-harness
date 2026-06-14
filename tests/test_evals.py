@@ -6,6 +6,7 @@ See docs/eval-harness-design.md.
 """
 
 import json
+import math
 import shutil
 from pathlib import Path
 
@@ -339,8 +340,6 @@ def test_mean_ci_clusters_by_task():
 
 
 def test_mean_ci_single_task_falls_back_to_binomial():
-    import math
-
     rows = [_row("a", 0, True), _row("a", 1, True), _row("a", 2, False)]  # one cluster, 2/3
     ci = mean_ci(rows)
     assert ci.mean == pytest.approx(2 / 3)

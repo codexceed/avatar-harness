@@ -108,10 +108,19 @@ non-solved runs (`verification_failed`, `budget_exhausted`, `loop_oscillation`, 
 `blocked`, `probe_failed`, `harness_error`). A bad model slug or run error becomes an
 `outcome: "error: …"` row (`harness_error`) and the matrix continues.
 
-> **Cross-run reading:** `evals.result.load_results(path)` reads a `<ts>.jsonl` back into
-> `ResultRow`s (the inverse of `to_jsonl`). The run summary still aggregates only the current run's
-> rows; a **regression-diff vs. a previous baseline** (built on `load_results`) is the next Slice-2
-> step. Inspect past runs directly with `cat evals/results/*.jsonl`.
+### Regression-diff (run vs. previous baseline)
+
+Compare two result files — per model and overall, with **clustered 95% CIs** and a **paired
+McNemar** verdict that separates a real change from sampling noise:
+
+```bash
+make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl
+# m:  pass@1 1.00 [1.00,1.00] -> 0.83 [0.61,1.00]  (Δ-0.17)  reg=2 imp=0 n=12 p=0.500  ->  no significant change
+```
+
+`mean_ci` clusters by task (seeds within a task are correlated; with one task it degrades to the
+binomial SE). `mcnemar` pairs rows by `(model, task, seed)` and uses the exact two-sided sign test
+(stdlib only). `evals.result.load_results(path)` reads a `<ts>.jsonl` back into `ResultRow`s.
 
 ---
 
@@ -170,6 +179,8 @@ evals/
   result.py          ResultRow (+ JSONL load/write)
   metrics.py         pass@1, pass^k
   classify.py        failure-mode bucketing + histogram
+  stats.py           clustered CI + paired McNemar
+  diff.py            regression-diff CLI (make eval-diff)
   run.py             run_task + the `make eval` matrix driver (main)
   tasks/*.toml       task specs
   probes/*.py        deterministic success probes

@@ -31,6 +31,10 @@ EVAL_ARGS = $(if $(MODELS),--models "$(MODELS)") $(if $(SEEDS),--seeds $(SEEDS))
 eval:
 	uv run python -m evals.run $(EVAL_ARGS)
 
+# Regression-diff two result files:  make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl
+eval-diff:
+	uv run python -m evals.diff $(BASELINE) $(CANDIDATE)
+
 # --- Individual checks ---
 
 # Lint.
