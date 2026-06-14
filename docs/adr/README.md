@@ -17,6 +17,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0009](0009-execution-sandbox-isolation.md) | Execution sandbox isolation | Proposed |
 | [0010](0010-git-status-diff-as-model-tools.md) | `git_status` / `git_diff` as model-callable tools | Proposed |
 | [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed |
+| [0012](0012-wire-level-api-mocking.md) | Wire-level API mocking for eval probes (mock the endpoint, not the client library) | Proposed |
 
 ## Conventions
 
