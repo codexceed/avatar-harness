@@ -166,3 +166,24 @@ def test_pass_caret_k():
     # pass^k: a task counts only if ALL its seeds passed (reliability, not capability).
     rows = [_row("a", 0, True), _row("a", 1, True), _row("b", 0, True), _row("b", 1, False)]
     assert pass_caret_k(rows) == pytest.approx(0.5)  # a all-pass, b not
+
+
+# --- E. per-task env (Q3): the user declares the program's runtime env ---------
+
+
+def test_taskspec_carries_env(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('id = "x"\ngoal = "g"\n[env]\nOPENAI_API_KEY = "sk-eval-dummy"\n', encoding="utf-8")
+    assert load_task_spec(p).env == {"OPENAI_API_KEY": "sk-eval-dummy"}
+
+
+def test_taskspec_env_defaults_empty(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('id = "x"\ngoal = "g"\n', encoding="utf-8")
+    assert load_task_spec(p).env == {}
+
+
+def test_probe_respects_env_vars(tmp_path):
+    cmd = "python -c \"import os,sys; sys.exit(0 if os.environ.get('EVAL_X')=='y' else 3)\""
+    assert run_probe(cmd, tmp_path, env={"EVAL_X": "y"}) == 0
+    assert run_probe(cmd, tmp_path) == 3  # absent without the task env
