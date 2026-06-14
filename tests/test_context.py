@@ -224,3 +224,18 @@ def test_default_budgets_fit_an_ordinary_source_file(tmp_path, read_registry):
     blob = "\n".join(packet.recent_evidence)
     assert content in blob  # intact, no truncation
     assert "[truncated" not in blob
+
+
+def test_last_two_verifier_outputs_pinned_verbatim(tmp_path, read_registry):
+    # Repair loops need more than the LATEST verdict: "what did I try before and why did
+    # it fail" must survive compaction too, or the model re-attempts the same fix
+    # (loop-determinism hardening). The pin covers the last N (default 2) verifier items.
+    state = TaskState(goal="x", task_kind="edit")
+    state.add_feedback("verifier run 1", detail="FIRST_VERIFIER_DETAIL", kind="verification")
+    state.add_feedback("noise-a", detail="N" * 300)
+    state.add_feedback("verifier run 2", detail="SECOND_VERIFIER_DETAIL", kind="verification")
+    state.add_feedback("noise-b", detail="M" * 300)
+    packet = ContextBuilder(detail_char_budget=5).build(state, Workspace(tmp_path), read_registry)
+    blob = "\n".join(packet.recent_evidence)
+    assert "SECOND_VERIFIER_DETAIL" in blob  # the latest verdict, as before
+    assert "FIRST_VERIFIER_DETAIL" in blob  # and the one before it — repair history survives
