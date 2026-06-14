@@ -79,8 +79,15 @@ def run_task(
     repo = provision(_fixture_path(spec.fixture))
     cfg = config.model_copy(update={"workspace_root": str(repo), **spec.budgets})
     harness = Harness(config=cfg, model=model_client) if model_client is not None else Harness(config=cfg)
+    # Option A: a probe-bearing task is graded by the probe, so the agent runs *non-strict* —
+    # it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh
+    # creation can't satisfy. A no-probe task stays strict (the verifier is the grader).
+    conversational = spec.success_probe is not None
     session = harness.session(
-        spec.goal, task_kind=spec.task_kind, journal=JsonlEventJournal(repo / "journal.jsonl")
+        spec.goal,
+        task_kind=spec.task_kind,
+        conversational=conversational,
+        journal=JsonlEventJournal(repo / "journal.jsonl"),
     )
     state = asyncio.run(session.run())
 

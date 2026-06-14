@@ -17,17 +17,24 @@ _EXIT_TIMEOUT = 124
 
 
 def is_solved(verifier_passed: bool, probe_exit: int | None) -> bool:
-    """Whether a run counts as solved.
+    """Whether a run counts as solved (option A: the probe is authoritative when present).
+
+    A task-authored success probe IS the success criterion when declared — the agent runs
+    blind (non-strict) and we grade the result. The harness verifier's verdict is not required
+    (a fresh creation can't satisfy the edit gate's positive-signal rule, so demanding it would
+    veto a working solution). When no probe is declared, the verifier decides (e.g. investigate's
+    grounded-answer gate).
 
     Args:
-        verifier_passed: Whether the harness verifier passed (positive external signal).
-        probe_exit: The success-probe exit code, or `None` when no probe was declared
-            (the verifier alone then decides).
+        verifier_passed: Whether the harness verifier passed; used only when there is no probe.
+        probe_exit: The success-probe exit code, or `None` when no probe was declared.
 
     Returns:
-        `True` iff the verifier passed and the probe (if any) exited 0.
+        `probe_exit == 0` when a probe ran, else `verifier_passed`.
     """
-    return verifier_passed and (probe_exit is None or probe_exit == 0)
+    if probe_exit is not None:
+        return probe_exit == 0
+    return verifier_passed
 
 
 def run_probe(command: str, cwd: Path, *, env: Mapping[str, str] | None = None) -> int:
