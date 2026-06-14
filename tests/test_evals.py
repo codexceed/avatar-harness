@@ -6,6 +6,8 @@ See docs/eval-harness-design.md.
 """
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 from conftest import ScriptedModel
@@ -17,7 +19,7 @@ from avatar_harness.workspace import Workspace
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow
-from evals.run import run_task
+from evals.run import _cleanup_workspaces, _resolve_run_workspace, run_task
 from evals.score import is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
 
@@ -191,3 +193,67 @@ def test_probe_respects_env_vars(tmp_path):
     cmd = "python -c \"import os,sys; sys.exit(0 if os.environ.get('EVAL_X')=='y' else 3)\""
     assert run_probe(cmd, tmp_path, env={"EVAL_X": "y"}) == 0
     assert run_probe(cmd, tmp_path) == 3  # absent without the task env
+
+
+# --- F. run workspace in cwd + cleanup (#1, #4) -------------------------------
+
+
+def test_resultrow_records_workspace():
+    row = ResultRow(
+        task="x", model="m", seed=0, solved=True, outcome="success", iterations=1, workspace="/tmp/eval_x"
+    )
+    assert row.workspace == "/tmp/eval_x"
+    assert ResultRow.model_validate(json.loads(row.to_jsonl())).workspace == "/tmp/eval_x"
+
+
+def test_run_task_provisions_under_workspace_root(tmp_path):
+    run_dir = tmp_path / "eval_run_TS"
+    run_dir.mkdir()
+    spec = TaskSpec(id="create-chatbot", goal="g", task_kind="edit", fixture="empty")
+    decisions = [
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "chatbot.py", "content": "import openai\n"})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    row = run_task(spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir)
+    assert row.workspace is not None
+    assert Path(row.workspace).parent == run_dir  # provisioned UNDER the run workspace
+    assert (Path(row.workspace) / "chatbot.py").exists()
+
+
+def test_resolve_run_workspace_explicit_and_auto(tmp_path):
+    existing = tmp_path / "given"
+    existing.mkdir()
+    path, preexisting = _resolve_run_workspace(str(existing), "TS")
+    assert path == existing and preexisting is True
+
+    newp = tmp_path / "newws"
+    path, preexisting = _resolve_run_workspace(str(newp), "TS")
+    assert path == newp and preexisting is False and newp.exists()
+
+    path, preexisting = _resolve_run_workspace(None, "TS")  # auto -> cwd/eval_run_<stamp>
+    try:
+        assert path.name == "eval_run_TS" and path.parent == Path.cwd() and preexisting is False
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def test_cleanup_removes_created_run_workspace(tmp_path):
+    run_dir = tmp_path / "eval_run_TS"
+    (run_dir / "sub").mkdir(parents=True)
+    _cleanup_workspaces([], run_dir, preexisting=False)
+    assert not run_dir.exists()  # auto-created -> whole run dir removed
+
+
+def test_cleanup_preexisting_removes_only_row_subdirs(tmp_path):
+    run_dir = tmp_path / "given"
+    run_dir.mkdir()
+    keep = run_dir / "preexisting_stuff"
+    keep.mkdir()
+    scratch = run_dir / "scratch"
+    scratch.mkdir()
+    row = ResultRow(
+        task="x", model="m", seed=0, solved=True, outcome="success", iterations=1, workspace=str(scratch)
+    )
+    _cleanup_workspaces([row], run_dir, preexisting=True)
+    assert not scratch.exists()  # our scratch removed
+    assert keep.exists() and run_dir.exists()  # the user's dir + content preserved
