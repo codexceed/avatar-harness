@@ -17,7 +17,7 @@ from avatar_harness.tools.base import (
     phase_admits_tool,
 )
 from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import apply_patch, write_file
+from avatar_harness.tools.edit import ApplyPatchInput, apply_patch, write_file
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
@@ -45,6 +45,38 @@ def test_search_repo_finds_matches(tmp_path):
     assert result.success
     assert "a.py" in result.content
     assert "login" in result.content
+
+
+def test_apply_patch_teaches_on_bare_hunk_header(git_repo):
+    # A diff that names targets but emits a bare '@@' (no ranges) is the dogfood death spiral:
+    # git answers "No valid patches in input" and the model re-sends the same broken hunk. The
+    # tool now returns teaching guidance deterministically instead (no blind git invocation).
+    deps = RunDeps(workspace=Workspace(git_repo), config=HarnessConfig(), cancellation=CancellationToken())
+    bad = "--- a/calc.py\n+++ b/calc.py\n@@\n-    return a - b\n+    return a + b\n"
+    result = apply_patch.handler(ApplyPatchInput(diff=bad), deps)
+    assert result.success is False
+    error = result.error or ""
+    assert "hunk header" in error and "@@ -" in error  # teaches the correct form
+
+
+def test_apply_patch_well_formed_diff_still_applies(git_repo):
+    # The pre-check must not reject a valid diff (proper '@@ -1,2 +1,2 @@' header).
+    deps = RunDeps(workspace=Workspace(git_repo), config=HarnessConfig(), cancellation=CancellationToken())
+    result = apply_patch.handler(ApplyPatchInput(diff=_FIX), deps)
+    assert result.success is True
+    assert "calc.py" in result.files_changed
+
+
+def test_search_excludes_harness_journal(tmp_path):
+    # The harness's own journal must not surface in search results (Q1).
+    (tmp_path / "events").mkdir()
+    (tmp_path / "events" / "j.jsonl").write_text("needle in the journal\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("needle in the app\n", encoding="utf-8")
+    ws = Workspace(tmp_path, log_path="events/j.jsonl")
+    deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())
+    result = ToolRuntime(_registry(), deps).execute("search_repo", {"query": "needle"})
+    assert "app.py" in result.content
+    assert "events/j.jsonl" not in result.content
 
 
 def test_search_repo_no_matches_is_clean_success(tmp_path):

@@ -9,6 +9,8 @@ diff-anchored (an existing target is refused toward `apply_patch` unless
 `overwrite` is explicit).
 """
 
+import re
+
 from pydantic import BaseModel
 
 from avatar_harness.deps import RunDeps
@@ -38,6 +40,20 @@ _DIALECT_GUIDANCE = (
     "the whole file."
 )
 
+# A well-formed unified-diff hunk header carries line ranges: '@@ -<start>,<count> +<start>,
+# <count> @@' (the count is optional for a single line). A diff that names targets but emits a
+# bare '@@' is what makes `git apply` answer with the opaque "No valid patches in input" — and a
+# model that can't see *why* re-sends the same broken hunk until the failure cap (dogfood: 5 blind
+# retries → incomplete). Catch it deterministically and TEACH the fix, like the dialect guard.
+_HUNK_HEADER_RE = re.compile(r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
+
+_MALFORMED_HUNK_GUIDANCE = (
+    "malformed unified diff: each hunk header must carry line ranges — "
+    "'@@ -<start>,<count> +<start>,<count> @@' (e.g. '@@ -1,5 +1,7 @@'), not a bare '@@'. "
+    "Without ranges, git rejects the whole patch ('No valid patches in input'). Re-send with "
+    "real '@@' line numbers, or — for a large rewrite — use write_file with overwrite=true."
+)
+
 
 class ApplyPatchInput(BaseModel):
     """Input for `apply_patch`: a unified diff that may span multiple files."""
@@ -48,6 +64,10 @@ class ApplyPatchInput(BaseModel):
 def _apply_patch(args: ApplyPatchInput, deps: RunDeps) -> ToolResult:
     if any(marker in args.diff for marker in _BEGIN_PATCH_MARKERS):
         return ToolResult(tool_name="apply_patch", success=False, error=_DIALECT_GUIDANCE)
+    # A diff that names targets but has no well-formed hunk header is the bare-'@@' case git
+    # rejects opaquely; teach the fix instead of letting the model retry the same broken hunk.
+    if _parse_patch_targets(args.diff) and not _HUNK_HEADER_RE.search(args.diff):
+        return ToolResult(tool_name="apply_patch", success=False, error=_MALFORMED_HUNK_GUIDANCE)
     try:
         changed = deps.workspace.apply_patch(args.diff)
     except PathOutsideWorkspaceError as exc:

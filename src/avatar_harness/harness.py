@@ -133,6 +133,7 @@ class Harness:
                 self.config.workspace_root,
                 allow_dirty=allow_dirty,
                 sensitive_path_globs=self.config.sensitive_path_globs,
+                log_path=self.config.log_path,
             ),
             config=self.config,
             cancellation=CancellationToken(),

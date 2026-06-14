@@ -141,6 +141,7 @@ def main(
 
     session_id = uuid4().hex
     log_path = resolve_log_path(args.log, session_id)
+    config.log_path = str(log_path)  # hide the harness's own journal from the agent's file tools
     emitter = Emitter(session_id=session_id)
     emitter.subscribe(EventLog(log_path))
     emitter.subscribe(_print_event)
