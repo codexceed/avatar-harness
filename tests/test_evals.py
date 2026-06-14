@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from avatar_harness.config import HarnessConfig
 from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.workspace import Workspace
+from evals.classify import classify, failure_histogram
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, load_results
@@ -281,3 +282,42 @@ def test_load_results_skips_blank_lines(tmp_path):
     row = ResultRow(task="a", model="m", seed=0, solved=True, outcome="success", iterations=1)
     p.write_text(row.to_jsonl() + "\n\n", encoding="utf-8")  # trailing blank line
     assert load_results(p) == [row]
+
+
+# --- H. failure-mode classifier (Slice 2) -------------------------------------
+
+
+def _frow(outcome: str, solved: bool, probe_exit=None) -> ResultRow:
+    return ResultRow(task="t", model="m", seed=0, solved=solved, outcome=outcome, iterations=1, probe_exit=probe_exit)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "solved", "probe_exit", "bucket"),
+    [
+        ("success", True, 0, "solved"),
+        ("failed", False, None, "verification_failed"),
+        ("incomplete", False, None, "budget_exhausted"),
+        ("blocked", False, None, "blocked"),
+        ("error: BadRequestError: 400", False, None, "harness_error"),
+        ("success", False, 1, "probe_failed"),  # declared done, but the code doesn't work
+    ],
+)
+def test_classify_buckets(outcome, solved, probe_exit, bucket):
+    assert classify(_frow(outcome, solved, probe_exit)) == bucket
+
+
+def test_classify_loop_oscillation_from_events():
+    row = _frow("incomplete", False)
+    events = [{"type": "model_decision", "action": "read_file({'path': 'a.py'})"} for _ in range(4)]
+    assert classify(row, events) == "loop_oscillation"
+
+
+def test_classify_decision_error_from_events():
+    row = _frow("incomplete", False)
+    events = [{"type": "decision_error", "error": "bad"} for _ in range(3)]
+    assert classify(row, events) == "decision_error"
+
+
+def test_failure_histogram_counts_failures_only():
+    rows = [_frow("success", True, 0), _frow("failed", False), _frow("incomplete", False)]
+    assert failure_histogram(rows) == {"verification_failed": 1, "budget_exhausted": 1}
