@@ -7,6 +7,7 @@ deliberately a near-verbatim transcription of the §5 pseudocode.
 """
 
 import asyncio
+import json
 import time
 from typing import Literal
 from uuid import uuid4
@@ -72,6 +73,26 @@ def _action_brief(action: ToolCall | FinalAnswer | AskUser) -> str:
     """
     if isinstance(action, ToolCall):
         return f"{action.name}({action.input})"
+    if isinstance(action, FinalAnswer):
+        return action.answer
+    return action.question
+
+
+def _action_key(action: ToolCall | FinalAnswer | AskUser) -> str:
+    """A canonical, order-independent identity for an action, for repeat detection.
+
+    Unlike the human-readable `_action_brief`, a tool call's input is serialized with
+    sorted keys, so the model's JSON key order can't defeat the anti-loop nudge — the
+    same call with reordered inputs is the same call.
+
+    Args:
+        action: The model's chosen action.
+
+    Returns:
+        A canonical key for `action`.
+    """
+    if isinstance(action, ToolCall):
+        return f"{action.name}({json.dumps(action.input, sort_keys=True)})"
     if isinstance(action, FinalAnswer):
         return action.answer
     return action.question
@@ -274,6 +295,7 @@ class AgentRunner:
                 thought=decision.thought_summary,
                 action_type=action.type,
                 action=brief,
+                transport=decision.transport,
             )
             self._publish(
                 ModelDecisionEvent(
@@ -282,11 +304,17 @@ class AgentRunner:
                     thought=decision.thought_summary,
                     action_type=action.type,
                     action=brief,
+                    transport=decision.transport,
                 )
             )
             # Record every turn's decision so the context can show the agent its own
             # action history (§7/§9, Phase 2.5); `outcome` is filled in once known.
-            record = DecisionRecord(step=state.iterations, rationale=decision.thought_summary, chosen=brief)
+            record = DecisionRecord(
+                step=state.iterations,
+                rationale=decision.thought_summary,
+                chosen=brief,
+                key=_action_key(action),
+            )
             state.decisions.append(record)
 
             if isinstance(action, ToolCall):
@@ -409,7 +437,7 @@ class AgentRunner:
             action: The model's tool-call action.
             record: This turn's decision record, whose `outcome` is filled in.
         """
-        if any(d.chosen == record.chosen for d in state.decisions[:-1]):
+        if any(d.key == record.key for d in state.decisions[:-1]):
             state.add_feedback(
                 f"'{record.chosen}' repeats an earlier call — try a different approach or finalize.",
                 kind="repeat",

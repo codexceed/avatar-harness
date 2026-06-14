@@ -192,6 +192,7 @@ local `.env`):
 | `AVATAR_NATIVE_TOOL_CALLS` | `true` | Decisions ride provider function-calling; `false` forces the legacy JSON protocol. |
 | `AVATAR_CONTEXT_MAX_DETAIL_CHARS` | `16000` | Per-item cap on verbatim evidence detail in context. |
 | `AVATAR_CONTEXT_DETAIL_CHAR_BUDGET` | `48000` | Total verbatim-detail budget per packet. |
+| `AVATAR_CONTEXT_VERIFIER_PIN_COUNT` | `2` | Number of recent verifier outputs kept verbatim even when older evidence is compacted. |
 | `AVATAR_CLASSIFIER_MODEL` | `openai/gpt-5-nano` | The REPL's mode router (one cheap call per goal). Empty disables → heuristic only. |
 | `AVATAR_INTERACTIVE` | `true` | Whether `ask_user` may prompt; when off, an unanswered question yields `blocked`. |
 

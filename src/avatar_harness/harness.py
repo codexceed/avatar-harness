@@ -72,6 +72,7 @@ class Harness:
         self.context_builder = context_builder or ContextBuilder(
             detail_char_budget=config.context_detail_char_budget,
             max_detail_chars=config.context_max_detail_chars,
+            verifier_pin_count=config.context_verifier_pin_count,
         )
         self.emitter = emitter or Emitter()
 

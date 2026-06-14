@@ -16,7 +16,7 @@ Builds the per-turn `ContextPacket` from `TaskState` under a fixed budget (§9).
 
 Evidence is compacted *less-lossily* (Phase 2.5): recent items keep full detail
 until a char budget is spent, older items degrade to their summary line (not
-dropped), the latest verifier output is pinned verbatim, and adjacent duplicates
+dropped), the last N verifier outputs are pinned verbatim, and adjacent duplicates
 collapse to one `... (xN)` line. Action history is cheap (one line each) so it is
 kept on a longer horizon than evidence.
 
@@ -26,9 +26,12 @@ Args:
     max_detail_chars: Per-item detail truncation budget.
     max_evidence_lines: Hard cap on rendered evidence lines (newest kept).
     max_actions: Max prior-action lines to surface.
+    verifier_pin_count: How many recent verifier outputs keep detail verbatim
+        regardless of budget — a repair loop needs its recent failure history,
+        not just the latest verdict.
 
 ```python
-ContextBuilder(detail_char_budget: int = 48000, max_detail_chars: int = 16000, max_evidence_lines: int = 40, max_actions: int = 25) -> None
+ContextBuilder(detail_char_budget: int = 48000, max_detail_chars: int = 16000, max_evidence_lines: int = 40, max_actions: int = 25, verifier_pin_count: int = 2) -> None
 ```
 
 #### `ContextBuilder.build(self, state: TaskState, ws: Workspace, registry: ToolRegistry) -> ContextPacket`
