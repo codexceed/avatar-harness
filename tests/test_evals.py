@@ -23,6 +23,7 @@ from evals.result import ResultRow, load_results
 from evals.run import _cleanup_workspaces, _resolve_run_workspace, run_task
 from evals.score import is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
+from evals.stats import mcnemar, mean_ci
 
 # --- A. task spec + fixtures ---------------------------------------------------
 
@@ -323,3 +324,46 @@ def test_classify_decision_error_from_events():
 def test_failure_histogram_counts_failures_only():
     rows = [_frow("success", True, 0), _frow("failed", False), _frow("incomplete", False)]
     assert failure_histogram(rows) == {"verification_failed": 1, "budget_exhausted": 1}
+
+
+# --- I. statistics: clustered CI + paired McNemar (Slice 2) -------------------
+
+
+def test_mean_ci_clusters_by_task():
+    # task a: 2/2, task b: 0/2 -> grand mean 0.5; cluster-means SE = stdev([1,0])/sqrt(2) = 0.5
+    rows = [_row("a", 0, True), _row("a", 1, True), _row("b", 0, False), _row("b", 1, False)]
+    ci = mean_ci(rows)
+    assert ci.mean == pytest.approx(0.5)
+    assert ci.se == pytest.approx(0.5)
+    assert ci.lo == 0.0 and ci.hi == 1.0  # capped to [0, 1]
+
+
+def test_mean_ci_single_task_falls_back_to_binomial():
+    import math
+
+    rows = [_row("a", 0, True), _row("a", 1, True), _row("a", 2, False)]  # one cluster, 2/3
+    ci = mean_ci(rows)
+    assert ci.mean == pytest.approx(2 / 3)
+    assert ci.se == pytest.approx(math.sqrt((2 / 3) * (1 / 3) / 3))  # can't cluster with 1 task
+
+
+def test_mcnemar_no_change():
+    base = [_row("a", 0, True), _row("a", 1, True)]
+    cand = [_row("a", 0, True), _row("a", 1, True)]
+    r = mcnemar(base, cand)
+    assert r.regressions == 0 and r.improvements == 0 and r.p_value == 1.0
+
+
+def test_mcnemar_detects_regression():
+    base = [_row("a", i, True) for i in range(6)]
+    cand = [_row("a", i, False) for i in range(6)]
+    r = mcnemar(base, cand)
+    assert r.regressions == 6 and r.improvements == 0 and r.n_pairs == 6
+    assert r.p_value == pytest.approx(2 * 0.5**6)  # exact two-sided sign test = 0.03125
+
+
+def test_mcnemar_pairs_only_shared_keys():
+    base = [_row("a", 0, True), _row("b", 0, True)]
+    cand = [_row("a", 0, False)]  # only task a, seed 0 is shared
+    r = mcnemar(base, cand)
+    assert r.n_pairs == 1 and r.regressions == 1
