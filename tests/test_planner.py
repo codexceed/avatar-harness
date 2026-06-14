@@ -333,22 +333,38 @@ def test_smoke_floor_authors_model_check(tmp_path):
     )
 
 
-def test_smoke_floor_rejects_vacuous_command(tmp_path):
-    # A no-op passes (exit 0) without exercising anything → rejected, not a smoke check.
+def test_smoke_floor_accepts_allowlisted_checkers(tmp_path):
+    # Non-executing checkers across stacks are accepted (after python -m / npx unwrapping).
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
-    assert _propose_smoke(tmp_path, _CountingClient([{"command": "true"}])) is None
-    assert _propose_smoke(tmp_path, _CountingClient([{"command": "echo ok"}])) is None
+    for cmd in (
+        "python -m py_compile main.py",
+        "ruff check",
+        "node --check main.py",
+        "npx tsc --noEmit",
+        "go vet ./...",
+        "php -l main.py",
+    ):
+        check = _propose_smoke(tmp_path, _CountingClient([{"command": cmd}]))
+        assert check is not None and check.command == cmd, cmd
 
 
-def test_smoke_floor_rejects_shell_wrapped_noop(tmp_path):
-    # A shell wrapper is judged on its INNER program — `sh -c true` is still vacuous (PR #50).
+def test_smoke_floor_rejects_executing_or_unlisted_commands(tmp_path):
+    # The allowlist (not a denylist) is what bounds unattended execution (PR #50, ADR-0014).
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
-    assert _propose_smoke(tmp_path, _CountingClient([{"command": "sh -c true"}])) is None
-    assert _propose_smoke(tmp_path, _CountingClient([{"command": "bash -lc 'echo ok'"}])) is None
-    # ...but a wrapper around a real check is fine (the inner program does the work).
-    wrapped = _propose_smoke(tmp_path, _CountingClient([{"command": "sh -c 'python -m py_compile main.py'"}]))
-    assert wrapped is not None
-    assert wrapped.command == "sh -c 'python -m py_compile main.py'"
+    for cmd in (
+        "true",  # vacuous, not a checker
+        "echo ok",
+        "python -c 'import main'",  # arbitrary code execution as a single argv
+        "node -e 'require(\"./main\")'",
+        "node main.py",  # bare node executes (no --check)
+        "bash -c true",  # shell wrapper
+        "pytest",  # runs project code
+        "go run main.go",  # runs the program
+        "cargo test",  # build.rs / proc-macros execute at check time
+        "rm -rf /",
+        "ruff check /etc",  # allowlisted program, but escapes the workspace
+    ):
+        assert _propose_smoke(tmp_path, _CountingClient([{"command": cmd}])) is None, cmd
 
 
 def test_smoke_floor_none_when_model_makes_no_call(tmp_path):

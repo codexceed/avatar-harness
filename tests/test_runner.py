@@ -649,6 +649,35 @@ def test_smoke_floor_journaled_to_typed_sink(git_repo):
     assert types.index(VerificationPlanFrozen) < types.index(VerificationStart)  # before verify
 
 
+def test_smoke_floor_attempted_at_most_once_across_repair(git_repo):
+    # When the floor declines, the empty plan persists and the run enters repair; the live
+    # propose_smoke_check call must NOT be re-spent on each repair iteration (PR #50 nit).
+    calls = {"n": 0}
+    no_call = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=None))])
+
+    def _create(**_kw):
+        calls["n"] += 1
+        return no_call
+
+    planner = VerificationPlanner(
+        HarnessConfig(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=_create))),
+    )
+    reg = _edit_registry()
+    reg.register(write_file)
+    decisions = [
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "main.py", "content": "x = 1\n"})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+        ModelDecision(action=FinalAnswer(answer="still done")),
+        ModelDecision(action=FinalAnswer(answer="really done")),
+    ]
+    result = _runner(git_repo, reg, decisions, planner=planner, max_repair_attempts=2).run(
+        TaskState(goal="write a module", task_kind="edit")
+    )
+    assert result.outcome == "failed"  # no contract and the floor declined
+    assert calls["n"] == 1  # attempted exactly once, not once per repair iteration
+
+
 def test_runner_empty_plan_fails_verification_legibly(git_repo):
     # Nothing resolves (no config, no artifacts) AND the greenfield floor declines
     # (ADR-0014) → the empty plan stays empty and the edit fails verification with a

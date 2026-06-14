@@ -269,7 +269,7 @@ flowchart TD
     DET["2 · Deterministic detection — CI workflow run: steps > manifests (package.json, pyproject/tox/nox, Cargo.toml, go.mod, pre-commit) > Makefile targets; program-position classification, no LLM, no Python assumption"]
     LLM["3 · LLM fallback (opt-in: AVATAR_PLANNER_MODEL) — proposes for unresolved slots only, must cite the declaring artifact; the harness validates the citation or rejects"]
     FRZ["freeze onto TaskState at investigating → editing; journal verification_plan_frozen (command + provenance per check)"]
-    SMK["4 · Greenfield smoke floor (ADR-0014) — empty plan + an edit that wrote code: the model AUTHORS one executable smoke check (provenance=model-smoke); resolved at VERIFY time, run by the harness"]
+    SMK["4 · Greenfield smoke floor (ADR-0014) — empty plan + an edit that wrote code: the model AUTHORS one smoke check, bounded to an ALLOWLIST of non-executing checkers (py_compile/ruff/node --check/tsc/go vet/...); provenance=model-smoke, resolved at VERIFY time, run by the harness"]
     CO -->|slot unresolved| DET -->|slot unresolved| LLM
     CO --> FRZ
     DET --> FRZ
@@ -279,7 +279,7 @@ flowchart TD
 
 Key properties:
 
-- **The model never authors the rubric — with one bounded exception (ADR-0014).** For tiers 1–3 it can only pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one. The greenfield smoke floor (tier 4) is the exception: when nothing else resolved, the model *authors* one check — but the harness still **runs** it and reads the real exit code, so it is author-and-run, never self-assertion (the model can't forge a process result). Lowest precedence (any real contract displaces it) and tagged `provenance=model-smoke` so the weak signal is legible.
+- **The model never authors the rubric — with one bounded exception (ADR-0014).** For tiers 1–3 it can only pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one. The greenfield smoke floor (tier 4) is the exception: when nothing else resolved, the model *authors* one check — but the harness still **runs** it and reads the real exit code, so it is author-and-run, never self-assertion (the model can't forge a process result). It runs unattended outside the permission gate, so it is bounded to an **allowlist of non-executing checkers** (compile/parse/type-check; no `python -c`/`node -e`/shell wrappers — those are single argvs a denylist can't catch). Lowest precedence (any real contract displaces it) and tagged `provenance=model-smoke` so the weak signal is legible.
 - **Python-ecosystem commands are emitted `python -m <tool>`**, so an installed-but-not-on-PATH tool still resolves; a genuinely missing binary surfaces as a failed check (exit 127 from `Workspace.run`), never a crash into the loop.
 - **Nothing discovered → the greenfield floor, else a legible failure.** An empty plan over an `edit` that wrote code triggers the tier-4 smoke floor (resolved at verify time, not the freeze boundary — the only late-bound tier). If the floor also declines (non-code task, or the model proposes nothing runnable), the empty plan stands and verification fails legibly ("no verification contract discovered — declare one via `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`"), keeping the structural guards (diff present, no secrets).
 - **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.

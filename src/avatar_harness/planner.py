@@ -155,18 +155,18 @@ _PROPOSE_SYSTEM = (
     "actually declare, with the citing source_path. If nothing is declared, make no call."
 )
 
-# The greenfield floor (ADR-0014): the model AUTHORS one executable smoke command for
-# code it just wrote in a repo that declares no contract; the harness runs it and the
-# real exit code is the signal (never the model's say-so). One forced call, constrained
-# schema — the `_PROPOSE_TOOL` precedent, but authoring instead of citing.
+# The greenfield floor (ADR-0014): the model AUTHORS one smoke command for code it just
+# wrote in a repo that declares no contract; the harness runs it and the real exit code is
+# the signal (never the model's say-so). A single constrained tool call — the `_PROPOSE_TOOL`
+# precedent, authoring instead of citing — which the model may decline by making no call.
 _SMOKE_TOOL = {
     "type": "function",
     "function": {
         "name": "propose_smoke_check",
         "description": (
-            "Propose ONE shell command that smoke-tests the code just written. It must EXECUTE "
-            "the code and exit non-zero if the code is broken — never a no-op you assert passes. "
-            "The harness runs it and reads the real exit code."
+            "Propose ONE command that smoke-tests the code just written by parsing / compiling / "
+            "type-checking it (a NON-executing check) and exiting non-zero if it is broken — never "
+            "a no-op you assert passes. The harness runs it and reads the real exit code."
         ),
         "parameters": {
             "type": "object",
@@ -187,21 +187,39 @@ _SMOKE_TOOL = {
 
 _SMOKE_SYSTEM = (
     "You verify freshly-written code in a repository that declares no test or lint contract. "
-    "Given the files just written, call propose_smoke_check ONCE with a single shell command "
-    "that actually runs what was written and fails (non-zero exit) if it is broken. Prefer a "
-    "DEPENDENCY-FREE check — parse / compile / syntax (`python -m py_compile <file>`, "
-    "`node --check <file>`, `ruff check`/`tsc --noEmit` only if obviously present) — because "
-    "third-party dependencies are usually NOT installed in this workspace, so an `import` that "
-    "pulls a missing package would fail for the wrong reason. Never propose a no-op "
-    "(`true`, `:`, bare `echo`). If nothing can be meaningfully smoke-tested, make no call."
+    "Given the files just written, call propose_smoke_check ONCE with a single command that "
+    "parses / compiles / type-checks what was written and fails (non-zero exit) if it is broken. "
+    "For SAFETY the harness runs only NON-executing checkers — pick one of: "
+    "`python -m py_compile <files>`, `ruff check`, `node --check <file>`, `tsc --noEmit`, "
+    "`go vet ./...` / `go build ./...`, `gofmt -l <files>`, `ruby -c <file>`, `perl -c <file>`, "
+    "`php -l <file>`, `deno check <file>`. Reference the files just written, and prefer a "
+    "DEPENDENCY-FREE check (compiling/parsing won't fail on uninstalled third-party imports). "
+    "Do NOT use code runners (`python -c`, `node -e`, `pytest`, a shell `-c` wrapper) — they are "
+    "rejected. If none of these fit the stack, make no call."
 )
 
-# Trivially-vacuous programs: pass (exit 0) without exercising anything → not a smoke check.
-_VACUOUS_SMOKE = frozenset({"true", "false", ":", "echo", "exit", "test", "["})
-# Shells: a `sh -c true` / `bash -lc 'echo ok'` wrapper must be judged on its INNER program,
-# not the shell, or the vacuous-command guard is trivially side-stepped (PR #50 review).
-_SMOKE_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
-_MAX_SHELL_UNWRAP = 4  # recursion bound for unwrapping nested shell `-c` wrappers
+# The floor runs a MODEL-AUTHORED command unattended, outside the before_tool_call permission
+# gate (invariant #4, ADR-0014 §security). A denylist cannot bound that — `python -c "..."`,
+# `node -e "..."`, `bash -c "..."` are each a SINGLE argv, so arbitrary execution hides behind an
+# allowed program name. So the floor is an ALLOWLIST: after `effective_invocation` unwraps
+# `python -m`/`npx`/`uv run`/`sudo`, the program must be a known NON-executing checker (parses /
+# compiles / type-checks without running the project's code). A runner safe only in a check
+# sub-mode carries its required token(s); `None` = safe in any invocation. Deliberately excluded:
+# tools with a code-exec escape hatch — pylint (`--init-hook`), mypy/pyright (config-declared
+# plugins), eslint/biome (repo-config plugins), cargo (build.rs / proc-macros run at check time).
+_SMOKE_ALLOWED: dict[str, set[str] | None] = {
+    "py_compile": None,  # python -m py_compile <files> — compiles, never executes
+    "compileall": None,  # python -m compileall — same, over a tree
+    "ruff": None,  # Rust static analyzer; no code-execution escape
+    "gofmt": None,  # format check; runs nothing
+    "tsc": {"--noEmit"},  # type-check without emit/run
+    "node": {"--check"},  # parse-only; bare `node FILE` would execute
+    "deno": {"check"},
+    "go": {"vet", "build"},  # neither runs the program (unlike `go run`/`go test`)
+    "ruby": {"-c"},  # syntax check only
+    "perl": {"-c"},
+    "php": {"-l"},  # lint / syntax check
+}
 
 
 class VerificationPlanner:
@@ -352,7 +370,7 @@ class VerificationPlanner:
         except Exception:  # any failure degrades to "no floor", never blocks (tier-3 contract)
             return None
         command = (args.get("command") or "").strip()
-        if not _is_runnable_smoke(command):
+        if not _is_safe_smoke(command):
             return None
         return PlannedCheck(name="smoke", command=command, kind="smoke", provenance="model-smoke")
 
@@ -921,69 +939,44 @@ def _modified_excerpts(root: Path, files_modified: list[str]) -> str:
     return "\n\n".join(blocks)
 
 
-def _is_runnable_smoke(command: str) -> bool:
-    """Whether `command` is a non-vacuous, parseable smoke command.
+def _is_safe_smoke(command: str) -> bool:
+    """Whether `command` is an allowlisted, non-executing verification command (ADR-0014).
 
-    The floor's only authorship guard: the harness runs the command and the real exit
-    code is the verdict, so a *broken* command simply fails — but a trivially-vacuous
-    one (`true`, `:`, bare `echo`) would pass without exercising anything, so it is
-    rejected outright (ADR-0014's bounded vacuous-check mitigation). A shell wrapper
-    (`sh -c true`, `bash -lc 'echo ok'`) is judged on its INNER program, not the shell.
+    The floor runs this unattended, outside the permission gate, so it is bounded by an
+    ALLOWLIST, never a denylist: the command must resolve (after `effective_invocation`
+    unwraps `python -m`/`npx`/`uv run`/`sudo`) to a known checker that does not execute the
+    project's code, must stay inside the workspace, and — for a runner safe only in a check
+    sub-mode — must carry the required token. Arbitrary execution (`python -c`, `node -e`, a
+    shell `-c` wrapper, any unlisted program) is rejected, yielding no floor.
 
     Args:
         command: The model-proposed command.
 
     Returns:
-        `True` for a parseable command whose effective program is not trivially vacuous.
+        `True` only for an allowlisted, workspace-confined, non-executing invocation.
     """
-    program = _effective_smoke_program(command)
-    return bool(program) and program not in _VACUOUS_SMOKE
+    program, cmd_args = effective_invocation(command)
+    if program not in _SMOKE_ALLOWED:
+        return False
+    if any(_escapes_workspace(a) for a in cmd_args):
+        return False
+    required = _SMOKE_ALLOWED[program]
+    return required is None or any(token in required for token in cmd_args)
 
 
-def _effective_smoke_program(command: str, _depth: int = 0) -> str:
-    """The leaf program a smoke command runs, unwrapping `sh -c` / `bash -lc` wrappers.
-
-    A wrapper runs its inner script, not the shell, so vacuousness must be judged on the
-    inner program — otherwise `sh -c true` defeats the guard (PR #50 review). Bounded
-    recursion guards against pathological nesting.
+def _escapes_workspace(arg: str) -> bool:
+    """Whether a command argument points outside the workspace (absolute / parent escape).
 
     Args:
-        command: The command (or unwrapped inner script) to inspect.
-        _depth: Internal recursion guard.
+        arg: One command argument (a flag or a path).
 
     Returns:
-        The basename of the effective leaf program, or `""` when empty/unparseable.
+        `True` for an absolute path, a `~` expansion, or a `..` parent escape; `False`
+        for a flag or a workspace-relative path.
     """
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return ""
-    if not tokens:
-        return ""
-    program = tokens[0].rsplit("/", 1)[-1]
-    if program in _SMOKE_SHELLS and _depth < _MAX_SHELL_UNWRAP:
-        script = _shell_c_script(tokens[1:])
-        if script is not None:
-            return _effective_smoke_program(script, _depth + 1)
-    return program
-
-
-def _shell_c_script(args: list[str]) -> str | None:
-    """The inline script of a shell `-c` / `-lc` invocation, or `None` when there is none.
-
-    Args:
-        args: The shell's arguments (everything after the shell program itself).
-
-    Returns:
-        The script string following the first `-c`-style flag; `None` when the shell
-        runs a file (`sh script.sh`) or no `-c` flag is present.
-    """
-    for i, tok in enumerate(args):
-        if not tok.startswith("-"):
-            return None  # running a script file, not an inline `-c` command
-        if "c" in tok.lstrip("-"):
-            return args[i + 1] if i + 1 < len(args) else None
-    return None
+    if arg.startswith("-"):
+        return False  # a flag, not a path
+    return arg.startswith(("/", "~")) or ".." in arg.split("/")
 
 
 def _artifact_excerpts(root: Path) -> str:

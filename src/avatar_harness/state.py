@@ -104,6 +104,9 @@ class TaskState(BaseModel):
     iterations: int = 0
     consecutive_failures: int = 0  # tool/action errors in a row -> "incomplete" at cap (§5)
     repair_failures: int = 0  # verification rejections in a row -> "failed" at cap (§5)
+    # The greenfield smoke floor (ADR-0014) is resolved with a live model call; attempt it
+    # at most once per run so the repair loop doesn't re-spend it each iteration (PR #50).
+    smoke_floor_attempted: bool = False
     prompt_tokens: int = 0  # provider-reported usage totals (in-client retries included)
     completion_tokens: int = 0
     files_read: set[str] = Field(default_factory=set)

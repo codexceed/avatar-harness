@@ -548,12 +548,15 @@ class AgentRunner:
         """Bind the greenfield smoke floor when tiers 1-3 resolved nothing (ADR-0014).
 
         The lowest-precedence tier: only when the frozen plan is the *empty* no-contract
-        plan AND an `edit` run actually wrote code does the model get to AUTHOR one
-        executable smoke check. The harness still runs it (the verifier reads the real
-        exit code), so this is author-and-run, never self-certification (§5). Late-bound
-        on purpose — the artifact under test did not exist at the freeze boundary. A real
-        contract (non-empty plan) is never touched; resolution failure leaves the empty
-        plan as-is (the legible no-contract path).
+        plan AND an `edit` run actually wrote code does the model get to AUTHOR one smoke
+        check — bounded to an allowlist of non-executing checkers (`VerificationPlanner`),
+        since it runs unattended outside the permission gate (invariant #4, ADR-0014). The
+        harness still runs it (the verifier reads the real exit code), so this is
+        author-and-run, never self-certification (§5). Late-bound on purpose — the artifact
+        under test did not exist at the freeze boundary. A real contract (non-empty plan) is
+        never touched; resolution failure leaves the empty plan as-is (the legible
+        no-contract path). The live resolution call is attempted at most once per run so the
+        repair loop does not re-spend it each iteration.
 
         Args:
             state: The task state whose empty frozen plan may gain the floor.
@@ -561,6 +564,9 @@ class AgentRunner:
         """
         if state.task_kind != "edit" or state.verification_plan != [] or not state.files_modified:
             return
+        if state.smoke_floor_attempted:
+            return
+        state.smoke_floor_attempted = True
         check = await asyncio.to_thread(self.planner.propose_smoke_check, ws, sorted(state.files_modified))
         if check is None:
             return
