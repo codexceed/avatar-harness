@@ -18,7 +18,7 @@ from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.workspace import Workspace
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
-from evals.result import ResultRow
+from evals.result import ResultRow, load_results
 from evals.run import _cleanup_workspaces, _resolve_run_workspace, run_task
 from evals.score import is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
@@ -261,3 +261,23 @@ def test_cleanup_preexisting_removes_only_row_subdirs(tmp_path):
     _cleanup_workspaces([row], run_dir, preexisting=True)
     assert not scratch.exists()  # our scratch removed
     assert keep.exists() and run_dir.exists()  # the user's dir + content preserved
+
+
+# --- G. results loader (#3 — cross-run reading) -------------------------------
+
+
+def test_load_results_round_trips(tmp_path):
+    rows = [
+        ResultRow(task="a", model="m", seed=0, solved=True, outcome="success", iterations=2),
+        ResultRow(task="b", model="m", seed=1, solved=False, outcome="failed", iterations=5),
+    ]
+    p = tmp_path / "r.jsonl"
+    p.write_text("".join(r.to_jsonl() + "\n" for r in rows), encoding="utf-8")
+    assert load_results(p) == rows
+
+
+def test_load_results_skips_blank_lines(tmp_path):
+    p = tmp_path / "r.jsonl"
+    row = ResultRow(task="a", model="m", seed=0, solved=True, outcome="success", iterations=1)
+    p.write_text(row.to_jsonl() + "\n\n", encoding="utf-8")  # trailing blank line
+    assert load_results(p) == [row]

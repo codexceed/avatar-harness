@@ -550,3 +550,16 @@ def test_truncated_retry_excerpt_is_marked():
     raw = decision.retry_trace[0].raw
     assert len(raw) < len(long_invalid)  # still capped
     assert "[truncated" in raw  # but loudly
+
+
+def test_request_uses_config_temperature():
+    # Eval reliability (pass^k) needs temperature>0 so each seed is an independent sample;
+    # the request temperature must come from config (default 0.0 keeps the loop deterministic).
+    assert HarnessConfig(model="m").temperature == 0.0
+    captured: list[dict] = []
+    reply = _msg(tool_calls=[_tc("read_file", '{"path": "a.py"}')])
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", temperature=0.5), client=_fake_openai_messages([reply], captured)
+    )
+    client.decide(_packet())
+    assert captured[0]["temperature"] == 0.5
