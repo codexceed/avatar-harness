@@ -20,6 +20,11 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # Author the release PR with a PAT (contents + pull-requests: write), NOT the
+      # default GITHUB_TOKEN. A GITHUB_TOKEN-authored PR comes from github-actions[bot],
+      # whose workflow runs GitHub holds behind a "requires approval from a maintainer"
+      # gate every release. A PR from the PAT owner (a real collaborator) runs CI without
+      # that gate. See https://github.com/googleapis/release-please-action#github-credentials
       - uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_APPROVE_TOKEN }}
