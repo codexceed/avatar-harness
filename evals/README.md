@@ -33,6 +33,9 @@ make eval
 # A model matrix (the sonnet-class trio), 3 seeds each:
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 
+# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, NO_CLEANUP=1 (keep output)
+make eval MODELS="openai/gpt-5.1" SEEDS=1 NO_CLEANUP=1
+
 # Or invoke the module directly:
 uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
