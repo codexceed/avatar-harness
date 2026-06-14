@@ -1,0 +1,12 @@
+id = "investigate-question"
+guards = "grounded-answer contract, no unintended diff (verifier-graded; no probe)"
+goal = """Which environment variables does the load_config function in config_loader.py read, and \
+what is the default port?"""
+task_kind = "investigate"
+fixture = "investigate-question"
+# No success_probe: this exercises the no-probe path — graded by the harness verifier's
+# grounded-answer gate (answer present, cites files actually read, no unintended diff).
+
+[budgets]
+max_iterations = 20
+max_wall_clock_seconds = 240

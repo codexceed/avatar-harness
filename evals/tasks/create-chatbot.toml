@@ -1,0 +1,20 @@
+id = "create-chatbot"
+guards = "file creation end-to-end; edit-primitive robustness (dogfood 2026-06-13, 0/3)"
+goal = """Create a runnable Python command-line chatbot in a file named `chatbot.py`, using \
+the official `openai` Python SDK. It should read user messages from standard input one line \
+at a time in a loop, send each message to the OpenAI chat completions API, and print the \
+assistant's reply. Exit cleanly when the user types 'quit' or 'exit', or on end-of-input."""
+task_kind = "edit"
+fixture = "empty"
+# The probe runs the named entry file (chatbot.py) and asserts a turn round-trips against a
+# mocked client — deterministic, no LLM judge, no discovery guesswork.
+success_probe = "python evals/probes/chatbot_smoke.py chatbot.py"
+
+[budgets]
+max_iterations = 30
+max_wall_clock_seconds = 300
+
+# Runtime env for the program under test (you control this). The probe runs chatbot.py with
+# these set, so the canonical `os.environ["OPENAI_API_KEY"]` pattern doesn't crash at startup.
+[env]
+OPENAI_API_KEY = "sk-eval-dummy"

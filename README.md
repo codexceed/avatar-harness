@@ -33,6 +33,7 @@ Set config via environment variables (prefix `AVATAR_`) or a local `.env`. Minim
 AVATAR_API_KEY=sk-or-...                       # required; falls back to OPENAI_API_KEY
 AVATAR_MODEL=openai/gpt-4o-mini                # any model your endpoint serves
 AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); swap for OpenAI/local
+AVATAR_TEMPERATURE=0.0                          # sampling temperature (0 = as deterministic as the provider allows)
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbatim in context
 ```
@@ -86,6 +87,17 @@ print(state.outcome, state.final_answer)
 ```
 
 Override any seam (model, tools, verifier, policy) via the `Harness(...)` constructor, or drive the async two-plane `Session` / multi-turn `ReplSession` surface for an interactive UI. The **[SDK guide](docs/guides/sdk.mdx)** and the **[tutorial](docs/tutorials/terminal-agent.mdx)** (a streaming, approval-answering agent in ~90 lines) cover the full surface.
+
+### Evaluating the agent
+
+A deterministic, model-agnostic eval harness lives under [`evals/`](evals/README.md) (dev tooling; live runs cost API spend):
+
+```bash
+make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6" SEEDS=3   # score the task suite (per-model pass@1/pass^k)
+make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl   # regression-diff (clustered CI + McNemar)
+```
+
+See [`evals/README.md`](evals/README.md) for task specs, probes, the run workspace/cleanup flags, and how scoring works.
 
 ## Documentation
 

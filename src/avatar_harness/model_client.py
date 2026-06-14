@@ -527,7 +527,7 @@ class OpenAIModelClient(ModelClient):
                 model=self.config.model,
                 messages=messages,
                 tools=tools,
-                temperature=0,
+                temperature=self.config.temperature,
             )
             tally.add(response)
             message = response.choices[0].message
@@ -603,7 +603,7 @@ class OpenAIModelClient(ModelClient):
                 model=self.config.model,
                 messages=messages,
                 response_format={"type": "json_object"},
-                temperature=0,
+                temperature=self.config.temperature,
             )
             tally.add(response)
             raw = response.choices[0].message.content or ""

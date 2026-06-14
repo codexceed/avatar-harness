@@ -91,6 +91,12 @@ class HarnessConfig(BaseSettings):
     # tool-call support is broken (content-only replies also fall back automatically).
     native_tool_calls: bool = True
 
+    # Sampling temperature for model decisions. `0.0` (default) keeps the loop as deterministic
+    # as the provider allows. The eval harness raises it (>0) so each "seed" is an independent
+    # sample — the precondition for pass^k / CIs to measure behavioral reliability, not just
+    # provider noise.
+    temperature: float = 0.0
+
     # Context compaction (§9; the Phase-2.5 budgets made visible + realistic). Per-item
     # and total caps on verbatim evidence *detail* in the model's context. Sized so an
     # ordinary source file fits whole per item — modifying a file requires seeing all of

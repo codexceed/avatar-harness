@@ -199,6 +199,7 @@ class Harness:
         *,
         task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
         allow_dirty: bool = False,
+        conversational: bool = False,
         journal: JsonlEventJournal | None = None,
     ) -> Session:
         """Open an interactive `Session` over `task` — the two-plane SDK surface (§13, §23).
@@ -211,11 +212,14 @@ class Harness:
             task: The natural-language task to run.
             task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
             allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
+            conversational: Verification authority (§23.5). `False` (default) is the strict §12
+                gate (sets `outcome`, repairs); `True` runs the verifier as advisory and delivers
+                the reply without repairing — for callers that grade externally (e.g. the eval probe).
             journal: The write-ahead `JsonlEventJournal` for the run's typed events; `None`
                 (default) keeps the stream in memory only.
 
         Returns:
             A `Session` wrapping the run — observation out, control in.
         """
-        runner = self._build_runner(allow_dirty)
+        runner = self._build_runner(allow_dirty, conversational=conversational)
         return Session(runner, TaskState(goal=task, task_kind=task_kind), journal=journal)
