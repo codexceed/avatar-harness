@@ -40,6 +40,6 @@ def _git(repo: Path, *args: str) -> None:
 
     Args:
         repo: The repo directory.
-        args: The git arguments.
+        *args: The git arguments.
     """
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)

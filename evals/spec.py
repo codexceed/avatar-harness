@@ -38,14 +38,14 @@ class TaskSpec(BaseModel):
 def load_task_spec(path: Path) -> TaskSpec:
     """Load and validate a TOML task spec.
 
+    Validation is delegated to `TaskSpec.model_validate`, which raises pydantic's
+    `ValidationError` when required fields (`id`, `goal`) are missing or mistyped.
+
     Args:
         path: The ``.toml`` spec file.
 
     Returns:
         The validated `TaskSpec`.
-
-    Raises:
-        ValidationError: When required fields (`id`, `goal`) are missing or mistyped.
     """
     with Path(path).open("rb") as fh:
         data = tomllib.load(fh)
