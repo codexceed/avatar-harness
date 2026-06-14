@@ -46,9 +46,23 @@ does **not** (it mocks the network — see *Probes*).
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--models a,b,c` | `AVATAR_MODEL` | Comma-separated model ids to run as a matrix. |
-| `--seeds N` | `3` | Seeds per task (pass^k needs ≥2; live spend scales with models × tasks × seeds). |
+| `--seeds N` | `3` | Repetitions per task (see *Seeds & temperature*). |
+| `--temperature T` | `0.7` | Sampling temperature; `>0` makes each seed an independent draw. Pass `0` for a deterministic run. |
 | `--workspace PATH` | `./eval_run_<timestamp>` | Where scratch repos are created. |
 | `--no-cleanup` | (cleanup on) | Keep the run workspace for inspection instead of deleting it. |
+
+### Seeds & temperature
+
+A **seed** here is one **repetition** of the same task — running N is how we measure *reliability*,
+not just capability:
+
+- **pass@1** (capability) — averaged over seeds: *can* it do this?
+- **pass^k** (reliability) — *all k* seeds pass: does it work *every time*?
+
+For seeds to be meaningful they must be **independent samples**, which needs **`temperature > 0`**
+(eval default `0.7`). At `--temperature 0` the runs are as identical as the provider allows, so
+`pass^k` then reflects only *provider noise*, not the model's behavior. (The first baseline was run
+at temp 0 — read those 3/3s as "consistent under provider noise," not behavioral reliability.)
 
 ---
 
@@ -89,9 +103,10 @@ across cleanup** — only scratch repos are cleaned). One row per `(model, task,
 The runner prints a per-model summary (`pass@1`, `pass^k`). A bad model slug or run error becomes an
 `outcome: "error: …"` row and the matrix continues.
 
-> **Not built yet:** nothing re-reads persisted results across runs (regression-diff vs. a previous
-> baseline). `main()` aggregates only the current run's in-memory rows; inspect past runs with
-> `cat evals/results/*.jsonl`. A results loader/aggregator is a planned Slice-2 addition.
+> **Cross-run reading:** `evals.result.load_results(path)` reads a `<ts>.jsonl` back into
+> `ResultRow`s (the inverse of `to_jsonl`). The run summary still aggregates only the current run's
+> rows; a **regression-diff vs. a previous baseline** (built on `load_results`) is the next Slice-2
+> step. Inspect past runs directly with `cat evals/results/*.jsonl`.
 
 ---
 

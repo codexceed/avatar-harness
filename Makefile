@@ -23,7 +23,7 @@ run:
 
 # Run the Eval-0 task suite (live; needs AVATAR_API_KEY + spend). Multi-model matrix:
 #   make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
-EVAL_ARGS = $(if $(MODELS),--models "$(MODELS)") $(if $(SEEDS),--seeds $(SEEDS))
+EVAL_ARGS = $(if $(MODELS),--models "$(MODELS)") $(if $(SEEDS),--seeds $(SEEDS)) $(if $(TEMPERATURE),--temperature $(TEMPERATURE))
 eval:
 	uv run python -m evals.run $(EVAL_ARGS)
 

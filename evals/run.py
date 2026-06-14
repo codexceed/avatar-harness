@@ -18,13 +18,16 @@ from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.model_client import ModelClient
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
-from evals.result import ResultRow
+from evals.result import ResultRow, write_results
 from evals.score import is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
 
 _EVALS_ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _EVALS_ROOT.parent
 _DEFAULT_SEEDS = 3
+# Eval samples by default (>0) so each seed is an independent draw — pass^k/CIs then measure
+# behavioral reliability, not just provider noise. Pass --temperature 0 for a deterministic run.
+_DEFAULT_TEMPERATURE = 0.7
 
 
 def _fixture_path(name: str) -> Path | None:
@@ -177,7 +180,7 @@ def _write_results(rows: list[ResultRow]) -> Path:
     results.mkdir(exist_ok=True)
     stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     path = results / f"{stamp}.jsonl"
-    path.write_text("".join(r.to_jsonl() + "\n" for r in rows), encoding="utf-8")
+    write_results(rows, path)
     return path
 
 
@@ -195,6 +198,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--models", default=None, help="comma-separated model ids; default = config model")
     parser.add_argument("--seeds", type=int, default=_DEFAULT_SEEDS, help="seeds per task")
     parser.add_argument(
+        "--temperature",
+        type=float,
+        default=_DEFAULT_TEMPERATURE,
+        help="sampling temperature; >0 makes each seed an independent sample (needed for pass^k)",
+    )
+    parser.add_argument(
         "--workspace",
         default=None,
         help="run workspace dir for scratch repos; default = ./eval_run_<timestamp>",
@@ -207,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    base = HarnessConfig()
+    base = HarnessConfig().model_copy(update={"temperature": args.temperature})
     models = [m.strip() for m in args.models.split(",")] if args.models else [base.model]
     specs = _load_specs()
     if not specs:
