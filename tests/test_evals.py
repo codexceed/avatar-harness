@@ -21,8 +21,15 @@ from avatar_harness.workspace import Workspace
 from evals.classify import classify, failure_histogram
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
-from evals.result import ResultRow, load_results
-from evals.run import _cleanup_workspaces, _journal_events, _resolve_run_workspace, run_task
+from evals.result import ResultRow, load_results, write_results
+from evals.run import (
+    _cleanup_workspaces,
+    _journal_events,
+    _resolve_run_workspace,
+    build_summary,
+    run_task,
+    write_summary,
+)
 from evals.score import is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
 from evals.stats import mcnemar, mean_ci
@@ -487,3 +494,120 @@ def test_run_task_with_probe_scores_via_probe(tmp_path):
     )
     assert row.solved is True and row.probe_exit == 0
     assert row.workspace is not None and Path(row.workspace).parent == run_dir
+
+
+# --- L. aggregate summary artifact (build_summary / write_summary) -------------
+
+
+def _mrow(model: str, task: str, seed: int, solved: bool, outcome: str | None = None) -> ResultRow:
+    return ResultRow(
+        task=task,
+        model=model,
+        seed=seed,
+        solved=solved,
+        outcome=outcome or ("success" if solved else "failed"),
+        iterations=1,
+    )
+
+
+def test_build_summary_metadata_and_per_model_metrics():
+    rows = [
+        _mrow("m1", "a", 0, True),
+        _mrow("m1", "a", 1, True),
+        _mrow("m1", "b", 0, True),
+        _mrow("m1", "b", 1, False),
+        _mrow("m2", "a", 0, False),
+        _mrow("m2", "a", 1, False),
+    ]
+    summary = build_summary(
+        rows,
+        models=["m1", "m2"],
+        seeds=2,
+        temperature=0.7,
+        stamp="20260615T000000Z",
+        events_for=lambda _r: [],
+    )
+    assert summary["stamp"] == "20260615T000000Z"
+    assert summary["n"] == 6
+    assert summary["temperature"] == 0.7
+    assert summary["seeds"] == 2
+    assert summary["models"] == ["m1", "m2"]
+    # overall: 3 of 6 solved
+    assert summary["overall_pass_at_1"] == pytest.approx(0.5)
+    per_model = {pm["model"]: pm for pm in summary["per_model"]}
+    assert set(per_model) == {"m1", "m2"}
+    # m1: pass@1 = 3/4 = 0.75; pass^k: task a all-pass, task b not -> 0.5; n=4
+    assert per_model["m1"]["pass_at_1"] == pytest.approx(0.75)
+    assert per_model["m1"]["pass_caret_k"] == pytest.approx(0.5)
+    assert per_model["m1"]["n"] == 4
+    # m2: pass@1 = 0; pass^k = 0; n=2
+    assert per_model["m2"]["pass_at_1"] == pytest.approx(0.0)
+    assert per_model["m2"]["pass_caret_k"] == pytest.approx(0.0)
+    assert per_model["m2"]["n"] == 2
+
+
+def test_build_summary_histogram_uses_events_resolver():
+    # An incomplete run refines to loop_oscillation only via the journal-events resolver —
+    # build_summary must thread events_for through exactly as main() does.
+    rows = [
+        _mrow("m1", "a", 0, True),
+        _mrow("m1", "b", 0, False, outcome="incomplete"),
+    ]
+    events = [{"type": "model_decision", "action": "read_file({})"} for _ in range(4)]
+    summary = build_summary(
+        rows,
+        models=["m1"],
+        seeds=1,
+        temperature=0.0,
+        stamp="TS",
+        events_for=lambda _r: events,
+    )
+    assert summary["failure_histogram"] == {"loop_oscillation": 1}
+
+
+def test_build_summary_rounds_floats_to_4dp():
+    # 2 of 3 solved -> 0.6666... must round to 0.6667.
+    rows = [_mrow("m1", "a", 0, True), _mrow("m1", "a", 1, True), _mrow("m1", "a", 2, False)]
+    summary = build_summary(
+        rows, models=["m1"], seeds=3, temperature=0.7, stamp="TS", events_for=lambda _r: []
+    )
+    assert summary["overall_pass_at_1"] == 0.6667
+    assert summary["per_model"][0]["pass_at_1"] == 0.6667
+
+
+def test_write_summary_round_trips_to_json(tmp_path):
+    rows = [_mrow("m1", "a", 0, True), _mrow("m1", "a", 1, False, outcome="incomplete")]
+    summary = build_summary(
+        rows, models=["m1"], seeds=2, temperature=0.7, stamp="TS", events_for=lambda _r: []
+    )
+    path = tmp_path / "TS.summary.json"
+    write_summary(summary, path)
+    back = json.loads(path.read_text(encoding="utf-8"))
+    assert back == summary
+    assert set(back) >= {
+        "stamp",
+        "n",
+        "temperature",
+        "seeds",
+        "models",
+        "overall_pass_at_1",
+        "per_model",
+        "failure_histogram",
+    }
+
+
+def test_summary_pairs_with_results_jsonl_by_stamp(tmp_path):
+    # The summary artifact sits next to the per-run JSONL and shares its stamp.
+    results = tmp_path / "results"
+    results.mkdir()
+    stamp = "20260615T120000Z"
+    rows = [_mrow("m1", "a", 0, True)]
+    write_results(rows, results / f"{stamp}.jsonl")
+    summary = build_summary(
+        rows, models=["m1"], seeds=1, temperature=0.7, stamp=stamp, events_for=lambda _r: []
+    )
+    summary_path = results / f"{stamp}.summary.json"
+    write_summary(summary, summary_path)
+    assert (results / f"{stamp}.jsonl").exists()
+    assert summary_path.exists()
+    assert json.loads(summary_path.read_text(encoding="utf-8"))["stamp"] == stamp
