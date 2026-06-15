@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/codexceed/avatar-harness/compare/v0.3.0...v0.3.1) (2026-06-14)
+
+
+### Documentation
+
+* **adr:** mark 0009/0010 accepted-deferred; fix CLAUDE.md staleness ([#55](https://github.com/codexceed/avatar-harness/issues/55)) ([174e241](https://github.com/codexceed/avatar-harness/commit/174e241ae950b353e6f548317f0ae8a2338ab829))
+
 ## [0.3.0](https://github.com/codexceed/avatar-harness/compare/v0.2.0...v0.3.0) (2026-06-14)
 
 
