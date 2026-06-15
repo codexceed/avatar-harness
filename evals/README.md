@@ -108,6 +108,17 @@ non-solved runs (`verification_failed`, `budget_exhausted`, `loop_oscillation`, 
 `blocked`, `probe_failed`, `harness_error`). A bad model slug or run error becomes an
 `outcome: "error: …"` row (`harness_error`) and the matrix continues.
 
+Those same aggregates are also **persisted** as a sibling artifact `evals/results/<timestamp>.summary.json`
+(one JSON object, sharing the `<timestamp>` of its `.jsonl` so the two pair up), written before
+cleanup so the journal-derived histogram survives:
+
+```json
+{"stamp":"20260615T120000Z","n":12,"temperature":0.7,"seeds":3,
+ "models":["openai/gpt-5.1"],"overall_pass_at_1":0.8333,
+ "per_model":[{"model":"openai/gpt-5.1","pass_at_1":0.8333,"pass_caret_k":0.5,"n":12}],
+ "failure_histogram":{"budget_exhausted":2}}
+```
+
 ### Regression-diff (run vs. previous baseline)
 
 Compare two result files — per model and overall, with **clustered 95% CIs** and a **paired
@@ -185,7 +196,7 @@ evals/
   tasks/*.toml       task specs
   probes/*.py        deterministic success probes
   fixtures/<name>/   starter repo trees (optional; "empty" = bare repo)
-  results/*.jsonl    run outputs (git-ignored)
+  results/*.jsonl    run outputs (git-ignored); paired with *.summary.json aggregates
 ```
 
 ## Relationship to the agent harness
