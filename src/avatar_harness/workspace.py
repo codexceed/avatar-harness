@@ -72,6 +72,14 @@ class MatchNotFoundError(ReplaceError):
     """The `old` anchor was absent from the file — a stale or mistyped anchor (§10)."""
 
 
+class EmptyAnchorError(ReplaceError):
+    """`old` was empty — it would match between every character and rewrite the file (ADR-0015).
+
+    Rejected at the `Workspace.replace` chokepoint so a direct SDK caller can't corrupt a file,
+    not only the `str_replace` tool layer.
+    """
+
+
 class AmbiguousMatchError(ReplaceError):
     """The `old` anchor matched more than once and `replace_all` was not set (ADR-0015).
 
@@ -344,7 +352,7 @@ class Workspace:
         Args:
             path: The workspace-relative file to edit.
             old: The exact existing text to find (the anchor); must be non-empty.
-            new: The replacement text.
+            new: The replacement text; an empty string deletes the matched span.
             replace_all: Replace every occurrence instead of requiring a unique match.
 
         Returns:
@@ -352,13 +360,19 @@ class Workspace:
 
         Raises:
             FileNotFoundError: When the target file does not exist (create with `write_file`).
+            EmptyAnchorError: When `old` is empty (would rewrite the whole file).
             MatchNotFoundError: When `old` is absent (stale or mistyped anchor).
             AmbiguousMatchError: When `old` matches more than once and `replace_all` is unset.
 
         Note:
-            Confinement and the sensitive-path denylist apply at this chokepoint exactly as
-            for every other access (via `_resolve`/`_assert_not_sensitive`).
+            The input contract lives HERE, at the chokepoint, not only in the `str_replace`
+            tool — a direct SDK caller gets the same guarantees. Confinement and the
+            sensitive-path denylist apply via `_resolve`/`_assert_not_sensitive`. An empty
+            `new` is deliberately allowed (span deletion); an empty `old` is rejected.
         """
+        if not old:
+            # `str.replace("", x)` inserts between every character — corruption, not an edit.
+            raise EmptyAnchorError(path)
         resolved = self._resolve(path)
         self._assert_not_sensitive(resolved)
         rel = str(resolved.relative_to(self.root))

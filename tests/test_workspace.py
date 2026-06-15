@@ -5,6 +5,7 @@ import pytest
 from avatar_harness.workspace import (
     AmbiguousMatchError,
     DirtyWorkspaceError,
+    EmptyAnchorError,
     MatchNotFoundError,
     PatchError,
     PathOutsideWorkspaceError,
@@ -276,3 +277,21 @@ def test_workspace_replace_confined_to_root(git_repo):
     ws = Workspace(git_repo)
     with pytest.raises(PathOutsideWorkspaceError):
         ws.replace("../escape.py", "x", "y")
+
+
+def test_workspace_replace_empty_anchor_rejected_at_chokepoint(git_repo):
+    # The empty-anchor guard lives at the chokepoint, so a DIRECT SDK caller can't corrupt a
+    # file (`str.replace("", x)` would insert between every character). The tool layer is not
+    # the only line of defense.
+    ws = Workspace(git_repo)
+    with pytest.raises(EmptyAnchorError):
+        ws.replace("calc.py", "", "X", replace_all=True)
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == _CALC  # byte-for-byte unchanged
+
+
+def test_workspace_replace_empty_new_deletes_the_span(git_repo):
+    # An empty `new` is the deliberate span-deletion path — the intentional asymmetry with
+    # an empty `old` (rejected). Pinned so it's contract, not incidental behavior.
+    ws = Workspace(git_repo)
+    ws.replace("calc.py", "    return a - b\n", "")
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n"

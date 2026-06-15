@@ -1,12 +1,11 @@
-"""Editing tools: apply_patch + write_file (§10, tier 1).
+"""Editing tools: str_replace + write_file (+ legacy apply_patch) (§10, tier 1, ADR-0015).
 
-The mutating tools. `apply_patch` hands a unified diff to the `Workspace`, which
-applies it atomically; a failed apply (stale context) comes back as a
-model-correctable `ToolResult`, never an exception thrown at the loop (§10).
-`write_file` (ADR-0003 B) is the plain-content transport for the no-anchor case —
-file *creation* — where a unified diff is pure fragility; modification stays
-diff-anchored (an existing target is refused toward `apply_patch` unless
-`overwrite` is explicit).
+The mutating tools. `str_replace` makes a targeted, string-anchored edit to an existing
+file — `old_string` → `new_string`, no line numbers, no diff; a miss is a model-correctable
+`ToolResult`, never an exception thrown at the loop (§10). `write_file` (ADR-0003 B) is the
+plain-content transport for creation and explicit whole-file rewrites. `apply_patch` (the
+legacy unified-diff editor) is retained only through the ADR-0015 migration and removed in
+phase 2; modification anchors on the exact existing text, not a line-numbered diff.
 """
 
 import re
@@ -17,9 +16,11 @@ from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
 from avatar_harness.workspace import (
     AmbiguousMatchError,
+    EmptyAnchorError,
     MatchNotFoundError,
     PatchError,
     PathOutsideWorkspaceError,
+    ReplaceError,
     SensitivePathError,
     _parse_patch_targets,
 )
@@ -181,8 +182,8 @@ def _str_replace_precheck(args: StrReplaceInput) -> str | None:
     Returns:
         A model-correctable rejection message, or `None` when the anchor is well-formed.
     """
-    if not args.old_string:
-        return "old_string must be non-empty: provide the exact existing text to replace"
+    # The empty-anchor contract lives at the `Workspace.replace` chokepoint (so a direct SDK
+    # caller is guarded too); here we only catch the no-op the chokepoint would silently allow.
     if args.old_string == args.new_string:
         return "old_string and new_string are identical — there is no change to make"
     return None
@@ -198,22 +199,29 @@ def _replace_error(args: StrReplaceInput, exc: Exception) -> str:
     Returns:
         The model-correctable error text for the `ToolResult`.
     """
-    if isinstance(exc, PathOutsideWorkspaceError):
-        return f"path outside workspace: {exc}"  # system refusal, not a retry
-    if isinstance(exc, SensitivePathError):
-        return f"sensitive path refused: {exc}"
+    if isinstance(exc, PathOutsideWorkspaceError | SensitivePathError):
+        label = (
+            "path outside workspace"
+            if isinstance(exc, PathOutsideWorkspaceError)
+            else "sensitive path refused"
+        )
+        return f"{label}: {exc}"  # system refusal, not a retry
     if isinstance(exc, FileNotFoundError):
         return f"file does not exist: {args.path} — create it with write_file"
+    if isinstance(exc, EmptyAnchorError):
+        return "old_string must be non-empty: provide the exact existing text to replace"
     if isinstance(exc, AmbiguousMatchError):
         return (
             f"old_string matches {exc.count} locations in {args.path} — extend it with surrounding "
             "lines until it uniquely identifies ONE location (or set replace_all=true to change "
             "every occurrence)"
         )
-    return (  # MatchNotFoundError: the anchor doesn't match current content (staleness signal, §10)
-        f"old_string not found in {args.path} — it must match the current file text exactly, "
-        "whitespace included; re-read the file and copy the exact text"
-    )
+    if isinstance(exc, MatchNotFoundError):
+        return (  # the anchor doesn't match current content (staleness signal, §10)
+            f"old_string not found in {args.path} — it must match the current file text exactly, "
+            "whitespace included; re-read the file and copy the exact text"
+        )
+    return f"could not edit {args.path}: {exc}"  # any other ReplaceError (keeps §10 correctable)
 
 
 def _str_replace(args: StrReplaceInput, deps: RunDeps) -> ToolResult:
@@ -224,7 +232,9 @@ def _str_replace(args: StrReplaceInput, deps: RunDeps) -> ToolResult:
         rel = deps.workspace.replace(
             args.path, args.old_string, args.new_string, replace_all=args.replace_all
         )
-    except (*_REPLACE_INTERNAL, FileNotFoundError, AmbiguousMatchError, MatchNotFoundError) as exc:
+    except (*_REPLACE_INTERNAL, FileNotFoundError, ReplaceError) as exc:
+        # Catch the ReplaceError BASE, not just today's subclasses: a future subclass must not
+        # escape to ToolRuntime's generic handler as a non-correctable system error (§10).
         return ToolResult(tool_name="str_replace", success=False, error=_replace_error(args, exc))
     return ToolResult(
         tool_name="str_replace",
