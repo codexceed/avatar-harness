@@ -32,7 +32,7 @@ class ToolResult(BaseModel):
 ToolHandler = Callable[[Any, RunDeps], ToolResult]
 
 
-# The mutating tier (apply_patch). A tier-1 call is the model's *edit intent*: it
+# The mutating tier (str_replace/write_file). A tier-1 call is the model's *edit intent*: it
 # advances the phase to `editing` and is reachable from `investigating` on edit-shaped
 # tasks (the bootstrap exception that avoids a deadlock on pure-creation, §2.6).
 EDIT_INTENT_TIER = 1
@@ -115,7 +115,7 @@ def phase_admits_tool(phase: str, task_kind: str, tool: ToolDefinition) -> bool:
 
     Returns:
         True if `phase` is in the tool's phases, or `tool` is an edit-intent tool on an
-        edit-shaped task (the bootstrap that surfaces `apply_patch` from `investigating`),
+        edit-shaped task (the bootstrap that surfaces `str_replace` from `investigating`),
         or `tool` is tier-1 on an investigate task (transient instrumentation, ADR-0005).
     """
     return phase in tool.phases or is_edit_intent(task_kind, tool) or admits_transient_edit(task_kind, tool)
@@ -162,7 +162,7 @@ class ToolRegistry:
 
         Like `active_for_phase`, but also includes the edit-intent bootstrap, so the
         model is advertised *exactly* what the runner's gate would let it execute —
-        notably `apply_patch` from `investigating` on an edit task.
+        notably `str_replace` from `investigating` on an edit task.
 
         Args:
             phase: The phase to filter by.

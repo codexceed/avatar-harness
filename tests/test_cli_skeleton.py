@@ -8,9 +8,7 @@ from avatar_harness.events import Emitter
 from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
 from avatar_harness.workspace import DirtyWorkspaceError
 
-_FIX = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
-)
+_FIX = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
 
 
 class _OneShotModel(ModelClient):
@@ -59,7 +57,7 @@ def test_run_agent_edit_task_end_to_end(git_repo):
     config = HarnessConfig(workspace_root=str(git_repo), test_command=test_cmd, lint_command="")
     model = _ScriptedModel(
         [
-            ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+            ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
             ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
         ]
     )
@@ -75,7 +73,7 @@ def test_main_reports_via_artifact(git_repo, capsys):
     test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
     model = _ScriptedModel(
         [
-            ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+            ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
             ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
         ]
     )
@@ -121,7 +119,7 @@ def test_main_dirty_workspace_preserves_existing_latest_pointer(git_repo, tmp_pa
 def _edit_model() -> "_ScriptedModel":
     return _ScriptedModel(
         [
-            ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+            ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
             ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
         ]
     )

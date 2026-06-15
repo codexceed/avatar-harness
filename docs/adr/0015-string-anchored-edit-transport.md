@@ -75,11 +75,12 @@ This is *fewer* competing choices than today (where the model must pick `apply_p
 - The verifier, the diff/baseline pipeline, the permission gate (now keyed on the single `path` arg, not parsed diff targets), and the edit-intent phase bootstrap (`str_replace` is a tier-1 tool, so it advances the phase automatically) all carry over unchanged in shape.
 - **New residual failure mode: whitespace-exact anchor misses.** Strictly more correctable than arithmetic (re-read vs. recompute), and bounded by the deferred option to add tolerance.
 - **Cross-file atomicity is lost** (acceptable; see contracts).
+- **File deletion is lost from the agent's tool set.** `apply_patch` was the only model-facing way to delete a file (a `--- a/x` / `+++ /dev/null` hunk); `str_replace` edits and `write_file` creates/overwrites — neither deletes. Deletion was never a first-class capability (only incidental via `apply_patch`), so the MVP tool set (§21) is unaffected in spirit, but a transient-instrumentation task can no longer *create-then-delete* a scratch file to net to zero (it can still *edit-then-revert* an existing file). A dedicated `delete_file` tool is the clean way back if we want it — deferred, flagged here as the one capability this removal drops.
 
 ## Rollout (phased, like ADR-0003)
 
-1. **This PR** — land `str_replace` + `Workspace.replace()`, fully tested, registered, and advertised as the primary edit tool; steer `write_file`'s "modify with…" hint to it. `apply_patch` stays registered during migration so nothing breaks.
-2. **Follow-up** — migrate the dogfood/eval suite and the ~7 `apply_patch`-based test files to `str_replace`; flip the `ContextBuilder` to stop advertising `apply_patch`; then **remove `apply_patch`** and its dialect/hunk guards. At that point the tool set is the two-row table above.
+1. **Phase 1 (PR #57)** — land `str_replace` + `Workspace.replace()`, fully tested, registered, and advertised as the primary edit tool; steer `write_file`'s "modify with…" hint to it. `apply_patch` stays registered during migration so nothing breaks.
+2. **Phase 2 (this PR)** — migrate the test suite (the ~13 `apply_patch`-using files) to `str_replace`; remove the model-facing `apply_patch` tool from `default_registry` (so the `ContextBuilder` no longer advertises it) along with its dialect/hunk guards and `ApplyPatchInput`. The `Workspace.apply_patch` *method* is retained as internal/SDK plumbing (used by the diff-construction tests and available to library callers for multi-file/creation/deletion diffs `str_replace` does not cover). The model-facing tool set is now the two-row table above.
 
 ## Implementation notes (non-binding)
 

@@ -270,6 +270,10 @@ class Workspace:
     def apply_patch(self, diff: str) -> list[str]:
         """Apply a (possibly multi-file) unified diff atomically; return changed paths.
 
+        An internal/SDK primitive — no longer a model-facing tool (the agent edits via
+        `replace`/`str_replace`, ADR-0015), but retained for programmatic callers and for
+        multi-file/creation diffs `replace` does not cover.
+
         Confinement first: every target path must resolve inside the root, else
         `PathOutsideWorkspaceError` (nothing written). Then a `git apply --check`
         dry run gates the real apply, so a stale diff raises `PatchError` and the

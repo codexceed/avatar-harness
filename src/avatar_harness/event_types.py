@@ -148,7 +148,7 @@ class DecisionError(EventBase):
     """A malformed model reply — either recovered by an in-client retry or a lost turn (§6).
 
     Closes the observability gap where a failed decision attempt (e.g. a truncated
-    `apply_patch` emission) left no trace: every malformed attempt is journaled with
+    `str_replace` emission) left no trace: every malformed attempt is journaled with
     its error and a capped excerpt of the raw reply, so a struggling run is legible
     live and debuggable after the fact (invariant #5).
     """

@@ -18,19 +18,13 @@ from avatar_harness.tools.base import (
 )
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import (
-    ApplyPatchInput,
     StrReplaceInput,
-    apply_patch,
     str_replace,
     write_file,
 )
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
-
-_FIX = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
-)
 
 
 def _registry() -> ToolRegistry:
@@ -51,26 +45,6 @@ def test_search_repo_finds_matches(tmp_path):
     assert result.success
     assert "a.py" in result.content
     assert "login" in result.content
-
-
-def test_apply_patch_teaches_on_bare_hunk_header(git_repo):
-    # A diff that names targets but emits a bare '@@' (no ranges) is the dogfood death spiral:
-    # git answers "No valid patches in input" and the model re-sends the same broken hunk. The
-    # tool now returns teaching guidance deterministically instead (no blind git invocation).
-    deps = RunDeps(workspace=Workspace(git_repo), config=HarnessConfig(), cancellation=CancellationToken())
-    bad = "--- a/calc.py\n+++ b/calc.py\n@@\n-    return a - b\n+    return a + b\n"
-    result = apply_patch.handler(ApplyPatchInput(diff=bad), deps)
-    assert result.success is False
-    error = result.error or ""
-    assert "hunk header" in error and "@@ -" in error  # teaches the correct form
-
-
-def test_apply_patch_well_formed_diff_still_applies(git_repo):
-    # The pre-check must not reject a valid diff (proper '@@ -1,2 +1,2 @@' header).
-    deps = RunDeps(workspace=Workspace(git_repo), config=HarnessConfig(), cancellation=CancellationToken())
-    result = apply_patch.handler(ApplyPatchInput(diff=_FIX), deps)
-    assert result.success is True
-    assert "calc.py" in result.files_changed
 
 
 def test_search_excludes_harness_journal(tmp_path):
@@ -218,7 +192,7 @@ def test_registry_exposes_only_phase_tools():
     reg = _registry()
     reg.register(
         ToolDefinition(
-            name="apply_patch",
+            name="str_replace",
             description="edit-only",
             input_model=read_file.input_model,
             handler=read_file.handler,
@@ -227,7 +201,7 @@ def test_registry_exposes_only_phase_tools():
     )
     investigating = {t.name for t in reg.active_for_phase("investigating")}
     assert {"read_file", "search_repo", "list_files"} <= investigating
-    assert "apply_patch" not in investigating
+    assert "str_replace" not in investigating
 
 
 def test_unknown_tool_name_rejected(tmp_path):
@@ -247,56 +221,36 @@ def test_invalid_tool_input_fed_back(tmp_path):
 
 def _edit_runtime(root, **config_kw) -> ToolRuntime:
     reg = ToolRegistry()
-    for tool in (read_file, apply_patch, write_file, run_tests, run_linter):
+    for tool in (read_file, str_replace, write_file, run_tests, run_linter):
         reg.register(tool)
     config = HarnessConfig(**config_kw)
     deps = RunDeps(workspace=Workspace(root), config=config, cancellation=CancellationToken())
     return ToolRuntime(reg, deps)
 
 
-def test_apply_patch_tool_reports_changed_files(git_repo):
-    result = _edit_runtime(git_repo).execute("apply_patch", {"diff": _FIX})
+def test_str_replace_tool_reports_changed_files(git_repo):
+    result = _edit_runtime(git_repo).execute(
+        "str_replace", {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
+    )
     assert result.success
     assert result.files_changed == ["calc.py"]
 
 
-def test_apply_patch_tool_stale_context_is_model_correctable(git_repo):
-    stale = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-return a * b\n+return a + b\n"
-    result = _edit_runtime(git_repo).execute("apply_patch", {"diff": stale})
+def test_str_replace_tool_stale_context_is_model_correctable(git_repo):
+    result = _edit_runtime(git_repo).execute(
+        "str_replace", {"path": "calc.py", "old_string": "return a * b", "new_string": "return a + b"}
+    )
     assert result.success is False  # returned, never raised into the loop
     assert result.error
     assert "a + b" not in (Workspace(git_repo).read("calc.py"))  # nothing written
-
-
-def test_apply_patch_begin_patch_dialect_gets_format_guidance(git_repo):
-    # OpenAI-family models keep emitting their in-house '*** Begin Patch' dialect (two
-    # dogfood runs in a row); the generic "no file targets found" error corrected nothing
-    # and one run burned its whole budget retrying it. A recognized dialect must come back
-    # as a model-correctable error that TEACHES the expected unified-diff format.
-    dialect = (
-        "*** Begin Patch\n*** Update File: calc.py\n@@\n def add(a, b):\n"
-        "-    return a - b\n+    return a + b\n*** End Patch\n"
-    )
-    result = _edit_runtime(git_repo).execute("apply_patch", {"diff": dialect})
-    assert result.success is False
-    assert "Begin Patch" in (result.error or "")  # names what it saw
-    assert "--- a/" in (result.error or "") and "unified" in (result.error or "")  # teaches the fix
-    assert "return a - b" in Workspace(git_repo).read("calc.py")  # nothing written
-
-
-def test_apply_patch_description_teaches_the_format():
-    # The description IS the function-schema text the provider shows the model (native
-    # tool-calling) — it must spell out the expected markers, not just say "a diff".
-    assert "--- a/" in apply_patch.description
-    assert "git diff" in apply_patch.description
 
 
 # --- write_file (ADR-0003 B): first-class file creation -----------------------------------
 #
 # New-file creation gets a plain-content transport — no diff costume (a new-file hunk has
 # no anchor content, so the unified-diff format is pure fragility there, per the dogfood
-# incident). Modification stays diff-anchored: without overwrite=true an existing target
-# is refused toward apply_patch, preserving the clean-apply staleness invariant.
+# incident). Modification stays string-anchored: without overwrite=true an existing target
+# is refused toward str_replace, preserving the exact-match staleness invariant.
 
 
 def test_write_file_creates_and_stages_new_file(git_repo):
@@ -366,7 +320,7 @@ def test_run_linter_runs_configured_command(git_repo):
 def _plan_runtime(root, plan, **config_kw) -> ToolRuntime:
     """An edit runtime whose RunDeps carry a frozen verification plan (ADR-0007)."""
     reg = ToolRegistry()
-    for tool in (read_file, apply_patch, write_file, run_tests, run_linter):
+    for tool in (read_file, str_replace, write_file, run_tests, run_linter):
         reg.register(tool)
     config_kw.setdefault("test_command", "")
     config_kw.setdefault("lint_command", "")
@@ -499,27 +453,27 @@ def test_phase_admits_tier1_in_investigate_kind():
     # ADR-0005: tier-1 mutation is legal in an investigate task — admitted from
     # `investigating` via the explicit transient-edit rule (the verifier's net-zero-diff
     # contract is the enforcement point, not the gate).
-    assert phase_admits_tool("investigating", "investigate", apply_patch) is True
+    assert phase_admits_tool("investigating", "investigate", str_replace) is True
     assert phase_admits_tool("investigating", "investigate", write_file) is True
 
 
 def test_transient_edit_rule_is_not_edit_intent():
-    # The edit-intent phase bootstrap stays edit-kinds-only: an investigate apply_patch
+    # The edit-intent phase bootstrap stays edit-kinds-only: an investigate str_replace
     # is NOT an edit intent (no `investigating -> editing` advance rides on it), and the
     # transient rule covers only tier 1 — command tools do not leak into investigating.
-    assert is_edit_intent("investigate", apply_patch) is False
+    assert is_edit_intent("investigate", str_replace) is False
     assert phase_admits_tool("investigating", "investigate", run_tests) is False
 
 
 def test_registry_admits_tier1_for_investigate():
     # The registry mirror of the predicate: what `admitted_for` returns is exactly what
-    # the ContextBuilder advertises, so the model is told about apply_patch/write_file
+    # the ContextBuilder advertises, so the model is told about str_replace/write_file
     # in an investigate task — and only the tier-1 tools, not the command tools.
     reg = _registry()
-    for tool in (apply_patch, write_file, run_tests):
+    for tool in (str_replace, write_file, run_tests):
         reg.register(tool)
     admitted = {t.name for t in reg.admitted_for("investigating", "investigate")}
-    assert {"apply_patch", "write_file"} <= admitted
+    assert {"str_replace", "write_file"} <= admitted
     assert "run_tests" not in admitted
 
 
@@ -585,7 +539,7 @@ def test_str_replace_registered_and_editing_phase_tier1():
     reg = default_registry()
     admitted = {t.name for t in reg.admitted_for("editing", "edit")}
     assert "str_replace" in admitted  # advertised in the editing phase
-    # tier-1 → it is an edit-intent tool, so it advances the phase like apply_patch/write_file
+    # tier-1 → it is an edit-intent tool, so it advances the phase like write_file
     assert (
         next(t for t in reg.admitted_for("editing", "edit") if t.name == "str_replace").permission_tier == 1
     )

@@ -20,21 +20,19 @@ from avatar_harness.harness import Harness
 from avatar_harness.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import PlanDecision, ReplSession, default_mode
 from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.edit import apply_patch
+from avatar_harness.tools.edit import str_replace
 from avatar_harness.tools.filesystem import read_file
 
-# A valid unified diff against the `git_repo` fixture's calc.py (fixes the `-` bug).
-_FIX = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
-)
+# An exact-text edit against the `git_repo` fixture's calc.py (fixes the `-` bug).
+_FIX = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
 
 
 def _repl(root, decisions=None, *, edit=False, model=None, **cfg) -> ReplSession:
-    """A ReplSession whose registry holds the read tools (+ apply_patch when `edit`)."""
+    """A ReplSession whose registry holds the read tools (+ str_replace when `edit`)."""
     reg = ToolRegistry()
     reg.register(read_file)
     if edit:
-        reg.register(apply_patch)
+        reg.register(str_replace)
     config = HarnessConfig(workspace_root=str(root), **cfg)
     client = model if model is not None else ScriptedModel(decisions or [])
     return ReplSession(Harness(config=config, model=client, tools=reg))
@@ -92,7 +90,7 @@ async def test_plan_flow_runs_plan_then_build(git_repo):
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
         ModelDecision(action=FinalAnswer(answer=the_plan)),  # plan task proposes the plan
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed add()")),  # build task
     ]
     repl = _repl(git_repo, decisions, edit=True, test_command="true", lint_command="true")
@@ -114,7 +112,7 @@ async def test_revise_reruns_plan_before_build(git_repo):
         ModelDecision(action=FinalAnswer(answer=the_plan)),  # first plan attempt
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
         ModelDecision(action=FinalAnswer(answer=the_plan)),  # re-plan after revise
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed add()")),  # build task
     ]
     repl = _repl(git_repo, decisions, edit=True, test_command="true", lint_command="true")

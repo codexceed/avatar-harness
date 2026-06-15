@@ -15,7 +15,7 @@ from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.permission import PermissionPolicy
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolRegistry, ToolRuntime
-from avatar_harness.tools.edit import ApplyPatchInput, apply_patch, write_file
+from avatar_harness.tools.edit import StrReplaceInput, str_replace, write_file
 from avatar_harness.tools.filesystem import ListFilesInput, ReadFileInput, list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import SensitivePathError, Workspace
@@ -51,10 +51,10 @@ def test_non_sensitive_path_still_allowed(git_repo):
     assert perm.blocked is False
 
 
-def test_apply_patch_denied_when_target_is_sensitive(git_repo):
-    # The denylist spans every declared path, not just reads — a patch writing `.env` is blocked.
-    diff = "--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+LEAK=1\n"
-    perm = PermissionPolicy().check(apply_patch, {"diff": diff}, _state(), Workspace(git_repo))
+def test_str_replace_denied_when_target_is_sensitive(git_repo):
+    # The denylist spans every declared path, not just reads — an edit writing `.env` is blocked.
+    raw = {"path": ".env", "old_string": "OLD=0", "new_string": "LEAK=1"}
+    perm = PermissionPolicy().check(str_replace, raw, _state(), Workspace(git_repo))
     assert perm.blocked is True
 
 
@@ -74,9 +74,9 @@ def test_sensitive_writes_still_denied_in_investigate(git_repo):
     ws = Workspace(git_repo)
     write = PermissionPolicy().check(write_file, {"path": ".env", "content": "LEAK=1"}, state, ws)
     assert write.blocked is True
-    diff = "--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+LEAK=1\n"
-    patch = PermissionPolicy().check(apply_patch, {"diff": diff}, state, ws)
-    assert patch.blocked is True
+    raw = {"path": ".env", "old_string": "OLD=0", "new_string": "LEAK=1"}
+    replace = PermissionPolicy().check(str_replace, raw, state, ws)
+    assert replace.blocked is True
 
 
 # --- configurable via HarnessConfig -------------------------------------------
@@ -100,9 +100,8 @@ def test_read_file_declares_its_path():
     assert list(read_file.paths(ReadFileInput(path="a/b.py"))) == ["a/b.py"]
 
 
-def test_apply_patch_declares_its_targets():
-    diff = "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n"
-    assert "x.py" in list(apply_patch.paths(ApplyPatchInput(diff=diff)))
+def test_str_replace_declares_its_targets():
+    assert "x.py" in list(str_replace.paths(StrReplaceInput(path="x.py", old_string="a", new_string="b")))
 
 
 def test_pathless_tool_declares_no_paths():

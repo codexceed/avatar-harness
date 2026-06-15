@@ -75,13 +75,13 @@ class ModelDecision(BaseModel):
 
 
 # Cap on the raw-reply excerpt kept per malformed attempt (journal/evidence detail).
-# A patch-bearing attempt gets a higher cap: a failed `apply_patch`/`write_file` is only
-# useful to retry WITH its diff, and the flat cap cut real patches mid-hunk, so the model
+# An edit-bearing attempt gets a higher cap: a failed `str_replace`/`write_file` is only
+# useful to retry WITH its payload, and the flat cap cut real edits mid-body, so the model
 # retried blind and re-emitted the same error (loop-determinism hardening).
 _RAW_EXCERPT_CAP = 2000
 _PATCH_EXCERPT_CAP = 12000
-# Markers that say a raw reply is carrying a patch (so a content-mode excerpt keeps it whole).
-_PATCH_MARKERS = ('"diff"', "*** Begin Patch", "apply_patch", "write_file")
+# Markers that say a raw reply is carrying a large edit payload (kept whole in the excerpt).
+_PATCH_MARKERS = ('"old_string"', '"new_string"', '"content"', "str_replace", "write_file")
 
 
 def _excerpt(raw: str, *, patch: bool = False) -> str:
@@ -180,7 +180,7 @@ class ModelClient(ABC):
 # Kind-AWARE framing: one mission line per `task_kind`, injected into the template.
 # Capability is still gated by tool *exposure* per phase (§10/§21) — the mission only
 # orients the model. An edit task is never framed READ-ONLY (that would forbid the very
-# `apply_patch` it must call); an investigate task may instrument transiently (ADR-0005)
+# `str_replace` it must call); an investigate task may instrument transiently (ADR-0005)
 # but is told the tree must net to zero diff when it answers.
 _KIND_FRAMING = {
     "investigate": (
@@ -539,7 +539,7 @@ class OpenAIModelClient(ModelClient):
                 except DecisionParseError as exc:
                     last_error = exc
                     raw = f"{call.function.name}({call.function.arguments or ''})"
-                    is_patch = call.function.name in ("apply_patch", "write_file")
+                    is_patch = call.function.name in ("str_replace", "write_file")
                     trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=is_patch)))
                     messages = [
                         *messages,

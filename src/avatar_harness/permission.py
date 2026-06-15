@@ -5,8 +5,8 @@ before every execution and acts on the `ToolPermission` it returns (allow /
 block / ask). It can block and redirect control flow; the event emitter cannot.
 Keeping it a direct call — never an emitter subscriber — is the whole point.
 
-Tiers (§11): 0 reads (allow) · 1 apply_patch (allow iff every target path
-resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
+Tiers (§11): 0 reads (allow) · 1 edits — str_replace/write_file (allow iff every
+target path resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
 (blocked by default in the non-interactive MVP; `ask` lands with the Phase 3 REPL).
 
 Tier 1 is allowed for every task kind, including `investigate` (ADR-0005): transient
@@ -81,8 +81,8 @@ class PermissionPolicy:
                 reason=f"{tool.name!r} is tier {tier} (destructive/external) — blocked pending approval",
             )
         # Path policy over the tool's *declared* paths — one place for confinement AND the
-        # sensitive-path denylist, so neither can drift per tool (subsumes apply_patch's
-        # old special-case: its targets are now just declared paths).
+        # sensitive-path denylist, so neither can drift per tool (an edit tool's targets
+        # are just its declared paths).
         return self._check_paths(self._declared_paths(tool, raw_input), ws)
 
     def _declared_paths(self, tool: ToolDefinition, raw_input: dict) -> list[str]:
