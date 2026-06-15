@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/codexceed/avatar-harness/compare/v1.0.1...v1.1.0) (2026-06-15)
+
+
+### Features
+
+* **evals:** persist aggregate metrics as &lt;stamp&gt;.summary.json sidecar ([#62](https://github.com/codexceed/avatar-harness/issues/62)) ([eeaee58](https://github.com/codexceed/avatar-harness/commit/eeaee58be5bb714e0f6f4ed6e1f9cd95b794be23))
+
+
+### Documentation
+
+* **research:** add research/ findings home — failure-mode catalog + Eval-0 baseline ([#64](https://github.com/codexceed/avatar-harness/issues/64)) ([f3ddb12](https://github.com/codexceed/avatar-harness/commit/f3ddb12fc63ef7f3593335b9e1767cfb2a18decc))
+
 ## [1.0.1](https://github.com/codexceed/avatar-harness/compare/v1.0.0...v1.0.1) (2026-06-15)
 
 
