@@ -68,7 +68,7 @@ from avatar_harness.state import PlannedCheck, TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.workspace import Workspace
 
-__version__ = "1.0.0"  # x-release-please-version
+__version__ = "1.0.1"  # x-release-please-version
 
 __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping is the SDK map
     # --- core entry points & state ---

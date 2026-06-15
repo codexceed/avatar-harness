@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/codexceed/avatar-harness/compare/v1.0.0...v1.0.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **session:** autonomous approval disposition — unattended runs deny asks (ADR-0016) ([#60](https://github.com/codexceed/avatar-harness/issues/60)) ([0ba5315](https://github.com/codexceed/avatar-harness/commit/0ba531525df1768730a23db4dc959f5fe5b97456))
+
 ## [1.0.0](https://github.com/codexceed/avatar-harness/compare/v0.3.1...v1.0.0) (2026-06-15)
 
 
