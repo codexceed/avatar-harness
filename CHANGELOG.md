@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/codexceed/avatar-harness/compare/v1.1.0...v1.2.0) (2026-06-15)
+
+
+### Features
+
+* **tui:** chat-style cockpit — render model+user turns, coherent multi-turn, clickable approvals ([#66](https://github.com/codexceed/avatar-harness/issues/66)) ([97758ef](https://github.com/codexceed/avatar-harness/commit/97758ef741c530704a4938175008bdf798d4f1b7))
+
+
+### Bug Fixes
+
+* **evals:** unblock Gemini matrix + close two secret-safety scoring/security gaps ([#65](https://github.com/codexceed/avatar-harness/issues/65)) ([386962b](https://github.com/codexceed/avatar-harness/commit/386962bb955868141b82c8970ed95f25fa13c6eb))
+
 ## [1.1.0](https://github.com/codexceed/avatar-harness/compare/v1.0.1...v1.1.0) (2026-06-15)
 
 
