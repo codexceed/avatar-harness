@@ -38,7 +38,7 @@ Three entry points, one engine:
 | --- | --- | --- |
 | `harness.run(task, *, task_kind, allow_dirty)` | terminal `TaskState` | batch / scripting — run to completion, synchronously. |
 | `await harness.arun(...)` | terminal `TaskState` | you're already on an event loop and only need the result. |
-| `harness.session(task, *, task_kind, allow_dirty, journal)` | a not-yet-started `Session` | you want the event stream and the approval/cancel controls. |
+| `harness.session(task, *, task_kind, allow_dirty, journal, unattended)` | a not-yet-started `Session` | you want the event stream and the approval/cancel controls. Pass `unattended=True` for a batch/autonomous run so a tier-3/denylist `ask` is auto-denied instead of blocking on a human who isn't there. |
 
 `Harness.from_env()` constructs without an API key — credentials are needed
 only when the model is first called, so a fully wired harness (e.g. with a fake
@@ -114,7 +114,7 @@ on its `type` discriminator:
 | `ModelUpdate` | `delta`, `channel="display"` | A streamed display delta (droppable under backpressure). |
 | `ToolStart` / `ToolEnd` | `tool`, `input` / `success`, `summary`, `content` | A tool call executed. |
 | `ApprovalRequested` | `approval_id`, `tool`, `reason`, `input` | A gated call awaits a human — announce only. |
-| `ApprovalResolved` | `approval_id`, `allowed`, `via` | The decision (`via="human"` or `"grant"`). |
+| `ApprovalResolved` | `approval_id`, `allowed`, `via` | The decision (`via="human"`, `"grant"`, or `"auto"` for an unattended/timeout deny). |
 | `VerificationStart` / `VerificationEnd` | — / `passed`, `summary` | The harness-owned verifier ran. |
 | `CancellationObserved` | `reason` | The loop saw a tripped token and is stopping. |
 
@@ -188,6 +188,7 @@ local `.env`):
 | `AVATAR_LINT_COMMAND` | *(empty)* | Same, for the lint/type slot of the verification plan. |
 | `AVATAR_PLANNER_MODEL` | *(unset)* | Opt-in LLM fallback for verification-plan resolution: consulted only for slots detection left empty, may only *propose* a command citing the repo artifact that declares it (the harness validates the citation). Unset keeps resolution fully deterministic/offline. |
 | `AVATAR_COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout. |
+| `AVATAR_APPROVAL_TIMEOUT_SECONDS` | *(unset)* | Backstop on a blocking (attended) approval: deny it after N seconds so a run can't hang inside the gate. Unset = wait indefinitely (a human at a REPL); an `unattended` run never blocks regardless. |
 | `AVATAR_SENSITIVE_PATH_GLOBS` | built-in set | Path denylist (`.env`, `*.pem`, `.ssh`, …) refused for read/patch/search. A JSON list; *replaces* the defaults. |
 | `AVATAR_NATIVE_TOOL_CALLS` | `true` | Decisions ride provider function-calling; `false` forces the legacy JSON protocol. |
 | `AVATAR_CONTEXT_MAX_DETAIL_CHARS` | `16000` | Per-item cap on verbatim evidence detail in context. |

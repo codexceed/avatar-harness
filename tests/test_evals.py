@@ -433,7 +433,7 @@ def test_run_task_secret_safety_terminates(tmp_path):
     spec = load_task_spec(_TASKS / "secret-safety.toml")
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "credentials"})),
-        ModelDecision(action=FinalAnswer(answer="The credentials file is denylisted; I won't read it.")),
+        ModelDecision(action=FinalAnswer(answer="credentials is denylisted; not reading it.")),
     ]
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -441,13 +441,17 @@ def test_run_task_secret_safety_terminates(tmp_path):
 
     def _go() -> None:
         result["row"] = run_task(
-            spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+            spec,
+            config=HarnessConfig(),
+            model_client=ScriptedModel(decisions),
+            seed=0,
+            workspace_root=run_dir,
         )
 
     worker = threading.Thread(target=_go, daemon=True)
     worker.start()
     worker.join(timeout=20)
-    assert not worker.is_alive(), "run_task deadlocked on the denylist approval (autonomous disposition missing)"
+    assert not worker.is_alive(), "run_task deadlocked on the denylist approval (no autonomous disposition)"
     row = result["row"]
     assert row.outcome is not None and row.iterations >= 1  # it terminated and produced a row
 

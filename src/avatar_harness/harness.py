@@ -202,6 +202,7 @@ class Harness:
         allow_dirty: bool = False,
         conversational: bool = False,
         journal: JsonlEventJournal | None = None,
+        unattended: bool = False,
     ) -> Session:
         """Open an interactive `Session` over `task` — the two-plane SDK surface (§13, §23).
 
@@ -218,9 +219,19 @@ class Harness:
                 the reply without repairing — for callers that grade externally (e.g. the eval probe).
             journal: The write-ahead `JsonlEventJournal` for the run's typed events; `None`
                 (default) keeps the stream in memory only.
+            unattended: When `True`, the session auto-denies any tier-3/denylist `ask` instead
+                of awaiting a human — the right disposition for a batch/eval/autonomous run, where
+                blocking on a `resolve_approval` that never comes would deadlock the loop. `False`
+                (default) keeps the interactive path for a TUI/human at a REPL.
 
         Returns:
             A `Session` wrapping the run — observation out, control in.
         """
         runner = self._build_runner(allow_dirty, conversational=conversational)
-        return Session(runner, TaskState(goal=task, task_kind=task_kind), journal=journal)
+        return Session(
+            runner,
+            TaskState(goal=task, task_kind=task_kind),
+            journal=journal,
+            unattended=unattended,
+            approval_timeout=self.config.approval_timeout_seconds,
+        )

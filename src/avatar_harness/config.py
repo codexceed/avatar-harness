@@ -53,6 +53,10 @@ class HarnessConfig(BaseSettings):
     max_consecutive_failures: int = 5
     max_repair_attempts: int = 3
     max_context_tokens: int = 100_000
+    # Backstop on a blocking (attended) approval: deny it after this many seconds so a run can't
+    # hang inside the gate (the wall-clock budget can't preempt an awaited approval). `None` (the
+    # default) waits indefinitely — correct for a human at a REPL; an unattended run never blocks.
+    approval_timeout_seconds: float | None = None
 
     # Verification commands — the OVERRIDE tier of plan resolution (§12, ADR-0007).
     # A non-empty value always wins: the user's stated contract is never overridden.
