@@ -3,11 +3,15 @@ import subprocess
 import pytest
 
 from avatar_harness.workspace import (
+    AmbiguousMatchError,
     DirtyWorkspaceError,
+    MatchNotFoundError,
     PatchError,
     PathOutsideWorkspaceError,
     Workspace,
 )
+
+_CALC = "def add(a, b):\n    return a - b\n"  # the file the git_repo fixture commits
 
 
 def _diff(path: str, old: str, new: str) -> str:
@@ -228,3 +232,47 @@ def test_workspace_open_ignores_untracked_files(git_repo):
     (git_repo / "scratch.txt").write_text("not tracked\n", encoding="utf-8")
     ws = Workspace(git_repo)  # must not raise
     assert ws.diff() == ""
+
+
+# --- string-anchored replace (ADR-0015) ------------------------------------
+
+
+def test_workspace_replace_unique_match(git_repo):
+    ws = Workspace(git_repo)
+    rel = ws.replace("calc.py", "return a - b", "return a + b")
+    assert rel == "calc.py"
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+    assert "+    return a + b" in ws.diff()  # the edit is a DERIVED diff vs the pinned baseline
+
+
+def test_workspace_replace_missing_anchor_raises_and_leaves_file_unchanged(git_repo):
+    ws = Workspace(git_repo)
+    with pytest.raises(MatchNotFoundError):
+        ws.replace("calc.py", "return a * b", "return a + b")  # not in the file
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == _CALC  # byte-for-byte unchanged
+
+
+def test_workspace_replace_ambiguous_anchor_raises_with_count(git_repo):
+    ws = Workspace(git_repo)
+    with pytest.raises(AmbiguousMatchError) as excinfo:
+        ws.replace("calc.py", "a", "Z")  # 'a' occurs several times
+    assert excinfo.value.count >= 2
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == _CALC  # unchanged
+
+
+def test_workspace_replace_all_changes_every_occurrence(git_repo):
+    ws = Workspace(git_repo)
+    ws.replace("calc.py", "a", "Z", replace_all=True)
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def Zdd(Z, b):\n    return Z - b\n"
+
+
+def test_workspace_replace_missing_file_raises(git_repo):
+    ws = Workspace(git_repo)
+    with pytest.raises(FileNotFoundError):
+        ws.replace("nope.py", "x", "y")
+
+
+def test_workspace_replace_confined_to_root(git_repo):
+    ws = Workspace(git_repo)
+    with pytest.raises(PathOutsideWorkspaceError):
+        ws.replace("../escape.py", "x", "y")
