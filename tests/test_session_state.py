@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from avatar_harness.config import HarnessConfig
 from avatar_harness.harness import Harness
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar_harness.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import ReplSession, default_mode
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.tools.edit import write_file
@@ -121,6 +121,24 @@ async def test_history_seeds_next_task_context(tmp_path):
     assert any("explain the widget" in e.summary for e in history_ev)
     st = await session2.run()  # finish it so the session closes cleanly
     repl.record(st)
+
+
+async def test_blocked_question_recorded_as_agent_turn_seeds_next_goal(tmp_path):
+    # A goal that ends by asking the user must record the QUESTION as its agent turn, so
+    # the next goal (the user's answer) carries the question in history — not "blocked".
+    # Regression: events/f0957ed4… re-asked the same question every turn because the
+    # model only ever saw `agent: blocked`, never its own question.
+    question = "What features should the chatbot include?"
+    repl = _repl(tmp_path, [ModelDecision(action=AskUser(question=question))])
+    state = await repl.submit("write a chatbot")
+    assert state.outcome == "blocked"
+    assert repl.state.history[-1].role == "agent"
+    assert repl.state.history[-1].text == question  # the question, not "blocked"
+    # the next goal (the answer) seeds the question as history evidence, not the outcome
+    session2 = repl.start("basic streaming, minimal")
+    history_ev = [e for e in session2.state.evidence if e.kind == "history"]
+    assert any(question in e.summary for e in history_ev)
+    assert not any(e.summary.strip() == "agent: blocked" for e in history_ev)
 
 
 # --- visible-mode routing ----------------------------------------------------------------

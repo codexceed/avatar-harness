@@ -391,11 +391,23 @@ class ReplSession:
     def record(self, state: TaskState) -> None:
         """Record a finished goal: append the terminal task and the agent's reply turn.
 
+        A goal that ended by asking the user records the **question** as its agent turn,
+        not the bare outcome. Otherwise the next user message — which is the *answer* —
+        seeds history as `agent: blocked` and reads to the model as a fresh, contextless
+        goal, so it re-asks and the conversation goes in circles (dogfood
+        `events/f0957ed4…jsonl`). Preference: the final answer, then the open question,
+        then the outcome.
+
         Args:
             state: The terminal `TaskState` returned by `session.run()`.
         """
         self.state.tasks.append(state)
-        reply = state.final_answer or (state.outcome or "done")
+        reply = (
+            state.final_answer
+            or (state.open_questions[-1] if state.open_questions else None)
+            or state.outcome
+            or "done"
+        )
         self.state.history.append(Turn(role="agent", text=reply, task_id=state.task_id))
         # The routing memo is intra-goal only (start() re-resolves the same prompt):
         # a finished goal changes the conversation, so the same text next turn must
