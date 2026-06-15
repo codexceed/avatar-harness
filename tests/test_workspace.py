@@ -295,3 +295,35 @@ def test_workspace_replace_empty_new_deletes_the_span(git_repo):
     ws = Workspace(git_repo)
     ws.replace("calc.py", "    return a - b\n", "")
     assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n"
+
+
+# --- file deletion (ADR-0015) ----------------------------------------------
+
+
+def test_workspace_remove_tracked_file_shows_in_diff(git_repo):
+    ws = Workspace(git_repo)
+    rel = ws.remove("calc.py")
+    assert rel == "calc.py"
+    assert not (git_repo / "calc.py").exists()
+    assert "calc.py" in ws.diff() and "-def add(a, b):" in ws.diff()  # deletion is in the diff
+
+
+def test_workspace_remove_transient_file_nets_to_zero(git_repo):
+    ws = Workspace(git_repo)
+    ws.write_file("scratch.py", "probe = 1\n")  # created + staged
+    assert "scratch.py" in ws.diff()
+    ws.remove("scratch.py")
+    assert not (git_repo / "scratch.py").exists()
+    assert ws.diff() == ""  # create-then-delete nets back to the pinned baseline
+
+
+def test_workspace_remove_missing_file_raises(git_repo):
+    ws = Workspace(git_repo)
+    with pytest.raises(FileNotFoundError):
+        ws.remove("nope.py")
+
+
+def test_workspace_remove_confined_to_root(git_repo):
+    ws = Workspace(git_repo)
+    with pytest.raises(PathOutsideWorkspaceError):
+        ws.remove("../escape.py")

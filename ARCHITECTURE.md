@@ -119,7 +119,7 @@ Control hooks are **awaited function calls with return values the runner acts on
 
 A **task** = one goal handed to the runner, pursued over many turns until it reaches exactly one terminal **outcome**, producing one **Artifact**. One task ↔ one `TaskState`. It is the atomic *unit of the runner's contract*, but internally composite (many turns) and **not** transactional — a non-`success` task can leave partial edits in the workspace (auto-rollback is deferred, `§21`).
 
-Nesting: `Session ⊃ Task ⊃ Turn ⊃ Tool action` (the tool action is the atomic step; `apply_patch` is all-or-nothing).
+Nesting: `Session ⊃ Task ⊃ Turn ⊃ Tool action` (the tool action is the atomic step; an edit — `str_replace`/`write_file` — is all-or-nothing).
 
 ### 3.1 Two independent axes: `phase` and `outcome`
 
@@ -309,7 +309,7 @@ sequenceDiagram
     M->>R: tool_call read_file(auth/session.py, 1-60)
     R->>T: returns "expiry hardcoded to 30 seconds (the bug)"
     Note over R: phase = editing
-    M->>R: tool_call apply_patch(diff on auth/session.py)
+    M->>R: tool_call str_replace(on auth/session.py)
     R->>T: tier 1, paths inside ws, allow — applied atomically
     Note over R: files_modified += auth/session.py
     M->>R: final_answer "fixed expiry units"
@@ -359,7 +359,7 @@ What exists in `src/avatar_harness/` today (through Phase 3.2 — the MVP cockpi
 | `session.py` | `Session` (two-plane: `events()` out · `resolve_approval(remember=)`/`cancel()` in, optional `journal=`) + `ApprovalGrant` (session-scoped `[a] always`; the gate stays harness-owned, the Session answers from a remembered grant) | `§13`, `§23` |
 | `bus.py` | `EventBus` — bounded per-subscriber fan-out (soft cap sheds only `*_update`; lifecycle/control never dropped) + the privileged journal hook; non-blocking, slow/broken subscriber never stalls the loop | `§13`, ADR-0001 |
 | `journal.py` | `JsonlEventJournal` — privileged lossless write-ahead sink; one JSON line per event, flushed per event, round-trips via `load_events` | ADR-0001 |
-| `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime` — handler exceptions isolated as failed results), `filesystem`, `search`, `edit` (`apply_patch`), `commands` (`run_tests`/`run_linter`/`run_command` — `run_command` is tier-3, approval-gated, editing/verifying, and captures its file mutations into the diff) | `§10` |
+| `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime` — handler exceptions isolated as failed results), `filesystem`, `search`, `edit` (`str_replace`/`write_file`/`delete_file`, ADR-0015), `commands` (`run_tests`/`run_linter`/`run_command` — `run_command` is tier-3, approval-gated, editing/verifying, and captures its file mutations into the diff) | `§10` |
 | `permission.py` | `PermissionPolicy` + `ToolPermission` — the synchronous `before_tool_call` gate | `§11` |
 | `model_client.py` | Constrained decision union + `OpenAIModelClient` (lazy client — no key to construct); kind-aware prompt via `_KIND_FRAMING` | `§6` |
 | `context.py` | `ContextBuilder` + `ContextPacket` (carries `task_kind`) — compact, phase-gated per-turn packet | `§9` |

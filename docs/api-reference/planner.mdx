@@ -42,6 +42,25 @@ Args:
 VerificationPlanner(config: HarnessConfig | None = None, client: Any = None) -> None
 ```
 
+#### `VerificationPlanner.propose_smoke_check(self, ws: Workspace, files_modified: list[str]) -> PlannedCheck | None`
+
+Have the model author ONE executable smoke check for freshly-written code.
+
+The greenfield floor: used only when tiers 1-3 resolved nothing and the run
+wrote code, so there is genuinely no declared contract to discover. The model
+chooses *which* command; the harness still runs it and reads the real exit code,
+so this is author-and-run, never the self-certification §5 forbids. Resolved at
+verification time (the artifact under test does not exist at the freeze boundary).
+Runs on `config.model` (the main model) so the floor needs zero extra config; any
+endpoint failure degrades to "no floor", never blocks.
+
+Args:
+    ws: The run-scoped workspace whose just-written files are excerpted.
+    files_modified: The repo-relative paths the run created or changed.
+
+Returns:
+    The `model-smoke` check, or `None` when nothing runnable was proposed.
+
 #### `VerificationPlanner.resolve(self, ws: Workspace) -> list[PlannedCheck]`
 
 Resolve the verification plan for `ws`: override → detection → LLM fallback.

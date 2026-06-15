@@ -4,7 +4,7 @@ from avatar_harness.permission import PermissionPolicy, ToolPermission
 from avatar_harness.state import TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolResult
 from avatar_harness.tools.commands import run_tests
-from avatar_harness.tools.edit import apply_patch, write_file
+from avatar_harness.tools.edit import str_replace, write_file
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.workspace import Workspace
 
@@ -38,26 +38,26 @@ def test_tier0_reads_allowed(git_repo):
     assert perm.blocked is False
 
 
-def test_apply_patch_allowed_when_paths_validate(git_repo):
-    diff = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x\n+y\n"
-    perm = PermissionPolicy().check(apply_patch, {"diff": diff}, _state(), Workspace(git_repo))
+def test_str_replace_allowed_when_paths_validate(git_repo):
+    raw = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
+    perm = PermissionPolicy().check(str_replace, raw, _state(), Workspace(git_repo))
     assert perm.blocked is False
 
 
-def test_apply_patch_blocked_when_path_escapes(git_repo):
-    diff = "--- a/../evil.py\n+++ b/../evil.py\n@@ -0,0 +1 @@\n+pwned\n"
-    perm = PermissionPolicy().check(apply_patch, {"diff": diff}, _state(), Workspace(git_repo))
+def test_str_replace_blocked_when_path_escapes(git_repo):
+    raw = {"path": "../escape.py", "old_string": "a", "new_string": "b"}
+    perm = PermissionPolicy().check(str_replace, raw, _state(), Workspace(git_repo))
     assert perm.blocked is True
     assert perm.reason  # explains the refusal
 
 
-def test_investigate_can_apply_patch(git_repo):
+def test_investigate_can_str_replace(git_repo):
     # ADR-0005: tier-1 mutation is legal in an investigate task — prevention at the
     # gate is traded for detection at the verifier, whose net-zero-diff contract
     # (`no_unintended_diff`) is the enforcement point for transient instrumentation.
-    diff = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x\n+y\n"
+    raw = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
     state = TaskState(goal="why is it slow?", task_kind="investigate")
-    perm = PermissionPolicy().check(apply_patch, {"diff": diff}, state, Workspace(git_repo))
+    perm = PermissionPolicy().check(str_replace, raw, state, Workspace(git_repo))
     assert perm.blocked is False
 
 

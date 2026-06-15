@@ -77,7 +77,7 @@ The same engine, importable. Five lines to a verifier-checked answer:
 from avatar_harness import Harness
 
 harness = Harness.from_env()                  # AVATAR_* / .env; no key needed to construct
-state = harness.run("explain how apply_patch stays atomic")
+state = harness.run("explain how str_replace anchors edits")
 print(state.outcome, "\n", state.final_answer)
 ```
 

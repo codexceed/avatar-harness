@@ -11,7 +11,7 @@ Use it three ways: a **batch CLI** (`avatar-harness`) for one-shot tasks, an **i
 - **Python 3.12+**
 - [**uv**](https://docs.astral.sh/uv/) — dependency management and running the CLI
 - [**ripgrep**](https://github.com/BurntSushi/ripgrep) (`rg`) on `PATH` — `search_repo` shells out to it
-- **git** — `apply_patch` applies diffs via `git apply`; the workspace pins HEAD as its diff baseline
+- **git** — the workspace pins HEAD as its diff baseline; `str_replace`/`write_file` edits are staged so the diff reflects them
 - An **OpenAI-compatible LLM endpoint** (configurable base URL + model)
 
 ## Installation
@@ -48,7 +48,7 @@ For `edit` tasks the harness auto-detects how to verify the work (CI / manifests
 
 ```bash
 uv run avatar-harness "where does the agent loop terminate, and what sets outcome=success?"
-make run TASK="explain how apply_patch stays atomic"   # via the Makefile
+make run TASK="explain how str_replace anchors edits"   # via the Makefile
 ```
 
 It prints a timestamped event trajectory, then a `Status:` line and the cited answer. The full run is written to a JSONL event log (`events/<session_id>.jsonl`) for replay.
@@ -63,7 +63,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 
 - **Meta commands** (handled locally, never hit the model): `/help`, `/mode <edit|investigate|test_only|plan>`, `/plan`, `/diff`, `/state`, `/permissions`, `/quit`.
 - **Ground a goal** in a file with `@path/to/file`.
-- **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`apply_patch`) auto-allow when their paths validate inside the workspace.
+- **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`delete_file`) auto-allow when their paths validate inside the workspace.
 - **Conversational by default** — verification runs and is reported, but the reply isn't gated on it (you're the terminal authority); `--auto` keeps the strict gate.
 
 ### Flags
@@ -82,7 +82,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 from avatar_harness import Harness
 
 harness = Harness.from_env()                 # config from AVATAR_* / .env; no API key needed to construct
-state = harness.run("explain how apply_patch stays atomic")
+state = harness.run("explain how str_replace anchors edits")
 print(state.outcome, state.final_answer)
 ```
 

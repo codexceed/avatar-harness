@@ -89,9 +89,9 @@ An event can *announce* that approval is needed; only the control method
 
 <Note>
   Approval prompts fire for `ask`-gated calls: tier-3 tools (`run_command`) and
-  sensitive-path denylist hits. `apply_patch` is tier 1 — it auto-allows once
-  its target paths validate inside the workspace, and the verifier judges the
-  resulting diff.
+  sensitive-path denylist hits. The edit tools (`str_replace`/`write_file`/`delete_file`)
+  are tier 1 — they auto-allow once their target paths validate inside the workspace,
+  and the verifier judges the resulting diff.
 </Note>
 
 **Journaling.** Pass `journal=JsonlEventJournal(path)` to `harness.session(...)`

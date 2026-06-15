@@ -323,7 +323,9 @@ def _scan_secrets(diff: str) -> list[str]:
 
 # Repair direction per failed check, in priority order (§12 recommended_next_action).
 _FAIL_HINTS = {
-    "diff_present": "no change was made; apply a patch that addresses the goal",
+    "diff_present": (
+        "no change was made; edit a file with str_replace (or write_file to create) to address the goal"
+    ),
     "no_unintended_diff": (
         "an investigate task must leave the repo unchanged: revert the leftover "
         "instrumentation so the diff vs the pinned baseline is empty"

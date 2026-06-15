@@ -270,6 +270,10 @@ class Workspace:
     def apply_patch(self, diff: str) -> list[str]:
         """Apply a (possibly multi-file) unified diff atomically; return changed paths.
 
+        An internal/SDK primitive — no longer a model-facing tool (the agent edits via
+        `replace`/`str_replace`, ADR-0015), but retained for programmatic callers and for
+        multi-file/creation diffs `replace` does not cover.
+
         Confinement first: every target path must resolve inside the root, else
         `PathOutsideWorkspaceError` (nothing written). Then a `git apply --check`
         dry run gates the real apply, so a stale diff raises `PatchError` and the
@@ -386,6 +390,33 @@ class Workspace:
             raise AmbiguousMatchError(rel, count)
         resolved.write_text(text.replace(old, new), encoding="utf-8")
         self.stage([rel])
+        return rel
+
+    def remove(self, path: str) -> str:
+        """Delete a workspace file and stage the removal so `diff()` reflects it (ADR-0015).
+
+        The deletion counterpart to `write_file`/`replace` — the capability the removed
+        `apply_patch` `/dev/null` hunk used to carry. Staging the removal makes a
+        baseline-tracked file show as deleted in `git diff <baseline>` and lets a
+        transiently-created file (staged by `write_file`) net back to zero. Confinement
+        and the sensitive-path denylist apply at this chokepoint like every other write.
+
+        Args:
+            path: The workspace-relative file to delete.
+
+        Returns:
+            The workspace-relative path deleted.
+
+        Raises:
+            FileNotFoundError: When the target does not exist (nothing to delete).
+        """
+        resolved = self._resolve(path)
+        self._assert_not_sensitive(resolved)
+        rel = str(resolved.relative_to(self.root))
+        if not resolved.is_file():
+            raise FileNotFoundError(rel)
+        resolved.unlink()
+        self.stage([rel])  # `git add` on a deleted path stages the removal into the diff
         return rel
 
     # --- command execution (§15) -----------------------------------------

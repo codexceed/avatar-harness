@@ -25,15 +25,11 @@ from avatar_harness.intent import ModeClassifier
 from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.session_state import ReplSession
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.tools.edit import apply_patch
+from avatar_harness.tools.edit import str_replace
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.tui import cli as jo_cli
 from avatar_harness.tui.app import CockpitApp
 from avatar_harness.tui.modals import ApprovalModal, DiffModal, PlanModal
-
-_FIX = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
-)
 
 
 class _Empty(BaseModel):
@@ -44,7 +40,7 @@ def _read_registry(*, edit: bool = False) -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(read_file)
     if edit:
-        reg.register(apply_patch)
+        reg.register(str_replace)
     return reg
 
 
@@ -186,7 +182,12 @@ async def test_plan_mode_runs_plan_then_modal_then_build(git_repo):
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
         ModelDecision(action=FinalAnswer(answer="PLAN: in calc.py, change `-` to `+`")),
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(
+            action=ToolCall(
+                name="str_replace",
+                input={"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"},
+            )
+        ),
         ModelDecision(action=FinalAnswer(answer="fixed add()")),
     ]
     repl = _repl(

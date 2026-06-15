@@ -11,6 +11,17 @@ the working tree against that pinned baseline (not the git index), so the task's
 delta is well-defined and the harness never needs to commit (§15).
 
 ## Classes
+### `AmbiguousMatchError`
+
+The `old` anchor matched more than once and `replace_all` was not set (ADR-0015).
+
+Args:
+    path: The workspace-relative file the anchor matched in.
+    count: How many times the anchor matched (>1); exposed as `.count` for the tool's message.
+
+```python
+AmbiguousMatchError(path: str, count: int) -> None
+```
 ### `CommandOutput`
 
 The captured result of one command run through the workspace.
@@ -21,6 +32,9 @@ CommandOutput(command: str, stdout: str, stderr: str, exit_code: int | None, tim
 ### `DirtyWorkspaceError`
 
 The workspace has uncommitted changes at open and they were not acknowledged (§15).
+### `MatchNotFoundError`
+
+The `old` anchor was absent from the file — a stale or mistyped anchor (§10).
 ### `PatchError`
 
 A patch failed to apply cleanly (stale context) — model-correctable (§10).
@@ -29,6 +43,11 @@ Application is all-or-nothing: when this is raised, nothing was written.
 ### `PathOutsideWorkspaceError`
 
 Raised when a requested path resolves outside the workspace root.
+### `ReplaceError`
+
+A string-anchored replace could not be applied cleanly (ADR-0015) — model-correctable.
+
+All-or-nothing: when raised, the file is byte-for-byte unchanged.
 ### `SensitivePathError`
 
 Raised when a *resolved* path matches the sensitive-path denylist (§11, Phase 2.5).
@@ -46,14 +65,20 @@ Args:
     sensitive_path_globs: The denylist refused on read/patch (resolved-path check,
         §11). Defaults to the built-in set (secure by default); the runner threads
         `HarnessConfig.sensitive_path_globs` through to match the permission gate.
+    log_path: The harness's own event-journal path (`HarnessConfig.log_path`), hidden
+        from the agent's file tools so it can't list/read/search the harness's plumbing.
 
 ```python
-Workspace(root: Path | str, *, allow_dirty: bool = False, sensitive_path_globs: Sequence[str] | None = None) -> None
+Workspace(root: Path | str, *, allow_dirty: bool = False, sensitive_path_globs: Sequence[str] | None = None, log_path: Path | str | None = None) -> None
 ```
 
 #### `Workspace.apply_patch(self, diff: str) -> list[str]`
 
 Apply a (possibly multi-file) unified diff atomically; return changed paths.
+
+An internal/SDK primitive — no longer a model-facing tool (the agent edits via
+`replace`/`str_replace`, ADR-0015), but retained for programmatic callers and for
+multi-file/creation diffs `replace` does not cover.
 
 Confinement first: every target path must resolve inside the root, else
 `PathOutsideWorkspaceError` (nothing written). Then a `git apply --check`
@@ -86,6 +111,16 @@ Working-tree delta vs. the pinned baseline (empty when no baseline).
 Returns:
     The unified diff against the pinned baseline, empty when none.
 
+#### `Workspace.is_ignored(self, relpath: str) -> bool`
+
+Whether `relpath` (workspace-relative POSIX) is hidden harness plumbing.
+
+Args:
+    relpath: A workspace-relative POSIX path.
+
+Returns:
+    `True` for the harness's own journal file or its `latest.jsonl` pointer.
+
 #### `Workspace.list_files(self, glob: str) -> list[str]`
 
 Return workspace-relative paths of files matching `glob`, sorted.
@@ -117,6 +152,58 @@ Args:
 
 Returns:
     The file text, sliced to `line_range` when given.
+
+Raises:
+    FileNotFoundError: When the path is the harness's own (hidden) journal.
+
+#### `Workspace.remove(self, path: str) -> str`
+
+Delete a workspace file and stage the removal so `diff()` reflects it (ADR-0015).
+
+The deletion counterpart to `write_file`/`replace` — the capability the removed
+`apply_patch` `/dev/null` hunk used to carry. Staging the removal makes a
+baseline-tracked file show as deleted in `git diff &lt;baseline>` and lets a
+transiently-created file (staged by `write_file`) net back to zero. Confinement
+and the sensitive-path denylist apply at this chokepoint like every other write.
+
+Args:
+    path: The workspace-relative file to delete.
+
+Returns:
+    The workspace-relative path deleted.
+
+Raises:
+    FileNotFoundError: When the target does not exist (nothing to delete).
+
+#### `Workspace.replace(self, path: str, old: str, new: str, *, replace_all: bool = False) -> str`
+
+Swap an exact string in a file; the anchor proves non-staleness (§10, ADR-0015).
+
+The string-anchored modification primitive that supersedes `apply_patch`'s diff
+costume: `old` must match the *current* file text exactly — read-before-edit (§10)
+enforced by the anchor, not by line arithmetic. It must match once, unless
+`replace_all`. All-or-nothing: a rejected match leaves the file byte-for-byte
+unchanged. Confinement, the sensitive-path denylist, and staging apply at this
+chokepoint like every other write; the resulting diff is *derived* by `diff()`,
+never authored by the model (§5).
+
+Args:
+    path: The workspace-relative file to edit.
+    old: The exact existing text to find (the anchor); must be non-empty.
+    new: The replacement text.
+    replace_all: Replace every occurrence instead of requiring a unique match.
+
+Returns:
+    The workspace-relative path edited.
+
+Raises:
+    FileNotFoundError: When the target file does not exist (create with `write_file`).
+    MatchNotFoundError: When `old` is absent (stale or mistyped anchor).
+    AmbiguousMatchError: When `old` matches more than once and `replace_all` is unset.
+
+Note:
+    Confinement and the sensitive-path denylist apply at this chokepoint exactly as
+    for every other access (via `_resolve`/`_assert_not_sensitive`).
 
 #### `Workspace.run(self, command: str, timeout: int | None = None) -> CommandOutput`
 

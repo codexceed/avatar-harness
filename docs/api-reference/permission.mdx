@@ -9,8 +9,8 @@ before every execution and acts on the `ToolPermission` it returns (allow /
 block / ask). It can block and redirect control flow; the event emitter cannot.
 Keeping it a direct call — never an emitter subscriber — is the whole point.
 
-Tiers (§11): 0 reads (allow) · 1 apply_patch (allow iff every target path
-resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
+Tiers (§11): 0 reads (allow) · 1 edits — str_replace/write_file (allow iff every
+target path resolves inside the workspace) · 2 commands (allow) · 3+ destructive / external
 (blocked by default in the non-interactive MVP; `ask` lands with the Phase 3 REPL).
 
 Tier 1 is allowed for every task kind, including `investigate` (ADR-0005): transient

@@ -55,6 +55,7 @@ The point of replacing `apply_patch` (rather than adding alongside it) is to avo
 | create a new file | `write_file` (no `overwrite`) |
 | change a span in place | **`str_replace`** (the default edit; anchor = staleness proof) |
 | wholesale rewrite | `write_file(overwrite=true)` |
+| delete a file | `delete_file` (phase 2; replaces `apply_patch`'s `/dev/null` hunk) |
 
 This is *fewer* competing choices than today (where the model must pick `apply_patch` vs. `write_file` for any modification).
 
@@ -75,11 +76,12 @@ This is *fewer* competing choices than today (where the model must pick `apply_p
 - The verifier, the diff/baseline pipeline, the permission gate (now keyed on the single `path` arg, not parsed diff targets), and the edit-intent phase bootstrap (`str_replace` is a tier-1 tool, so it advances the phase automatically) all carry over unchanged in shape.
 - **New residual failure mode: whitespace-exact anchor misses.** Strictly more correctable than arithmetic (re-read vs. recompute), and bounded by the deferred option to add tolerance.
 - **Cross-file atomicity is lost** (acceptable; see contracts).
+- **File deletion is preserved via a dedicated `delete_file` tool (phase 2).** `apply_patch` was the only model-facing way to delete a file (a `--- a/x` / `+++ /dev/null` hunk); removing it would have dropped deletion, since `str_replace` edits and `write_file` creates/overwrites. Rather than lose the capability (a transient-instrumentation task must be able to *create-then-delete* a scratch file to net to zero), phase 2 adds `delete_file` (tier-1, path-confined, staged removal so the deletion shows in the diff). This makes deletion *first-class and intent-named* — cleaner than the incidental `/dev/null` hunk it replaces — and keeps the edit set unambiguous (create / edit / rewrite / delete, four distinct intents, no overlap).
 
 ## Rollout (phased, like ADR-0003)
 
-1. **This PR** — land `str_replace` + `Workspace.replace()`, fully tested, registered, and advertised as the primary edit tool; steer `write_file`'s "modify with…" hint to it. `apply_patch` stays registered during migration so nothing breaks.
-2. **Follow-up** — migrate the dogfood/eval suite and the ~7 `apply_patch`-based test files to `str_replace`; flip the `ContextBuilder` to stop advertising `apply_patch`; then **remove `apply_patch`** and its dialect/hunk guards. At that point the tool set is the two-row table above.
+1. **Phase 1 (PR #57)** — land `str_replace` + `Workspace.replace()`, fully tested, registered, and advertised as the primary edit tool; steer `write_file`'s "modify with…" hint to it. `apply_patch` stays registered during migration so nothing breaks.
+2. **Phase 2 (this PR)** — migrate the test suite (the ~13 `apply_patch`-using files) to `str_replace`; remove the model-facing `apply_patch` tool from `default_registry` (so the `ContextBuilder` no longer advertises it) along with its dialect/hunk guards and `ApplyPatchInput`. Add a `delete_file` tool (+ `Workspace.remove`) so deletion stays first-class (see consequences). The `Workspace.apply_patch` *method* is retained as internal/SDK plumbing (used by the diff-construction tests and available to library callers for multi-file diffs `str_replace`/`delete_file` do not cover). The model-facing edit set is now the four-row table above.
 
 ## Implementation notes (non-binding)
 

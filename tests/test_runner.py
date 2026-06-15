@@ -23,7 +23,7 @@ from avatar_harness.runner import AgentRunner
 from avatar_harness.state import PlannedCheck, TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import apply_patch, write_file
+from avatar_harness.tools.edit import delete_file, str_replace, write_file
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
@@ -183,14 +183,13 @@ def test_repeated_identical_tool_call_is_flagged(tmp_path, read_registry):
 
 # --- Phase 2: permission gate + edit loop -------------------------------
 
-_FIX = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
-)
+# The canonical calc.py sign fix, expressed as a str_replace anchor (ADR-0015).
+_FIX = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
 
 
 def _edit_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    for tool in (read_file, apply_patch, run_tests, run_linter):
+    for tool in (read_file, str_replace, run_tests, run_linter):
         reg.register(tool)
     return reg
 
@@ -230,7 +229,7 @@ def test_edit_task_runs_to_verified_success(git_repo):
     test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
     decisions = [
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed the sign error in calc.py add()")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")
@@ -244,7 +243,7 @@ def test_runner_records_commands_run(git_repo):
     # commands_run ledger so the artifact and logs reflect what actually ran (§7/§14).
     test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")
@@ -255,8 +254,9 @@ def test_runner_records_commands_run(git_repo):
 
 def test_bad_patch_leaves_workspace_unchanged_and_loops(git_repo):
     before = Workspace(git_repo).read("calc.py")
-    stale = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-return a * b\n+return a + b\n"
-    decisions = [ModelDecision(action=ToolCall(name="apply_patch", input={"diff": stale}))]
+    # An anchor that isn't in the file — str_replace returns a model-correctable miss.
+    stale = {"path": "calc.py", "old_string": "return a * b", "new_string": "return a + b"}
+    decisions = [ModelDecision(action=ToolCall(name="str_replace", input=stale))]
     state = TaskState(goal="fix add()", task_kind="edit")
     result = _runner(git_repo, _edit_registry(), decisions, max_consecutive_failures=3).run(state)
     assert Workspace(git_repo, allow_dirty=True).read("calc.py") == before  # nothing written
@@ -266,7 +266,7 @@ def test_bad_patch_leaves_workspace_unchanged_and_loops(git_repo):
 def test_repair_budget_exhaustion_yields_failed(git_repo):
     failing = 'python -c "import sys; sys.exit(1)"'
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="I believe this is fixed")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")
@@ -278,9 +278,6 @@ def test_repair_budget_exhaustion_yields_failed(git_repo):
 
 
 # --- Phase 2.6 Lane A: phase advance/enforce + budgets + cancellation ----
-
-# A new-file hunk: creates `greeter.py` from nothing — no read precedes it (pure creation).
-_NEW_FILE = '--- /dev/null\n+++ b/greeter.py\n@@ -0,0 +1,2 @@\n+def greet():\n+    return "hi"\n'
 
 
 def _runner_with_token(
@@ -301,9 +298,9 @@ def _runner_with_token(
 
 
 def test_phase_advances_to_editing_on_first_edit_intent(git_repo):
-    # An edit task starts in `investigating`; the first apply_patch is the edit intent
+    # An edit task starts in `investigating`; the first str_replace is the edit intent
     # that advances the phase to `editing` — not a read-counter.
-    decisions = [ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX}))]
+    decisions = [ModelDecision(action=ToolCall(name="str_replace", input=_FIX))]
     state = TaskState(goal="fix add()", task_kind="edit")
     assert state.phase == "investigating"
     _runner(git_repo, _edit_registry(), decisions, lint_command="", max_iterations=1).run(state)
@@ -311,14 +308,21 @@ def test_phase_advances_to_editing_on_first_edit_intent(git_repo):
 
 
 def test_pure_creation_from_bare_workspace_succeeds(git_repo):
-    # A new-file hunk applies with ZERO reads — the creation case a `>=1 read` trigger kills.
+    # A write_file creation applies with ZERO reads — the creation case a `>=1 read` trigger kills.
     test_cmd = "python -c \"import greeter; assert greeter.greet() == 'hi'\""
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _NEW_FILE})),
+        ModelDecision(
+            action=ToolCall(
+                name="write_file",
+                input={"path": "greeter.py", "content": 'def greet():\n    return "hi"\n'},
+            )
+        ),
         ModelDecision(action=FinalAnswer(answer="created greeter.py with greet()")),
     ]
+    reg = _edit_registry()
+    reg.register(write_file)
     state = TaskState(goal="add a greeter", task_kind="edit")
-    result = _runner(git_repo, _edit_registry(), decisions, test_command=test_cmd, lint_command="").run(state)
+    result = _runner(git_repo, reg, decisions, test_command=test_cmd, lint_command="").run(state)
     assert result.outcome == "success"
     assert not result.files_read  # never forced to read
     assert "greeter.py" in result.files_modified
@@ -326,7 +330,7 @@ def test_pure_creation_from_bare_workspace_succeeds(git_repo):
 
 def test_pure_creation_via_write_file_succeeds(git_repo):
     # ADR-0003 B: file creation as plain content — phase advance (tier-1 edit intent),
-    # staging into the diff, and the §12 edit gate all behave exactly as for apply_patch.
+    # staging into the diff, and the §12 edit gate all behave exactly as for str_replace.
     test_cmd = "python -c \"import greeter; assert greeter.greet() == 'hi'\""
     decisions = [
         ModelDecision(
@@ -347,14 +351,15 @@ def test_pure_creation_via_write_file_succeeds(git_repo):
 
 
 def test_modify_without_read_fails_stale_then_recovers(git_repo):
-    # Inspect-before-edit EMERGES from clean-apply: a stale modify-hunk fails (model-correctable),
-    # then a correct patch (after a read) applies and verifies. No read-counter is consulted.
+    # Inspect-before-edit EMERGES from exact-anchor matching: a stale anchor misses
+    # (model-correctable), then a correct str_replace (after a read) applies and verifies.
+    # No read-counter is consulted.
     test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
-    stale = "--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-return a * b\n+return a + b\n"
+    stale = {"path": "calc.py", "old_string": "return a * b", "new_string": "return a + b"}
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": stale})),  # fails stale
+        ModelDecision(action=ToolCall(name="str_replace", input=stale)),  # anchor not found
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),  # then inspects
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),  # correct patch
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),  # correct anchor
         ModelDecision(action=FinalAnswer(answer="fixed the sign error in calc.py add()")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")
@@ -366,7 +371,7 @@ def test_modify_without_read_fails_stale_then_recovers(git_repo):
 def test_phase_changed_emitted_on_transition(git_repo):
     test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed the sign error in calc.py add()")),
     ]
     events: list = []
@@ -400,7 +405,7 @@ def test_repair_falls_back_to_editing(git_repo):
     # A failed verification returns the agent from `verifying` to `editing` for repair.
     failing = 'python -c "import sys; sys.exit(1)"'
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="I believe this is fixed")),
     ]
     events: list = []
@@ -460,23 +465,28 @@ def test_cancellation_records_feedback(git_repo):
 
 # --- ADR-0005: transient edits in investigate tasks (net-zero-diff relaxation) ----
 
-_PROBE = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,3 @@\n def add(a, b):\n+    print('probe')\n     return a - b\n"
-)
-_UNPROBE = (
-    "--- a/calc.py\n+++ b/calc.py\n@@ -1,3 +1,2 @@\n def add(a, b):\n-    print('probe')\n     return a - b\n"
-)
+# A transient probe and its exact-anchor revert, expressed as str_replace inputs (ADR-0015).
+_PROBE = {
+    "path": "calc.py",
+    "old_string": "    return a - b",
+    "new_string": "    print('probe')\n    return a - b",
+}
+_UNPROBE = {
+    "path": "calc.py",
+    "old_string": "    print('probe')\n    return a - b",
+    "new_string": "    return a - b",
+}
 
 
 def test_investigate_transient_edit_round_trip_verifies(git_repo):
-    # The ADR-0005 happy path end-to-end: instrument (apply_patch) -> observe -> revert ->
+    # The ADR-0005 happy path end-to-end: instrument (str_replace) -> observe -> revert ->
     # final_answer. The gate admits the tier-1 calls, the phase never advances (the
     # edit-intent bootstrap stays edit-kinds-only), and the unchanged net-zero-diff
     # contract passes because the tree matches the pinned baseline at verification.
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _PROBE})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_PROBE)),
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _UNPROBE})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_UNPROBE)),
         ModelDecision(action=FinalAnswer(answer="probed calc.py: add() subtracts; probe reverted")),
     ]
     events: list = []
@@ -493,15 +503,38 @@ def test_investigate_transient_edit_round_trip_verifies(git_repo):
     )
 
 
+def test_investigate_write_file_probe_then_delete_verifies(git_repo):
+    # ADR-0015: the create-then-delete net-zero path, restored by delete_file (the capability
+    # apply_patch's /dev/null hunk used to carry). Create a scratch probe, read it, delete it,
+    # finalize — the investigate net-zero-diff contract passes because the tree matches baseline.
+    reg = _edit_registry()
+    reg.register(write_file)
+    reg.register(delete_file)
+    decisions = [
+        ModelDecision(
+            action=ToolCall(name="write_file", input={"path": "probe.py", "content": "PROBE = 1\n"})
+        ),
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "probe.py"})),
+        ModelDecision(action=ToolCall(name="delete_file", input={"path": "probe.py"})),
+        ModelDecision(action=FinalAnswer(answer="read probe.py (PROBE = 1), then deleted the scratch file")),
+    ]
+    state = TaskState(goal="check something with a scratch probe", task_kind="investigate")
+    result = _runner(git_repo, reg, decisions).run(state)
+    assert result.outcome == "success"
+    assert not (git_repo / "probe.py").exists()
+    assert Workspace(git_repo, allow_dirty=True).diff() == ""  # create-then-delete nets to zero
+    assert "probe.py" in result.files_modified  # the transient create+delete is on the ledger
+
+
 def test_investigate_leftover_diff_fails_then_repair_by_revert_succeeds(git_repo):
     # An investigation that LEAVES its instrumentation fails verification with the
     # legible no_unintended_diff reason, and the existing repair loop engages: the
     # model reverts, finalizes again, and the unchanged contract passes.
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _PROBE})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_PROBE)),
         ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
         ModelDecision(action=FinalAnswer(answer="probed calc.py: add() subtracts")),  # forgot to revert
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _UNPROBE})),  # repair: revert
+        ModelDecision(action=ToolCall(name="str_replace", input=_UNPROBE)),  # repair: revert
         ModelDecision(action=FinalAnswer(answer="probed calc.py: add() subtracts; probe reverted")),
     ]
     state = TaskState(goal="why does add() return the wrong sum?", task_kind="investigate")
@@ -512,31 +545,6 @@ def test_investigate_leftover_diff_fails_then_repair_by_revert_succeeds(git_repo
     assert first.passed is False
     assert "no_unintended_diff" in first.summary  # the legible reason the model repairs from
     assert Workspace(git_repo, allow_dirty=True).diff() == ""
-
-
-def test_investigate_write_file_probe_then_delete_verifies(git_repo):
-    # The write_file creation path of the ADR-0005 round trip (the apply_patch path is
-    # covered above): a scratch probe file is created (staged, so it is visible in the
-    # diff), the repo is observed, then the probe is deleted via an apply_patch deletion
-    # hunk — the tree nets to zero diff vs the pinned baseline and verification passes.
-    delete_probe = "--- a/probe.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-print('probe')\n"
-    reg = ToolRegistry()
-    for tool in (read_file, apply_patch, write_file):
-        reg.register(tool)
-    decisions = [
-        ModelDecision(
-            action=ToolCall(name="write_file", input={"path": "probe.py", "content": "print('probe')\n"})
-        ),
-        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": delete_probe})),
-        ModelDecision(action=FinalAnswer(answer="probed: calc.py subtracts in add(); probe deleted")),
-    ]
-    state = TaskState(goal="why does add() return the wrong sum?", task_kind="investigate")
-    result = _runner(git_repo, reg, decisions).run(state)
-    assert result.outcome == "success"
-    assert not (git_repo / "probe.py").exists()  # the probe is genuinely gone (tree AND index)
-    assert Workspace(git_repo, allow_dirty=True).diff() == ""  # net-zero at the end
-    assert "probe.py" in result.files_modified  # the transient creation stayed on the ledger
 
 
 # --- ADR-0007: verification-plan freeze at the phase boundary --------------
@@ -572,7 +580,7 @@ def test_runner_freezes_detected_plan_at_editing_transition(git_repo):
     # investigating → editing boundary; the verifier then executes the frozen plan.
     _commit_makefile(git_repo)
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed the sign error")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")
@@ -594,7 +602,7 @@ def test_runner_journals_frozen_plan_as_typed_event(git_repo):
     runner = AgentRunner(
         model_client=ScriptedModel(
             [
-                ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+                ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
                 ModelDecision(action=FinalAnswer(answer="fixed")),
             ]
         ),
@@ -683,7 +691,7 @@ def test_runner_empty_plan_fails_verification_legibly(git_repo):
     # (ADR-0014) → the empty plan stays empty and the edit fails verification with a
     # pointer to declaring a contract — never a crash, never an invented default.
     decisions = [
-        ModelDecision(action=ToolCall(name="apply_patch", input={"diff": _FIX})),
+        ModelDecision(action=ToolCall(name="str_replace", input=_FIX)),
         ModelDecision(action=FinalAnswer(answer="fixed")),
     ]
     state = TaskState(goal="fix add()", task_kind="edit")

@@ -252,10 +252,10 @@ def test_native_system_prompt_drops_json_envelope():
 
 
 def test_openai_client_records_parse_retry_trace():
-    # The in-client retry loop must leave a trace: the dogfood run showed apply_patch
+    # The in-client retry loop must leave a trace: the dogfood run showed str_replace
     # attempts dying invisibly inside decide(), the model downgrading to reads, and no
-    # record anywhere (state, journal, or context) that a patch was ever attempted.
-    malformed = '{"thought_summary": "patching", "action": {"type": "apply_patch", '  # truncated JSON
+    # record anywhere (state, journal, or context) that an edit was ever attempted.
+    malformed = '{"thought_summary": "patching", "action": {"type": "str_replace", '  # truncated JSON
     valid = '{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}'
     client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_seq([malformed, valid]))
     packet = ContextPacket(goal="g", phase="investigating", allowed_tools=[])
@@ -266,7 +266,7 @@ def test_openai_client_records_parse_retry_trace():
     assert len(decision.retry_trace) == 1  # ...but the failed attempt is on the record
     note = decision.retry_trace[0]
     assert "JSON" in note.error  # what was wrong
-    assert "apply_patch" in note.raw  # and the raw attempt itself, for debugging
+    assert "str_replace" in note.raw  # and the raw attempt itself, for debugging
 
 
 def test_parse_decision_ignores_model_supplied_retry_trace():
@@ -289,7 +289,7 @@ def test_default_prompt_is_kind_aware():
         goal="fix the off-by-one in app.py",
         phase="editing",
         task_kind="edit",
-        allowed_tools=[ToolSummary(name="apply_patch", description="apply a patch")],
+        allowed_tools=[ToolSummary(name="str_replace", description="replace exact text in a file")],
     )
     inv = ContextPacket(
         goal="explain the loop",
@@ -305,7 +305,7 @@ def test_default_prompt_is_kind_aware():
     assert "must be unchanged when you answer" in inv_sys.lower()
     assert "revert any instrumentation" in inv_sys.lower()
     assert "without editing" not in inv_sys.lower()  # the old blanket prohibition is gone
-    assert "JSON" in edit_sys and "apply_patch" in edit_sys  # still schema-bearing
+    assert "JSON" in edit_sys and "str_replace" in edit_sys  # still schema-bearing
 
 
 def test_core_imports_without_openai(monkeypatch):
@@ -519,15 +519,17 @@ def test_parse_decision_clears_model_claimed_transport():
 
 # --- per-action retry excerpt cap (loop-determinism hardening) ------------------------------
 #
-# A failed apply_patch/write_file attempt is most useful WITH its diff: the flat 2000-char
-# excerpt cut real patches mid-hunk, so the model retried blind and re-emitted the same
-# error. Patch-bearing actions get a higher cap; any cut is marked loudly (same rule as
+# A failed str_replace/write_file attempt is most useful WITH its edit payload: the flat
+# 2000-char excerpt cut real edits mid-body, so the model retried blind and re-emitted the
+# same error. Patch-bearing actions get a higher cap; any cut is marked loudly (same rule as
 # context compaction: never cut silently).
 
 
-def test_patch_retry_excerpt_keeps_long_diff():
-    bad_args = '{"diff": "' + ("x" * 5800) + "TAIL_MARKER"  # truncated JSON — malformed
-    bad = _msg(tool_calls=[_tc("apply_patch", bad_args, call_id="c1")])
+def test_patch_retry_excerpt_keeps_long_edit():
+    # 5800-char old_string: over the 2000 raw cap, under the 12000 patch cap — TAIL_MARKER
+    # survives ONLY because str_replace rides the higher edit-bearing cap.
+    bad_args = '{"path": "app.py", "old_string": "' + ("x" * 5800) + "TAIL_MARKER"  # truncated JSON
+    bad = _msg(tool_calls=[_tc("str_replace", bad_args, call_id="c1")])
     good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
     client = OpenAIModelClient(HarnessConfig(model="m"), client=_fake_openai_messages([bad, good]))
 
