@@ -7,6 +7,8 @@ editable plan with approve/revise. Driven headlessly via a host `App` + `Pilot`;
 are on the modal *result contract*, not pixels.
 """
 
+from typing import cast
+
 import pytest
 
 pytest.importorskip("textual")
@@ -57,6 +59,19 @@ async def test_approval_modal_always_scoped():
         await pilot.press("a")
         await pilot.pause()
     assert host.result == ApprovalChoice(allow=True, remember=True)  # [a] → scoped grant
+
+
+async def test_approval_modal_shows_exact_command_up_front():
+    # The human must see the precise command WITHOUT pressing View (the dogfood gap:
+    # the prompt named the tool/tier but hid `chmod +x chatbot.py` behind [v]).
+    host = _Host(
+        ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pip install openai"})
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        modal = cast(ApprovalModal, host.screen)
+        assert "pip install openai" in modal._command_text()  # the exact command is in the prompt
+        assert modal.query_one("#approval_command", Static).display is not False  # shown, not toggled
 
 
 async def test_approval_modal_deny():

@@ -40,13 +40,16 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
     """Render a gated call and collect a `[y]/[a]/[d]` decision (control plane, §13).
 
     A bounded, centered dialog with a solid background and border so it reads as a
-    *blocking* prompt sitting above the transcript — not a transcript line. The keys
-    `[y]/[a]/[d]/[v]` and the equivalent clickable buttons share one dismiss contract.
+    *blocking* prompt sitting above the transcript — not a transcript line. The exact
+    command (or call arguments) is shown up front so the human knows precisely what they
+    are approving; `[v]` toggles the full raw arguments. The keys `[y]/[a]/[d]/[v]` and
+    the equivalent clickable buttons share one dismiss contract.
 
     Args:
         tool: The tool name awaiting approval.
         reason: The gate's reason, shown to the human.
-        tool_input: The proposed call arguments (the command/diff detail, shown via `[v]`).
+        tool_input: The proposed call arguments; its `command` (or the whole dict) is
+            shown up front, with the full raw arguments behind `[v]`.
     """
 
     BINDINGS = [  # noqa: RUF012 — Textual's binding-list contract
@@ -70,6 +73,13 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
     }
     ApprovalModal #approval_prompt {
         text-style: bold;
+        margin-bottom: 1;
+    }
+    ApprovalModal #approval_command {
+        background: $panel;
+        color: $text;
+        text-style: bold;
+        padding: 0 1;
         margin-bottom: 1;
     }
     ApprovalModal #approval_detail {
@@ -105,6 +115,7 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         """
         with VerticalScroll(id="approval_dialog"):
             yield Static(f"{self.tool} wants to run — {self.reason}", id="approval_prompt")
+            yield Static(self._command_text(), id="approval_command")  # the exact command, always shown
             yield Static(str(self.tool_input), id="approval_detail")
             with Horizontal(id="approval_buttons"):
                 yield Button("Allow once", id="approve-once")
@@ -141,9 +152,21 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self.dismiss(ApprovalChoice(allow=False, remember=False))
 
     def action_toggle_view(self) -> None:
-        """Toggle the command/diff detail line."""
+        """Toggle the full raw-arguments line (the command itself is always shown)."""
         self._show_detail = not self._show_detail
         self.query_one("#approval_detail", Static).display = self._show_detail
+
+    def _command_text(self) -> str:
+        """The exact thing being approved, shown up front.
+
+        A command tool's `command` is shown verbatim (`$ <command>`); any other tool's
+        call shows its arguments dict, so the human always sees precisely what will run.
+
+        Returns:
+            The command line (or the arguments) to display.
+        """
+        command = self.tool_input.get("command")
+        return f"$ {command}" if command is not None else str(self.tool_input)
 
 
 class DiffModal(ModalScreen[None]):
