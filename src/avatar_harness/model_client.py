@@ -190,8 +190,9 @@ _KIND_FRAMING = {
         "any instrumentation first."
     ),
     "edit": (
-        "Your mission: make a WORKING code change. Inspect what you will modify, then "
-        "apply a patch; an external verifier will run real tests/lint on your diff."
+        "Your mission: make a WORKING code change. Inspect what you will modify, then edit "
+        "with str_replace (or write_file to create or rewrite a file); an external verifier "
+        "will run real tests/lint on your diff."
     ),
     "test_only": (
         "Your mission: ADD or change tests that capture the intended behavior. The new "

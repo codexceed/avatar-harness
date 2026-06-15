@@ -50,7 +50,7 @@ Return the tools the runner will admit in `phase` for `task_kind` (§2.6).
 
 Like `active_for_phase`, but also includes the edit-intent bootstrap, so the
 model is advertised *exactly* what the runner's gate would let it execute —
-notably `apply_patch` from `investigating` on an edit task.
+notably `str_replace` from `investigating` on an edit task.
 
 Args:
     phase: The phase to filter by.
@@ -170,5 +170,5 @@ Args:
 
 Returns:
     True if `phase` is in the tool's phases, or `tool` is an edit-intent tool on an
-    edit-shaped task (the bootstrap that surfaces `apply_patch` from `investigating`),
+    edit-shaped task (the bootstrap that surfaces `str_replace` from `investigating`),
     or `tool` is tier-1 on an investigate task (transient instrumentation, ADR-0005).

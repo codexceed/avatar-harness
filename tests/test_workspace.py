@@ -295,6 +295,8 @@ def test_workspace_replace_empty_new_deletes_the_span(git_repo):
     ws = Workspace(git_repo)
     ws.replace("calc.py", "    return a - b\n", "")
     assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n"
+
+
 # --- file deletion (ADR-0015) ----------------------------------------------
 
 

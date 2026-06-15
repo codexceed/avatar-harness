@@ -171,7 +171,7 @@ elif isinstance(event, ApprovalRequested):
   `asyncio.to_thread` keeps it breathing.
 
 <Note>
-  Creating `chatbot.py` won't prompt: `write_file`/`apply_patch` are tier 1 and
+  Creating `chatbot.py` won't prompt: the edit tools (`str_replace`/`write_file`/`delete_file`) are tier 1 and
   auto-allow once their target paths validate inside the workspace — the verifier
   judges the resulting diff. To see an approval fire, give a goal that needs a
   command (a build step, a migration), or target a denylisted path and watch it

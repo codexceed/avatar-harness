@@ -71,7 +71,7 @@ Five load-bearing invariants thread through every component — violating one qu
 
 4. **Control hooks vs. observation events are a hard line (§13).** The permission gate (`before_tool_call`) is an *awaited control hook* that can block/redirect the loop. The event emitter is *observation-only*: synchronous, fire-and-forget, cannot alter control flow. `EventLog` (JSONL) and the CLI display are subscribers. Never route control through the emitter, and never make permission an event subscriber.
 
-5. **Everything is reversible and observable.** Operate on a tracked, path-confined `Workspace`; every edit is an inspectable diff (`apply_patch` is atomic/all-or-nothing). Append-only JSONL event log gives replay/debug/eval for free.
+5. **Everything is reversible and observable.** Operate on a tracked, path-confined `Workspace`; every edit is an inspectable diff (`str_replace`/`write_file` are atomic/all-or-nothing). Append-only JSONL event log gives replay/debug/eval for free.
 
 ### Two axes that are deliberately kept separate
 

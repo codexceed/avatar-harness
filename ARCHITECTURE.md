@@ -119,7 +119,7 @@ Control hooks are **awaited function calls with return values the runner acts on
 
 A **task** = one goal handed to the runner, pursued over many turns until it reaches exactly one terminal **outcome**, producing one **Artifact**. One task ↔ one `TaskState`. It is the atomic *unit of the runner's contract*, but internally composite (many turns) and **not** transactional — a non-`success` task can leave partial edits in the workspace (auto-rollback is deferred, `§21`).
 
-Nesting: `Session ⊃ Task ⊃ Turn ⊃ Tool action` (the tool action is the atomic step; `apply_patch` is all-or-nothing).
+Nesting: `Session ⊃ Task ⊃ Turn ⊃ Tool action` (the tool action is the atomic step; an edit — `str_replace`/`write_file` — is all-or-nothing).
 
 ### 3.1 Two independent axes: `phase` and `outcome`
 
