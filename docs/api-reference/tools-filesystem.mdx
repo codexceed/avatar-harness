@@ -24,7 +24,7 @@ Input for `read_file`: a workspace path and optional 1-indexed line range.
 
 `line_range` is a `list[int]` (`[start, end]`), not a `tuple` — a tuple renders to
 JSON Schema as `prefixItems` *without* an `items` key, which Gemini's request validator
-rejects (ADR-0017). A plain list emits a provider-agnostic `&#123;"type": "array", "items":
+rejects (ADR-0019). A plain list emits a provider-agnostic `&#123;"type": "array", "items":
 &#123;"type": "integer"&#125;&#125;`; the exactly-two / ordering contract is enforced by the validator.
 
 ```python

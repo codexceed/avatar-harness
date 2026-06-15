@@ -18,7 +18,7 @@ _CALC = "def add(a, b):\n    return a - b\n"  # the file the git_repo fixture co
 
 @pytest.mark.parametrize("variant", ["CREDENTIALS", "Credentials", "credentials"])
 def test_workspace_read_refuses_case_variants_of_sensitive_path(tmp_path, variant):
-    # Defense-in-depth (ADR-0019): the Workspace chokepoint itself refuses every case variant
+    # Defense-in-depth (ADR-0021): the Workspace chokepoint itself refuses every case variant
     # of a denylisted path, independent of the permission gate — so a case-insensitive FS can't
     # serve `CREDENTIALS` past the `credentials*` denylist even if a caller skips the gate.
     (tmp_path / "credentials").write_text("sk-SECRET\n", encoding="utf-8")
@@ -44,22 +44,35 @@ def test_workspace_reads_inside_root(tmp_path):
     assert ws.read("hello.txt") == "line1\nline2\n"
 
 
-def test_workspace_hides_harness_journal_from_tools(tmp_path):
-    # The harness writes its journal under the workspace; the file tools hide exactly the
-    # active log + its `latest.jsonl` pointer (Q1) — never a whole `events/` dir a project owns.
+def test_workspace_hides_whole_journal_dir_from_tools(tmp_path):
+    # The harness journal dir is harness plumbing: hide the WHOLE dir — every session's
+    # journal + the pointer — so the agent never lists/reads a sibling run's event log
+    # (ADR-0018; the dogfood leak where it read `events/<other>.jsonl`).
     (tmp_path / "events").mkdir()
-    for name in ("abc.jsonl", "latest.jsonl", "user_data.jsonl"):
+    for name in ("abc.jsonl", "latest.jsonl", "OLDSESSION.jsonl"):
         (tmp_path / "events" / name).write_text("{}\n", encoding="utf-8")
     (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
     ws = Workspace(tmp_path, log_path="events/abc.jsonl")
 
     listed = ws.list_files("**/*")
-    assert "app.py" in listed
-    assert "events/abc.jsonl" not in listed  # the active journal — hidden
-    assert "events/latest.jsonl" not in listed  # its pointer — hidden
-    assert "events/user_data.jsonl" in listed  # a real project file — visible
-    with pytest.raises(FileNotFoundError):
-        ws.read("events/abc.jsonl")  # invisible to read, too
+    assert "app.py" in listed  # the real project stays visible
+    assert not any(p.startswith("events/") for p in listed)  # the whole journal dir is hidden
+    for hidden in ("events/abc.jsonl", "events/latest.jsonl", "events/OLDSESSION.jsonl"):
+        with pytest.raises(FileNotFoundError):
+            ws.read(hidden)  # invisible to read, too — including sibling sessions
+
+
+def test_workspace_journal_in_root_hides_only_file_not_workspace(tmp_path):
+    # When the journal sits directly in the root (e.g. `--log ./run.jsonl`), hide just the
+    # file + pointer — never the whole workspace (ADR-0018 guard).
+    (tmp_path / "run.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "latest.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    ws = Workspace(tmp_path, log_path="run.jsonl")
+
+    listed = ws.list_files("**/*")
+    assert "app.py" in listed  # the workspace is NOT wholesale hidden
+    assert "run.jsonl" not in listed and "latest.jsonl" not in listed  # only the journal pair
 
 
 def test_workspace_hides_nothing_without_log_path(tmp_path):

@@ -1,4 +1,4 @@
-# ADR 0018 — Guard probes: a no-leak check is necessary, not sufficient
+# ADR 0020 — Guard probes: a no-leak check is necessary, not sufficient
 
 - **Status:** Accepted — implemented 2026-06-15
 - **Date:** 2026-06-15

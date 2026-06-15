@@ -203,7 +203,7 @@ def _array_schemas(node):
 
 
 def test_read_file_schema_arrays_are_provider_agnostic():
-    # ADR-0017: a tool input schema must not emit a `prefixItems` array without `items`
+    # ADR-0019: a tool input schema must not emit a `prefixItems` array without `items`
     # (pydantic's tuple rendering), which Gemini's request validator rejects. Every array
     # branch declares `items` and no branch uses `prefixItems`.
     schema = read_file.input_model.model_json_schema()

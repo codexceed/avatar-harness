@@ -125,7 +125,8 @@ Args:
     relpath: A workspace-relative POSIX path.
 
 Returns:
-    `True` for the harness's own journal file or its `latest.jsonl` pointer.
+    `True` for the harness's own journal directory (any file under it) or, when
+    the journal sits directly in the root, its file and `latest.jsonl` pointer.
 
 #### `Workspace.list_files(self, glob: str) -> list[str]`
 
@@ -286,7 +287,7 @@ A pattern *without* a slash matches any single path component (gitignore-style
 "match anywhere" — so ``.env`` hits ``a/b/.env`` and ``.ssh`` hits ``.ssh/id_rsa``).
 A pattern *with* a slash is matched against the whole relative path.
 
-Matching is **case-insensitive** (ADR-0019): a case-insensitive filesystem (macOS APFS,
+Matching is **case-insensitive** (ADR-0021): a case-insensitive filesystem (macOS APFS,
 Windows) resolves ``CREDENTIALS`` to the same file as ``credentials``, so a case-sensitive
 denylist is bypassable by varying case. We case-fold both sides via `fnmatchcase` on
 lowered strings — deterministic across platforms (unlike `fnmatch`, whose case behavior

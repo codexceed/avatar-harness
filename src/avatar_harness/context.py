@@ -13,7 +13,7 @@ from avatar_harness.config import (
     DEFAULT_CONTEXT_MAX_DETAIL_CHARS,
     DEFAULT_CONTEXT_VERIFIER_PIN_COUNT,
 )
-from avatar_harness.state import Evidence, TaskState
+from avatar_harness.state import ConversationTurn, Evidence, TaskState
 from avatar_harness.tools.base import ToolRegistry
 from avatar_harness.workspace import Workspace
 
@@ -31,6 +31,8 @@ class ContextPacket(BaseModel):
 
     goal: str
     constraints: list[str] = Field(default_factory=list)
+    # Cross-goal conversation history, replayed as real chat turns ahead of this packet (ADR-0017).
+    conversation: list[ConversationTurn] = Field(default_factory=list)
     phase: str
     task_kind: str = "investigate"  # lets the model adapter frame the prompt per kind (§7)
     plan: list[str] = Field(default_factory=list)
@@ -151,6 +153,7 @@ class ContextBuilder:
         return ContextPacket(
             goal=state.goal,
             constraints=list(state.constraints),
+            conversation=list(state.conversation),
             phase=state.phase,
             task_kind=state.task_kind,
             plan=list(state.current_plan),

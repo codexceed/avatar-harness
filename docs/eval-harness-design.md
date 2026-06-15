@@ -24,7 +24,7 @@ column, not an assertion.
 
 **Goals (Eval-0):**
 - A `make eval` runner that scores N task specs hermetically and emits one JSONL row per run.
-- Score = **deterministic** (option A + ADR-0018): a **success probe** is authoritative (`solved = probe exit 0`, agent runs **non-strict**); a **guard probe** is necessary-but-not-sufficient (`solved = probe exit 0 AND` the agent reached a clean conclusion); a no-probe task is graded by the harness verifier. No LLM judge.
+- Score = **deterministic** (option A + ADR-0020): a **success probe** is authoritative (`solved = probe exit 0`, agent runs **non-strict**); a **guard probe** is necessary-but-not-sufficient (`solved = probe exit 0 AND` the agent reached a clean conclusion); a no-probe task is graded by the harness verifier. No LLM judge.
 - A **multi-model matrix** (`make eval MODELS=...`) → pass@1 × $/solve grid; default model chosen empirically.
 - Statistically honest reporting: pass@1 ± clustered CI, **pass^k** (reliability), paired regression detection.
 - A mechanical **failure-mode histogram** read from the journal.
@@ -132,7 +132,7 @@ sequenceDiagram
 
 ## 6. The scoring model — what "solved" means
 
-**Option A (decided 2026-06-14, after the first live smoke) + guard refinement (ADR-0018,
+**Option A (decided 2026-06-14, after the first live smoke) + guard refinement (ADR-0020,
 2026-06-15):** a task-authored probe declares a **role**. A **success probe** (`probe_role =
 "success"`, the default) is **authoritative when present** — `solved = probe exit 0`, agent runs
 **non-strict** (it delivers its best and we grade it, rather than thrashing toward an edit gate a

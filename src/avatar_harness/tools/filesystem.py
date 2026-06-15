@@ -13,7 +13,7 @@ _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 # thousands, which would blow the context (the full count is kept in the summary).
 _LIST_CAP = 1000
 
-# A line range is exactly `[start, end]` — two 1-indexed line numbers (ADR-0017).
+# A line range is exactly `[start, end]` — two 1-indexed line numbers (ADR-0019).
 _LINE_RANGE_LEN = 2
 
 
@@ -22,7 +22,7 @@ class ReadFileInput(BaseModel):
 
     `line_range` is a `list[int]` (`[start, end]`), not a `tuple` — a tuple renders to
     JSON Schema as `prefixItems` *without* an `items` key, which Gemini's request validator
-    rejects (ADR-0017). A plain list emits a provider-agnostic `{"type": "array", "items":
+    rejects (ADR-0019). A plain list emits a provider-agnostic `{"type": "array", "items":
     {"type": "integer"}}`; the exactly-two / ordering contract is enforced by the validator.
     """
 

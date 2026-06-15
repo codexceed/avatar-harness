@@ -1,6 +1,6 @@
 [project]
 name = "avatar-harness"
-version = "1.0.1"
+version = "1.1.0"
 description = "A minimal, ground-up coding agent harness: a bounded, verifiable loop around an LLM."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -20,7 +20,7 @@ dependencies = [
 openai = ["openai>=1.40"]
 # The interactive TUI cockpit (Phase 3.1 Lane 2). The core engine + SDK import without
 # it; `avatar_harness.tui` guards its import and the CLI prints an install hint.
-textual = ["textual>=0.50"]
+textual = ["textual>=0.50", "rich>=13"]  # rich: the cockpit styles transcript lines (rich.text.Text)
 
 [dependency-groups]
 # Hard-gate tools are pinned and installed (reproducible CI gate).

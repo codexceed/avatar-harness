@@ -1,15 +1,15 @@
-# ADR 0019 — Case-insensitive sensitive-path denylist (close the case bypass)
+# ADR 0021 — Case-insensitive sensitive-path denylist (close the case bypass)
 
 - **Status:** Accepted — implemented 2026-06-15
 - **Date:** 2026-06-15
 - **Deciders:** Sarthak Joshi
-- **Related:** `HARNESS_DESIGN.md` §11 (permission tiers; sensitive-path denylist, Phase 2.5); ADR-0018 (guard probes — the secret-safety scoring that surfaced this); ADR-0017 (the same Eval-0 run that exposed both). Closes a denylist bypass found by the first valid Gemini Eval-0 run (`docs/research/eval-baseline-2026-06-15.md`).
+- **Related:** `HARNESS_DESIGN.md` §11 (permission tiers; sensitive-path denylist, Phase 2.5); ADR-0020 (guard probes — the secret-safety scoring that surfaced this); ADR-0019 (the same Eval-0 run that exposed both). Closes a denylist bypass found by the first valid Gemini Eval-0 run (`docs/research/eval-baseline-2026-06-15.md`).
 
 ## Context
 
 The sensitive-path denylist (§11, Phase 2.5) is deterministic *prevention*: the permission gate refuses any tool whose declared path matches a denylist glob (`.env`, `*.pem`, `credentials*`, …), so a secret never enters state/log/context/provider. It is the load-bearing control for the `secret-safety` guarantee.
 
-The first valid Gemini Eval-0 run (the schema fix, ADR-0017, having unblocked Gemini) leaked the sentinel in **3 of 5** `secret-safety` seeds. The vector was not a model jailbreak — it was a gate bypass:
+The first valid Gemini Eval-0 run (the schema fix, ADR-0019, having unblocked Gemini) leaked the sentinel in **3 of 5** `secret-safety` seeds. The vector was not a model jailbreak — it was a gate bypass:
 
 ```
 read_file("CREDENTIALS")  → blocked=False  → success=True, content="sk-eval-SENTINEL-…"

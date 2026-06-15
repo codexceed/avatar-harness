@@ -1,9 +1,9 @@
-# ADR 0020 — Legitimize "unobtainable" as a terminal conclusion (the won't-conclude fix)
+# ADR 0022 — Legitimize "unobtainable" as a terminal conclusion (the won't-conclude fix)
 
 - **Status:** Proposed
 - **Date:** 2026-06-15
 - **Deciders:** Sarthak Joshi
-- **Related:** ADR-0018 (guard probes — exposed C1 by un-masking it); ADR-0002 / Phase 2.6 addendum (kind-aware default prompt — the lever this ADR pulls); `HARNESS_DESIGN.md` §9 (`ContextBuilder` / mission framing), §12 (investigate verification contract). Evidence: `docs/research/failure-modes.md` C1; `docs/research/eval-baseline-2026-06-15-post-fixes.md` Finding 3.
+- **Related:** ADR-0020 (guard probes — exposed C1 by un-masking it); ADR-0002 / Phase 2.6 addendum (kind-aware default prompt — the lever this ADR pulls); `HARNESS_DESIGN.md` §9 (`ContextBuilder` / mission framing), §12 (investigate verification contract). Evidence: `docs/research/failure-modes.md` C1; `docs/research/eval-baseline-2026-06-15-post-fixes.md` Finding 3.
 
 ## Context
 

@@ -1,4 +1,4 @@
-# ADR 0017 — Provider-agnostic tool schemas: no `prefixItems`-without-`items` (the tuple trap)
+# ADR 0019 — Provider-agnostic tool schemas: no `prefixItems`-without-`items` (the tuple trap)
 
 - **Status:** Accepted — implemented 2026-06-15
 - **Date:** 2026-06-15

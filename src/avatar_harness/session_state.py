@@ -32,7 +32,7 @@ from avatar_harness.harness import Harness
 from avatar_harness.intent import ModeClassifier
 from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.session import ApprovalGrant, Session
-from avatar_harness.state import TaskState
+from avatar_harness.state import ConversationTurn, TaskState
 from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathError, Workspace
 
 TaskKind = Literal["edit", "investigate", "test_only"]
@@ -374,10 +374,8 @@ class ReplSession:
             A not-yet-started `Session` wired with the session-scoped grants.
         """
         task = TaskState(goal=prompt, task_kind=kind, constraints=list(extra_constraints or ()))
-        self._seed_history(task)  # prior turns become initial evidence (before this turn is added)
+        self._seed_history(task)  # prior turns become the task's conversation (before this turn is added)
         self._ground_paths(task, prompt)  # @path references seed the named files as context
-        if append_turn:
-            self.state.history.append(Turn(role="user", text=prompt))
         # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.
         # Strict clean-start applies to the sitting's FIRST goal only: once a workspace has
         # opened, later dirt is the session's own work product (or deliberate user edits
@@ -386,16 +384,33 @@ class ReplSession:
             allow_dirty=self.allow_dirty or self._tree_claimed, conversational=not self.auto
         )
         self._tree_claimed = True  # only reached when the workspace opened (no DirtyWorkspaceError)
+        # Record the user turn ONLY after the workspace opens: a goal that fails to start
+        # (e.g. DirtyWorkspaceError on the first goal) must not leave a phantom prompt that
+        # `_seed_history` would replay as a real user turn on the next goal (ADR-0017).
+        if append_turn:
+            self.state.history.append(Turn(role="user", text=prompt))
         return Session(runner, task, grants=self.state.grants, journal=self.journal)
 
     def record(self, state: TaskState) -> None:
         """Record a finished goal: append the terminal task and the agent's reply turn.
 
+        A goal that ended by asking the user records the **question** as its agent turn,
+        not the bare outcome. Otherwise the next user message — which is the *answer* —
+        seeds history as `agent: blocked` and reads to the model as a fresh, contextless
+        goal, so it re-asks and the conversation goes in circles (dogfood
+        `events/f0957ed4…jsonl`). Preference: the final answer, then the open question,
+        then the outcome.
+
         Args:
             state: The terminal `TaskState` returned by `session.run()`.
         """
         self.state.tasks.append(state)
-        reply = state.final_answer or (state.outcome or "done")
+        # The open question stands in for the reply only when the goal actually blocked on
+        # it. Guarding on `blocked` pins today's "an ask always blocks" assumption: once the
+        # runner's anticipated interactive-answer path lets a goal answer an ask inline and
+        # still succeed, a leftover open question must not shadow the real answer/outcome.
+        asked = state.outcome == "blocked" and bool(state.open_questions)
+        reply = state.final_answer or (state.open_questions[-1] if asked else None) or state.outcome or "done"
         self.state.history.append(Turn(role="agent", text=reply, task_id=state.task_id))
         # The routing memo is intra-goal only (start() re-resolves the same prompt):
         # a finished goal changes the conversation, so the same text next turn must
@@ -597,13 +612,19 @@ class ReplSession:
         return ws.diff()
 
     def _seed_history(self, task: TaskState) -> None:
-        """Seed prior conversation into `task` as initial `history` evidence (not transcript bleed).
+        """Seed prior conversation onto `task` as real chat turns (ADR-0017, not evidence bullets).
+
+        Prior goals/replies become `ConversationTurn`s the model client replays as genuine
+        `role="user"`/`role="assistant"` messages ahead of the working packet — the model
+        under-weighted them as flattened "Recent evidence" and re-asked answered questions.
+        An agent turn maps to `"assistant"`; a user turn to `"user"`.
 
         Args:
             task: The fresh per-goal `TaskState` to seed.
         """
         for turn in self.state.history:
-            task.add_feedback(f"{turn.role}: {turn.text}", kind="history")
+            role: Literal["user", "assistant"] = "assistant" if turn.role == "agent" else "user"
+            task.conversation.append(ConversationTurn(role=role, content=turn.text))
 
     def _ground_paths(self, task: TaskState, prompt: str) -> None:
         """Seed any `@path` references in `prompt` as `grounding` evidence on `task`.

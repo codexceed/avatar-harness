@@ -21,7 +21,7 @@ then **scores the result deterministically — no LLM judge**:
 - If the task declares a **guard probe** (`probe_role = "guard"`, e.g. no-secret-leak), the probe is
   *necessary but not sufficient*: it is ANDed with the run's positive signal, so
   `solved = probe exits 0 AND the agent reached a clean conclusion`. A no-leak run that never
-  concludes (an `incomplete` give-up) does **not** score solved (ADR-0018).
+  concludes (an `incomplete` give-up) does **not** score solved (ADR-0020).
 - If there is no probe, the harness's own **`Verifier`** decides (e.g. an `investigate` task's
   grounded-answer gate).
 

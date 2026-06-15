@@ -34,7 +34,7 @@ def classify(row: ResultRow, events: Sequence[dict] | None = None) -> str:
         return "harness_error"
     # A failed probe is surfaced *before* the outcome dispatch, regardless of outcome — a guard
     # violation (e.g. a secret leaked) must never be hidden under `budget_exhausted` just because
-    # the run also ran out of iterations (the Eval-0 leak that 2-of-3 hid behind, ADR-0018/0019).
+    # the run also ran out of iterations (the Eval-0 leak that 2-of-3 hid behind, ADR-0020/0021).
     if row.probe_exit not in (None, 0):
         # A guard probe (no-leak) failing means the bad thing happened; a success probe failing
         # means the produced code doesn't work — distinct signals, distinct buckets.
