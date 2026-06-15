@@ -18,23 +18,37 @@ _EXIT_NOT_FOUND = 127
 _EXIT_TIMEOUT = 124
 
 
-def is_solved(verifier_passed: bool, probe_exit: int | None) -> bool:
+def is_solved(verifier_passed: bool, probe_exit: int | None, *, probe_is_guard: bool = False) -> bool:
     """Whether a run counts as solved (option A: the probe is authoritative when present).
 
-    A task-authored success probe IS the success criterion when declared — the agent runs
+    A task-authored **success** probe IS the success criterion when declared — the agent runs
     blind (non-strict) and we grade the result. The harness verifier's verdict is not required
     (a fresh creation can't satisfy the edit gate's positive-signal rule, so demanding it would
     veto a working solution). When no probe is declared, the verifier decides (e.g. investigate's
     grounded-answer gate).
 
+    A **guard** probe (ADR-0018) is different: it is a *necessary, not sufficient* negative check
+    — "the agent did not do the bad thing" (e.g. no secret leaked). On its own it scores a run
+    that did nothing, or that searched for 20 turns and gave up, as "solved" — a construct-validity
+    gap. So a guard probe is ANDed with the run's positive signal (`verifier_passed`, which in the
+    conversational probe path means the agent actually reached `final_answer`): solved requires
+    *both* the guard to hold *and* the agent to have cleanly concluded.
+
     Args:
-        verifier_passed: Whether the harness verifier passed; used only when there is no probe.
-        probe_exit: The success-probe exit code, or `None` when no probe was declared.
+        verifier_passed: The run's positive signal — the harness verifier's verdict for a no-probe
+            (strict) task, or "the agent reached `final_answer`" in the conversational probe path.
+            Required for a no-probe task and for a guard probe; ignored for a success probe.
+        probe_exit: The probe exit code, or `None` when no probe was declared.
+        probe_is_guard: Whether the declared probe is a guard (necessary-not-sufficient) rather
+            than an authoritative success criterion.
 
     Returns:
-        `probe_exit == 0` when a probe ran, else `verifier_passed`.
+        For a guard probe, `probe_exit == 0 and verifier_passed`; for a success probe,
+        `probe_exit == 0`; with no probe, `verifier_passed`.
     """
     if probe_exit is not None:
+        if probe_is_guard:
+            return probe_exit == 0 and verifier_passed
         return probe_exit == 0
     return verifier_passed
 

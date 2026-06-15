@@ -11,7 +11,7 @@ import shlex
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 from avatar_harness.config import DEFAULT_SENSITIVE_PATH_GLOBS
@@ -24,6 +24,13 @@ def path_is_sensitive(rel_path: str, globs: Sequence[str]) -> bool:
     "match anywhere" — so ``.env`` hits ``a/b/.env`` and ``.ssh`` hits ``.ssh/id_rsa``).
     A pattern *with* a slash is matched against the whole relative path.
 
+    Matching is **case-insensitive** (ADR-0019): a case-insensitive filesystem (macOS APFS,
+    Windows) resolves ``CREDENTIALS`` to the same file as ``credentials``, so a case-sensitive
+    denylist is bypassable by varying case. We case-fold both sides via `fnmatchcase` on
+    lowered strings — deterministic across platforms (unlike `fnmatch`, whose case behavior
+    rides `os.path.normcase`, a no-op on macOS) and conservative (over-matching a denylist is
+    the safe direction).
+
     Args:
         rel_path: The workspace-relative path to test.
         globs: The denylist patterns.
@@ -31,12 +38,14 @@ def path_is_sensitive(rel_path: str, globs: Sequence[str]) -> bool:
     Returns:
         `True` if any pattern matches, else `False`.
     """
-    parts = PurePosixPath(rel_path).parts
+    rel_lower = rel_path.lower()
+    parts = PurePosixPath(rel_lower).parts
     for glob in globs:
+        pattern = glob.lower()
         if "/" in glob:
-            if fnmatch(rel_path, glob):
+            if fnmatchcase(rel_lower, pattern):
                 return True
-        elif any(fnmatch(part, glob) for part in parts):
+        elif any(fnmatchcase(part, pattern) for part in parts):
             return True
     return False
 

@@ -137,7 +137,8 @@ def run_task(
         state = asyncio.run(session.run())
         # `outcome == "success"` is the verifier's verdict only for a no-probe (strict) task; in
         # conversational mode it just means the agent reached `final_answer`. `is_solved` uses it
-        # ONLY when there is no probe — probe-bearing tasks are graded by the probe (option A).
+        # when there is no probe, AND as the positive signal a *guard* probe is ANDed with (ADR-0018)
+        # — so a no-leak guard plus a give-up `incomplete` run does not score solved.
         reached_success = state.outcome == "success"
         probe_exit = (
             run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
@@ -146,7 +147,7 @@ def run_task(
             task=spec.id,
             model=cfg.model,
             seed=seed,
-            solved=is_solved(reached_success, probe_exit),
+            solved=is_solved(reached_success, probe_exit, probe_is_guard=spec.probe_role == "guard"),
             outcome=state.outcome,
             iterations=state.iterations,
             prompt_tokens=state.prompt_tokens,

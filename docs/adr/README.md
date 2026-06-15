@@ -9,7 +9,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0001](0001-async-event-bus-and-durable-execution.md) | Async lifecycle event bus, two-plane UX integration, and durable execution | Accepted (durable execution deferred to 3.3) |
 | [0002](0002-interactive-tui-cockpit-and-mvp-feature-set.md) | Interactive TUI cockpit and the MVP coding-agent feature set | Accepted (implemented; D3 revised 2026-06-10) |
 | [0003](0003-file-creation-transport.md) | A robust transport for file creation (and large mutations) | Accepted (A + B implemented) |
-| [0004](0004-internal-eval-harness.md) | Internal eval harness: dogfood incidents as a scored regression suite | Accepted (Eval-0, PR #47; scoring revised to option-A) |
+| [0004](0004-internal-eval-harness.md) | Internal eval harness: dogfood incidents as a scored regression suite | Accepted (Eval-0, PR #47; scoring revised to option-A; amended by ADR-0018) |
 | [0005](0005-transient-edits-in-investigate.md) | Transient edits in `investigate` tasks (net-zero-diff relaxation) | Accepted — implemented 2026-06-11 |
 | [0006](0006-git-independent-project-scope.md) | Git-independent project scope for file discovery | Proposed |
 | [0007](0007-dynamic-verification-plan-resolution.md) | Dynamic, no-dependency verification-plan resolution | Accepted — implemented 2026-06-11 |
@@ -22,6 +22,9 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0014](0014-greenfield-self-authored-verification.md) | Greenfield self-authored verification (the no-contract floor) | Accepted — implemented 2026-06-14 |
 | [0015](0015-string-anchored-edit-transport.md) | String-anchored editing (`str_replace`) as the primary edit transport | Proposed |
 | [0016](0016-autonomous-approval-disposition.md) | Autonomous approval disposition: unattended runs deny `ask`s by default | Accepted — implemented 2026-06-15 |
+| [0017](0017-provider-agnostic-tool-schemas.md) | Provider-agnostic tool schemas: no `prefixItems`-without-`items` (the tuple trap) | Accepted — implemented 2026-06-15 |
+| [0018](0018-guard-probes.md) | Guard probes: a no-leak check is necessary, not sufficient | Accepted — implemented 2026-06-15 |
+| [0019](0019-case-insensitive-sensitive-path-denylist.md) | Case-insensitive sensitive-path denylist (close the case bypass) | Accepted — implemented 2026-06-15 |
 
 ## Conventions
 

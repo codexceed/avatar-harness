@@ -190,6 +190,43 @@ def test_read_missing_file_is_model_correctable(tmp_path):
     assert "not found" in (result.error or "")
 
 
+def _array_schemas(node):
+    """Yield every JSON-schema subobject describing an array (recursively)."""
+    if isinstance(node, dict):
+        if node.get("type") == "array":
+            yield node
+        for value in node.values():
+            yield from _array_schemas(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _array_schemas(item)
+
+
+def test_read_file_schema_arrays_are_provider_agnostic():
+    # ADR-0017: a tool input schema must not emit a `prefixItems` array without `items`
+    # (pydantic's tuple rendering), which Gemini's request validator rejects. Every array
+    # branch declares `items` and no branch uses `prefixItems`.
+    schema = read_file.input_model.model_json_schema()
+    arrays = list(_array_schemas(schema))
+    assert arrays, "expected at least the line_range array branch"
+    for arr in arrays:
+        assert "items" in arr, f"array schema missing 'items': {arr}"
+        assert "prefixItems" not in arr, f"array schema uses prefixItems: {arr}"
+
+
+def test_read_file_line_range_reads_slice(tmp_path):
+    (tmp_path / "f.txt").write_text("a\nb\nc\nd\n", encoding="utf-8")
+    result = _runtime(tmp_path).execute("read_file", {"path": "f.txt", "line_range": [2, 3]})
+    assert result.success is True
+    assert result.content == "b\nc\n"
+
+
+def test_read_file_line_range_must_be_a_pair(tmp_path):
+    (tmp_path / "f.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    result = _runtime(tmp_path).execute("read_file", {"path": "f.txt", "line_range": [1, 2, 3]})
+    assert result.success is False  # model-correctable validation feedback, not a crash
+
+
 def test_registry_exposes_only_phase_tools():
     reg = _registry()
     reg.register(

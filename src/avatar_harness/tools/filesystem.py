@@ -1,6 +1,6 @@
 """Read-only filesystem tools: read_file, list_files (§10, tier 0)."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from avatar_harness.deps import RunDeps
 from avatar_harness.tools.base import ToolDefinition, ToolResult
@@ -13,17 +13,39 @@ _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 # thousands, which would blow the context (the full count is kept in the summary).
 _LIST_CAP = 1000
 
+# A line range is exactly `[start, end]` — two 1-indexed line numbers (ADR-0017).
+_LINE_RANGE_LEN = 2
+
 
 class ReadFileInput(BaseModel):
-    """Input for `read_file`: a workspace path and optional 1-indexed line range."""
+    """Input for `read_file`: a workspace path and optional 1-indexed line range.
+
+    `line_range` is a `list[int]` (`[start, end]`), not a `tuple` — a tuple renders to
+    JSON Schema as `prefixItems` *without* an `items` key, which Gemini's request validator
+    rejects (ADR-0017). A plain list emits a provider-agnostic `{"type": "array", "items":
+    {"type": "integer"}}`; the exactly-two / ordering contract is enforced by the validator.
+    """
 
     path: str
-    line_range: tuple[int, int] | None = None
+    line_range: list[int] | None = None
+
+    @field_validator("line_range")
+    @classmethod
+    def _validate_line_range(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return value
+        if len(value) != _LINE_RANGE_LEN:
+            raise ValueError("line_range must be [start, end] — two 1-indexed line numbers")
+        start, end = value
+        if start < 1 or end < start:
+            raise ValueError("line_range must satisfy 1 <= start <= end")
+        return value
 
 
 def _read_file(args: ReadFileInput, deps: RunDeps) -> ToolResult:
+    line_range = (args.line_range[0], args.line_range[1]) if args.line_range else None
     try:
-        content = deps.workspace.read(args.path, args.line_range)
+        content = deps.workspace.read(args.path, line_range)
     except FileNotFoundError:
         return ToolResult(tool_name="read_file", success=False, error=f"file not found: {args.path}")
     except PathOutsideWorkspaceError:

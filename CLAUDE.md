@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**In active development — TDD, phased.** The engine is built through Phase 3.2 (the MVP cockpit), plus post-MVP dogfood hardening; durable crash-resume (3.3) is the remaining increment. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
+**In active development — TDD, phased.** The MVP cockpit (through Phase 3.2) is shipped (v1.0.x), plus post-MVP dogfood hardening. Current focus is the **eval-driven improvement loop** (Phase 4 — eval harness + observability), where agent changes iterate against measured data. Durable crash-resume (3.3) is **deferred, not next**: it's a contained increment on the already-built event journal, to be pulled forward only when an eval run's per-trajectory crash cost is a *measured* problem (e.g. long autonomous tasks in Eval-2) — not built ahead of that friction. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
 
 ## Documentation map — which doc, when
 
