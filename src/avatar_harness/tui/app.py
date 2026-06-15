@@ -185,6 +185,11 @@ class CockpitApp(App):
             A one-line rendering (styled or plain), or `None` to skip the transcript.
         """
         if isinstance(event, AgentStart):
+            # Drive mode already echoed the user's turn on submit (and AgentStart fires
+            # twice in plan mode); suppress it here. Observe mode (no repl — replay) has
+            # no submit echo, so AgentStart is the only user representation: keep it.
+            if self.repl is not None:
+                return None
             line = Text("▶ you", style="bold cyan")
             line.append(f"  {event.goal}", style="")
             return line
@@ -283,6 +288,12 @@ class CockpitApp(App):
         if self.repl.is_meta(text):
             self._handle_meta(text)
         else:
+            # Echo the user's turn immediately, before the run starts: in drive mode the
+            # AgentStart goal line is suppressed (it would otherwise double here, and fire
+            # twice in plan mode), so this is the sole rendering of what the human typed.
+            line = Text("▶ you", style="bold cyan")
+            line.append(f"  {text}", style="")
+            self._write(line)
             # Disable input synchronously: classification runs before AgentStart (whose
             # handler used to be the only disabler), and that window let a second goal
             # start and race the first (PR-#32 review). Re-enabled in _run_goal's finally.

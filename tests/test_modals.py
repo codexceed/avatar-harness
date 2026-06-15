@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("textual")
 
 from textual.app import App
-from textual.widgets import TextArea
+from textual.widgets import Static, TextArea
 
 from avatar_harness.event_types import AgentStart, ApprovalRequested
 from avatar_harness.tui.app import CockpitApp
@@ -63,6 +63,46 @@ async def test_approval_modal_deny():
     host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
     async with host.run_test() as pilot:
         await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=False, remember=False)
+
+
+async def test_approval_modal_allow_once_button():
+    host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#approve-once")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=True, remember=False)
+
+
+async def test_approval_modal_always_button():
+    host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#always")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=True, remember=True)  # always → scoped grant
+
+
+async def test_approval_modal_deny_button():
+    host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#deny")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=False, remember=False)
+
+
+async def test_approval_modal_view_button_toggles_without_dismiss():
+    host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#view")  # reveals the detail, does NOT dismiss
+        await pilot.pause()
+        assert host.screen.query_one("#approval_detail", Static).display is True
+        assert host.result == "UNSET"  # view never resolves the modal
         await pilot.press("d")
         await pilot.pause()
     assert host.result == ApprovalChoice(allow=False, remember=False)

@@ -14,7 +14,7 @@ that `dismiss`es a small typed result the caller routes:
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Static, TextArea
@@ -39,6 +39,10 @@ class PlanChoice:
 class ApprovalModal(ModalScreen[ApprovalChoice]):
     """Render a gated call and collect a `[y]/[a]/[d]` decision (control plane, §13).
 
+    A bounded, centered dialog with a solid background and border so it reads as a
+    *blocking* prompt sitting above the transcript — not a transcript line. The keys
+    `[y]/[a]/[d]/[v]` and the equivalent clickable buttons share one dismiss contract.
+
     Args:
         tool: The tool name awaiting approval.
         reason: The gate's reason, shown to the human.
@@ -52,6 +56,40 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         ("v", "toggle_view", "view"),
     ]
 
+    DEFAULT_CSS = """
+    ApprovalModal {
+        align: center middle;
+    }
+    ApprovalModal #approval_dialog {
+        width: 80%;
+        max-width: 90;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $warning;
+    }
+    ApprovalModal #approval_prompt {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    ApprovalModal #approval_detail {
+        display: none;
+        background: $panel;
+        color: $text-muted;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    ApprovalModal #approval_buttons {
+        height: auto;
+        align-horizontal: center;
+    }
+    ApprovalModal #approval_buttons Button {
+        width: auto;
+        min-width: 0;
+        margin: 0 1;
+    }
+    """
+
     def __init__(self, *, tool: str, reason: str, tool_input: dict) -> None:
         super().__init__()
         self.tool = tool
@@ -60,14 +98,35 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self._show_detail = False
 
     def compose(self) -> Iterator[Widget]:
-        """Render the request summary, the (toggleable) detail, and the key hints.
+        """Render the bounded dialog: summary, the (toggleable) detail, buttons, key hints.
 
         Yields:
-            The prompt, detail, and hint widgets.
+            The dialog container holding the prompt, detail, buttons, and hint widgets.
         """
-        yield Static(f"{self.tool} wants to run — {self.reason}", id="approval_prompt")
-        yield Static(str(self.tool_input), id="approval_detail")
-        yield Static("[y] allow once   [a] always (scoped)   [d] deny   [v] view", id="approval_hints")
+        with VerticalScroll(id="approval_dialog"):
+            yield Static(f"{self.tool} wants to run — {self.reason}", id="approval_prompt")
+            yield Static(str(self.tool_input), id="approval_detail")
+            with Horizontal(id="approval_buttons"):
+                yield Button("Allow once", id="approve-once")
+                yield Button("Always", id="always")
+                yield Button("Deny", id="deny")
+                yield Button("View", id="view")
+            yield Static("[y] allow once   [a] always (scoped)   [d] deny   [v] view", id="approval_hints")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route a button to the same decision its key binding makes (view toggles, no dismiss).
+
+        Args:
+            event: The Textual `Button.Pressed` message identifying which action was chosen.
+        """
+        if event.button.id == "approve-once":
+            self.action_allow_once()
+        elif event.button.id == "always":
+            self.action_allow_always()
+        elif event.button.id == "deny":
+            self.action_deny()
+        elif event.button.id == "view":
+            self.action_toggle_view()
 
     def action_allow_once(self) -> None:
         """Allow this call once (no grant)."""

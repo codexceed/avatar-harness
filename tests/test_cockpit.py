@@ -47,7 +47,7 @@ async def test_cockpit_renders_event_stream():
     async with app.run_test() as pilot:
         await _settle(app, pilot)
     joined = "\n".join(app.rendered)
-    assert "explain x" in joined  # the goal
+    assert "▶ you  explain x" in joined  # observe mode: AgentStart is the only user representation
     assert "read_file" in joined  # the tool activity
     assert "success" in joined  # the terminal outcome
 

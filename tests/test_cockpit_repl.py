@@ -112,6 +112,21 @@ async def test_submit_goal_runs_and_renders(git_repo):
         assert app.query_one("#prompt").disabled is False  # ready for the next goal
 
 
+async def test_drive_mode_echoes_user_turn(git_repo):
+    """The user's typed message renders as a `▶ you` chat turn, echoed on submit."""
+    (git_repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "app.py"})),
+        ModelDecision(action=FinalAnswer(answer="x is set in app.py")),
+    ]
+    app = CockpitApp(repl=_repl(git_repo, decisions))
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain where x is set in app.py")
+        await _settle(app, pilot)
+        you_lines = [line for line in app.rendered if line.startswith("▶ you")]
+        assert you_lines == ["▶ you  explain where x is set in app.py"]  # exactly one, not doubled
+
+
 async def test_multi_turn_records_each_goal(git_repo):
     (git_repo / "app.py").write_text("x = 1\n", encoding="utf-8")
     decisions = [
