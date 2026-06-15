@@ -25,6 +25,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0017](0017-provider-agnostic-tool-schemas.md) | Provider-agnostic tool schemas: no `prefixItems`-without-`items` (the tuple trap) | Accepted — implemented 2026-06-15 |
 | [0018](0018-guard-probes.md) | Guard probes: a no-leak check is necessary, not sufficient | Accepted — implemented 2026-06-15 |
 | [0019](0019-case-insensitive-sensitive-path-denylist.md) | Case-insensitive sensitive-path denylist (close the case bypass) | Accepted — implemented 2026-06-15 |
+| [0020](0020-unobtainable-as-terminal-conclusion.md) | Legitimize "unobtainable" as a terminal conclusion (the won't-conclude fix) | Proposed |
 
 ## Conventions
 

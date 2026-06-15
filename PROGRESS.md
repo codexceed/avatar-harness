@@ -317,10 +317,12 @@ The single sequential spine the lanes fan out around: the typed event union, the
 
 From §21, one at a time, each justified by friction actually hit.
 
-- [~] **Eval & observability harness** — *in progress (PR #47): the **Eval-0 harness** (Slices 1 + 2) is built — see `docs/eval-harness-design.md`; design in **ADR-0004** (Accepted; scoring revised to option-A). Prerequisite already landed: provider token-usage capture + `model_usage` event (PR #31). Remaining: live full-matrix baseline; tracer/external benchmarks (Eval-2).* Make agent performance measurable so changes iterate against data, not vibes:
-  - **internal eval harness**: a fixed task set (goal + checkable outcome) → run agent → the **`Verifier` scores pass/fail** (the verifier *is* the scorer) → aggregate **resolution rate (pass@1)**, iterations-to-solve, tokens/cost-per-solved, and a failure-mode histogram (incl. oscillation/loop detection); diff vs. the previous run for regression.
-  - **tracer**: wire one as an emitter subscriber (Langfuse recommended — self-hostable); adopt OpenTelemetry GenAI conventions to stay vendor-neutral.
-  - **external comparability** (later): SWE-bench Verified · Terminal-Bench · Aider polyglot.
+- [~] **Eval & observability harness** — *the internal Eval-0 harness is **built and exercised**; the eval-driven loop has run one full cycle (baseline → findings → fixes → corrected re-run). Design in `docs/eval-harness-design.md` + **ADR-0004** (Accepted; scoring revised to option-A). Remaining: observability tracer; external benchmarks (Eval-2).* Make agent performance measurable so changes iterate against data, not vibes:
+  - [x] **internal eval harness** (`evals/`, PRs #47/#49/#62/#65): a TOML task set (goal + checkable outcome) → run agent → score pass/fail (the **probe** is authoritative when present, ADR-0018; else the **`Verifier`**) → aggregate **pass@1 / pass^k**, iterations-to-solve, tokens-per-solved, clustered CIs (`evals/stats.py`), McNemar regression diff, and a failure-mode histogram (`evals/classify.py` — oscillation / loop / decision-error / guard-violation buckets). Prereq landed: provider token-usage capture + `model_usage` event (PR #31).
+  - [x] **live full-matrix baseline** — frontier trio (gpt-5.1 · sonnet-4-6 · gemini-3.1-pro) × 4 tasks × 5 seeds. First baseline `research/eval-baseline-2026-06-15.md`; corrected post-fix re-run `research/eval-baseline-2026-06-15-post-fixes.md` (n=60, overall 0.83, zero harness errors / zero leaks).
+  - [x] **first eval-driven improvement cycle** — the baseline surfaced four defects (`research/failure-modes.md`): tool-schema incompatibility (**ADR-0017**), over-generous probe (**ADR-0018**), denylist case-bypass (**ADR-0019**), leak-hiding classifier; all fixed (PR #65) and validated by the corrected re-run. Open behavioral finding C1 (won't-conclude / unobtainable) → **ADR-0020** (Proposed).
+  - [ ] **tracer / observability**: wire one as an emitter subscriber (Langfuse recommended — self-hostable); adopt OpenTelemetry GenAI conventions to stay vendor-neutral.
+  - [ ] **external comparability** (Eval-2, later): SWE-bench Verified · Terminal-Bench · Aider polyglot.
   - Landscape + rationale in the 2026-06-07 decision-log entry.
 
 ---
