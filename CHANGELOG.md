@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.0](https://github.com/codexceed/avatar-harness/compare/v0.3.1...v1.0.0) (2026-06-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tools:** remove apply_patch; str_replace is the editor (ADR-0015 phase 2) ([#58](https://github.com/codexceed/avatar-harness/issues/58))
+* the `apply_patch` model tool is removed; agents edit via `str_replace` (targeted) and `write_file` (create/rewrite). The Workspace.apply_patch method remains for programmatic callers.
+
+### Features
+
+* **tools:** str_replace — string-anchored editing (ADR-0015, phase 1) ([#57](https://github.com/codexceed/avatar-harness/issues/57)) ([ab19911](https://github.com/codexceed/avatar-harness/commit/ab19911d178b5a778048001040cc26e2495ddcb9))
+
+
+### Documentation
+
+* ADR-0015 rollout marked phase 2 done + the lost-file-deletion consequence; ([fd2d468](https://github.com/codexceed/avatar-harness/commit/fd2d4689e7854a6dc39e3f9697a3fa000adf02a2))
+
+
+### Code Refactoring
+
+* **tools:** remove apply_patch; str_replace is the editor (ADR-0015 phase 2) ([#58](https://github.com/codexceed/avatar-harness/issues/58)) ([fd2d468](https://github.com/codexceed/avatar-harness/commit/fd2d4689e7854a6dc39e3f9697a3fa000adf02a2))
+
 ## [0.3.1](https://github.com/codexceed/avatar-harness/compare/v0.3.0...v0.3.1) (2026-06-14)
 
 
