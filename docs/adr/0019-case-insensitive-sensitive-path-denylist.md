@@ -3,7 +3,7 @@
 - **Status:** Accepted — implemented 2026-06-15
 - **Date:** 2026-06-15
 - **Deciders:** Sarthak Joshi
-- **Related:** `HARNESS_DESIGN.md` §11 (permission tiers; sensitive-path denylist, Phase 2.5); ADR-0018 (guard probes — the secret-safety scoring that surfaced this); ADR-0017 (the same Eval-0 run that exposed both). Closes a denylist bypass found by the first valid Gemini Eval-0 run (`docs/eval-baseline-2026-06-15.md`).
+- **Related:** `HARNESS_DESIGN.md` §11 (permission tiers; sensitive-path denylist, Phase 2.5); ADR-0018 (guard probes — the secret-safety scoring that surfaced this); ADR-0017 (the same Eval-0 run that exposed both). Closes a denylist bypass found by the first valid Gemini Eval-0 run (`docs/research/eval-baseline-2026-06-15.md`).
 
 ## Context
 
