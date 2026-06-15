@@ -61,6 +61,38 @@ class PatchError(Exception):
     """
 
 
+class ReplaceError(ValueError):
+    """A string-anchored replace could not be applied cleanly (ADR-0015) — model-correctable.
+
+    All-or-nothing: when raised, the file is byte-for-byte unchanged.
+    """
+
+
+class MatchNotFoundError(ReplaceError):
+    """The `old` anchor was absent from the file — a stale or mistyped anchor (§10)."""
+
+
+class EmptyAnchorError(ReplaceError):
+    """`old` was empty — it would match between every character and rewrite the file (ADR-0015).
+
+    Rejected at the `Workspace.replace` chokepoint so a direct SDK caller can't corrupt a file,
+    not only the `str_replace` tool layer.
+    """
+
+
+class AmbiguousMatchError(ReplaceError):
+    """The `old` anchor matched more than once and `replace_all` was not set (ADR-0015).
+
+    Args:
+        path: The workspace-relative file the anchor matched in.
+        count: How many times the anchor matched (>1); exposed as `.count` for the tool's message.
+    """
+
+    def __init__(self, path: str, count: int) -> None:
+        self.count = count
+        super().__init__(f"{path}: {count} matches")
+
+
 class DirtyWorkspaceError(Exception):
     """The workspace has uncommitted changes at open and they were not acknowledged (§15)."""
 
@@ -304,6 +336,56 @@ class Workspace:
         resolved.parent.mkdir(parents=True, exist_ok=True)  # parents are confined with the file
         resolved.write_text(content, encoding="utf-8")
         self.stage([rel])  # untracked output is invisible to `git diff <baseline>` until staged
+        return rel
+
+    def replace(self, path: str, old: str, new: str, *, replace_all: bool = False) -> str:
+        """Swap an exact string in a file; the anchor proves non-staleness (§10, ADR-0015).
+
+        The string-anchored modification primitive that supersedes `apply_patch`'s diff
+        costume: `old` must match the *current* file text exactly — read-before-edit (§10)
+        enforced by the anchor, not by line arithmetic. It must match once, unless
+        `replace_all`. All-or-nothing: a rejected match leaves the file byte-for-byte
+        unchanged. Confinement, the sensitive-path denylist, and staging apply at this
+        chokepoint like every other write; the resulting diff is *derived* by `diff()`,
+        never authored by the model (§5).
+
+        Args:
+            path: The workspace-relative file to edit.
+            old: The exact existing text to find (the anchor); must be non-empty.
+            new: The replacement text; an empty string deletes the matched span.
+            replace_all: Replace every occurrence instead of requiring a unique match.
+
+        Returns:
+            The workspace-relative path edited.
+
+        Raises:
+            FileNotFoundError: When the target file does not exist (create with `write_file`).
+            EmptyAnchorError: When `old` is empty (would rewrite the whole file).
+            MatchNotFoundError: When `old` is absent (stale or mistyped anchor).
+            AmbiguousMatchError: When `old` matches more than once and `replace_all` is unset.
+
+        Note:
+            The input contract lives HERE, at the chokepoint, not only in the `str_replace`
+            tool — a direct SDK caller gets the same guarantees. Confinement and the
+            sensitive-path denylist apply via `_resolve`/`_assert_not_sensitive`. An empty
+            `new` is deliberately allowed (span deletion); an empty `old` is rejected.
+        """
+        if not old:
+            # `str.replace("", x)` inserts between every character — corruption, not an edit.
+            raise EmptyAnchorError(path)
+        resolved = self._resolve(path)
+        self._assert_not_sensitive(resolved)
+        rel = str(resolved.relative_to(self.root))
+        if not resolved.is_file():
+            raise FileNotFoundError(rel)  # edits target existing files; creation is write_file
+        text = resolved.read_text(encoding="utf-8")
+        count = text.count(old)
+        if count == 0:
+            raise MatchNotFoundError(rel)
+        if count > 1 and not replace_all:
+            raise AmbiguousMatchError(rel, count)
+        resolved.write_text(text.replace(old, new), encoding="utf-8")
+        self.stage([rel])
         return rel
 
     # --- command execution (§15) -----------------------------------------

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from avatar_harness.config import HarnessConfig
 from avatar_harness.deps import CancellationToken, RunDeps
 from avatar_harness.state import PlannedCheck
-from avatar_harness.tools import filesystem
+from avatar_harness.tools import default_registry, filesystem
 from avatar_harness.tools.base import (
     ToolDefinition,
     ToolRegistry,
@@ -17,7 +17,13 @@ from avatar_harness.tools.base import (
     phase_admits_tool,
 )
 from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import ApplyPatchInput, apply_patch, write_file
+from avatar_harness.tools.edit import (
+    ApplyPatchInput,
+    StrReplaceInput,
+    apply_patch,
+    str_replace,
+    write_file,
+)
 from avatar_harness.tools.filesystem import list_files, read_file
 from avatar_harness.tools.search import search_repo
 from avatar_harness.workspace import Workspace
@@ -307,7 +313,7 @@ def test_write_file_creates_and_stages_new_file(git_repo):
 def test_write_file_refuses_existing_without_overwrite(git_repo):
     result = _edit_runtime(git_repo).execute("write_file", {"path": "calc.py", "content": "x = 1\n"})
     assert result.success is False  # model-correctable, never raised into the loop
-    assert "apply_patch" in (result.error or "")  # steered to the diff-anchored path
+    assert "str_replace" in (result.error or "")  # steered to the string-anchored editor (ADR-0015)
     assert "return a - b" in Workspace(git_repo).read("calc.py")  # nothing clobbered
 
 
@@ -515,3 +521,71 @@ def test_registry_admits_tier1_for_investigate():
     admitted = {t.name for t in reg.admitted_for("investigating", "investigate")}
     assert {"apply_patch", "write_file"} <= admitted
     assert "run_tests" not in admitted
+
+
+# --- str_replace tool (ADR-0015) -------------------------------------------
+
+
+def _edit_deps(git_repo) -> RunDeps:
+    return RunDeps(workspace=Workspace(git_repo), config=HarnessConfig(), cancellation=CancellationToken())
+
+
+def test_str_replace_edits_unique_match(git_repo):
+    deps = _edit_deps(git_repo)
+    r = str_replace.handler(
+        StrReplaceInput(path="calc.py", old_string="return a - b", new_string="return a + b"), deps
+    )
+    assert r.success and "calc.py" in r.files_changed
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+
+
+def test_str_replace_missing_anchor_is_correctable(git_repo):
+    r = str_replace.handler(
+        StrReplaceInput(path="calc.py", old_string="return a * b", new_string="x"), _edit_deps(git_repo)
+    )
+    assert r.success is False
+    assert "not found" in (r.error or "") and "exactly" in (r.error or "")
+
+
+def test_str_replace_ambiguous_anchor_reports_count_and_widen_hint(git_repo):
+    r = str_replace.handler(
+        StrReplaceInput(path="calc.py", old_string="a", new_string="Z"), _edit_deps(git_repo)
+    )
+    assert r.success is False
+    assert "matches" in (r.error or "") and "uniquely identifies ONE" in (r.error or "")
+
+
+def test_str_replace_replace_all_succeeds(git_repo):
+    r = str_replace.handler(
+        StrReplaceInput(path="calc.py", old_string="a", new_string="Z", replace_all=True),
+        _edit_deps(git_repo),
+    )
+    assert r.success
+    assert (git_repo / "calc.py").read_text(encoding="utf-8") == "def Zdd(Z, b):\n    return Z - b\n"
+
+
+def test_str_replace_empty_and_identical_are_guarded(git_repo):
+    deps = _edit_deps(git_repo)
+    empty = str_replace.handler(StrReplaceInput(path="calc.py", old_string="", new_string="x"), deps)
+    assert empty.success is False and "non-empty" in (empty.error or "")
+    noop = str_replace.handler(
+        StrReplaceInput(path="calc.py", old_string="return a - b", new_string="return a - b"), deps
+    )
+    assert noop.success is False and "identical" in (noop.error or "")
+
+
+def test_str_replace_missing_file_points_to_write_file(git_repo):
+    r = str_replace.handler(
+        StrReplaceInput(path="ghost.py", old_string="x", new_string="y"), _edit_deps(git_repo)
+    )
+    assert r.success is False and "write_file" in (r.error or "")
+
+
+def test_str_replace_registered_and_editing_phase_tier1():
+    reg = default_registry()
+    admitted = {t.name for t in reg.admitted_for("editing", "edit")}
+    assert "str_replace" in admitted  # advertised in the editing phase
+    # tier-1 → it is an edit-intent tool, so it advances the phase like apply_patch/write_file
+    assert (
+        next(t for t in reg.admitted_for("editing", "edit") if t.name == "str_replace").permission_tier == 1
+    )
