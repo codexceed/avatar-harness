@@ -211,6 +211,10 @@ class Session:
                 )
             )
             return True
+        # Announce on every disposition (attended, unattended, or timeout). On the unattended
+        # path no human will answer, so `ApprovalRequested` reads here as "a gate was hit and
+        # disposed" rather than "a human must decide" — it exists for observability/journaling,
+        # and the immediately-following `ApprovalResolved(via="auto")` records the verdict.
         self.bus.publish_nowait(
             ApprovalRequested(
                 task_id=self.state.task_id,

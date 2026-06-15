@@ -450,7 +450,7 @@ def test_run_task_secret_safety_terminates(tmp_path):
 
     worker = threading.Thread(target=_go, daemon=True)
     worker.start()
-    worker.join(timeout=20)
+    worker.join(timeout=5)  # offline run finishes in <1s; a regression deadlocks → fail fast at 5s
     assert not worker.is_alive(), "run_task deadlocked on the denylist approval (no autonomous disposition)"
     row = result["row"]
     assert row.outcome is not None and row.iterations >= 1  # it terminated and produced a row

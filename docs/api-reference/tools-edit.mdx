@@ -2,14 +2,15 @@
 title: avatar_harness.tools.edit
 ---
 
-Editing tools: str_replace + write_file (§10, tier 1, ADR-0015).
+Editing tools: str_replace + write_file + delete_file (§10, tier 1, ADR-0015).
 
 The mutating tools. `str_replace` makes a targeted, string-anchored edit to an existing
 file — `old_string` → `new_string`, no line numbers, no diff; a miss comes back as a
 model-correctable `ToolResult`, never an exception thrown at the loop (§10). `write_file`
-(ADR-0003 B) is the plain-content transport for creation and explicit whole-file rewrites.
-Modification is anchored on the exact existing text (the read-before-edit staleness proof),
-which replaced the line-numbered unified diff models could not produce reliably (ADR-0015).
+(ADR-0003 B) is the plain-content transport for creation and explicit whole-file rewrites,
+and `delete_file` removes one. Modification is anchored on the exact existing text (the
+read-before-edit staleness proof), which replaced the line-numbered unified diff models
+could not produce reliably (ADR-0015).
 
 ## Classes
 ### `DeleteFileInput`
