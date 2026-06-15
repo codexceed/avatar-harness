@@ -18,7 +18,9 @@ from avatar_harness.tools.base import (
 )
 from avatar_harness.tools.commands import run_linter, run_tests
 from avatar_harness.tools.edit import (
+    DeleteFileInput,
     StrReplaceInput,
+    delete_file,
     str_replace,
     write_file,
 )
@@ -542,4 +544,27 @@ def test_str_replace_registered_and_editing_phase_tier1():
     # tier-1 → it is an edit-intent tool, so it advances the phase like write_file
     assert (
         next(t for t in reg.admitted_for("editing", "edit") if t.name == "str_replace").permission_tier == 1
+    )
+
+
+# --- delete_file tool (ADR-0015) -------------------------------------------
+
+
+def test_delete_file_removes_and_reports(git_repo):
+    r = delete_file.handler(DeleteFileInput(path="calc.py"), _edit_deps(git_repo))
+    assert r.success and "calc.py" in r.files_changed
+    assert not (git_repo / "calc.py").exists()
+
+
+def test_delete_file_missing_is_model_correctable(git_repo):
+    r = delete_file.handler(DeleteFileInput(path="ghost.py"), _edit_deps(git_repo))
+    assert r.success is False and "does not exist" in (r.error or "")
+
+
+def test_delete_file_registered_and_editing_phase_tier1():
+    reg = default_registry()
+    admitted = {t.name for t in reg.admitted_for("editing", "edit")}
+    assert "delete_file" in admitted
+    assert (
+        next(t for t in reg.admitted_for("editing", "edit") if t.name == "delete_file").permission_tier == 1
     )

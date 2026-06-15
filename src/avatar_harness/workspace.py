@@ -392,6 +392,33 @@ class Workspace:
         self.stage([rel])
         return rel
 
+    def remove(self, path: str) -> str:
+        """Delete a workspace file and stage the removal so `diff()` reflects it (ADR-0015).
+
+        The deletion counterpart to `write_file`/`replace` — the capability the removed
+        `apply_patch` `/dev/null` hunk used to carry. Staging the removal makes a
+        baseline-tracked file show as deleted in `git diff <baseline>` and lets a
+        transiently-created file (staged by `write_file`) net back to zero. Confinement
+        and the sensitive-path denylist apply at this chokepoint like every other write.
+
+        Args:
+            path: The workspace-relative file to delete.
+
+        Returns:
+            The workspace-relative path deleted.
+
+        Raises:
+            FileNotFoundError: When the target does not exist (nothing to delete).
+        """
+        resolved = self._resolve(path)
+        self._assert_not_sensitive(resolved)
+        rel = str(resolved.relative_to(self.root))
+        if not resolved.is_file():
+            raise FileNotFoundError(rel)
+        resolved.unlink()
+        self.stage([rel])  # `git add` on a deleted path stages the removal into the diff
+        return rel
+
     # --- command execution (§15) -----------------------------------------
 
     def run(self, command: str, timeout: int | None = None) -> CommandOutput:

@@ -63,7 +63,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 
 - **Meta commands** (handled locally, never hit the model): `/help`, `/mode <edit|investigate|test_only|plan>`, `/plan`, `/diff`, `/state`, `/permissions`, `/quit`.
 - **Ground a goal** in a file with `@path/to/file`.
-- **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`) auto-allow when their paths validate inside the workspace.
+- **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`delete_file`) auto-allow when their paths validate inside the workspace.
 - **Conversational by default** — verification runs and is reported, but the reply isn't gated on it (you're the terminal authority); `--auto` keeps the strict gate.
 
 ### Flags

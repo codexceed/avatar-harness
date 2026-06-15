@@ -178,3 +178,46 @@ str_replace = ToolDefinition(
     # The target file is the gate's path policy input (confinement + denylist, §11).
     paths=lambda args: (args.path,),
 )
+
+
+class DeleteFileInput(BaseModel):
+    """Input for `delete_file`: remove one existing workspace file (ADR-0015)."""
+
+    path: str
+
+
+def _delete_file(args: DeleteFileInput, deps: RunDeps) -> ToolResult:
+    try:
+        rel = deps.workspace.remove(args.path)
+    except PathOutsideWorkspaceError as exc:
+        # A path escape is a system-level refusal, not a retry — surface it.
+        return ToolResult(tool_name="delete_file", success=False, error=f"path outside workspace: {exc}")
+    except SensitivePathError as exc:
+        # A denylisted target is refused at the workspace (defense in depth behind the gate).
+        return ToolResult(tool_name="delete_file", success=False, error=f"sensitive path refused: {exc}")
+    except FileNotFoundError:
+        # Model-correctable: nothing to delete (already gone or wrong path).
+        return ToolResult(tool_name="delete_file", success=False, error=f"file does not exist: {args.path}")
+    return ToolResult(
+        tool_name="delete_file",
+        success=True,
+        content=f"deleted {rel}",
+        summary=f"deleted {rel}",
+        files_changed=[rel],
+    )
+
+
+delete_file = ToolDefinition(
+    name="delete_file",
+    description=(
+        "Delete an existing file from the workspace. Use this to remove a file (including "
+        "tidying up a scratch file you created). Editing existing content is str_replace; "
+        "creating or rewriting a file is write_file."
+    ),
+    input_model=DeleteFileInput,
+    handler=_delete_file,
+    phases=_EDIT_PHASES,
+    permission_tier=1,
+    # The target file is the gate's path policy input (confinement + denylist, §11).
+    paths=lambda args: (args.path,),
+)

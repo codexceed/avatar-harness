@@ -90,7 +90,7 @@ Conflating them is what leaves budget-exhaustion vs. verification-failure ambigu
 
 ### MVP deliberate scope cuts (§2)
 
-No multi-agent orchestration, no browser automation, no autonomous dependency install, no automatic git commit/push/PR/deploy. Avoid a general `run_shell` tool in v1; the MVP tools are `search_repo`, `list_files`, `read_file`, `str_replace`, `write_file`, `run_tests`, `run_linter`, `git_status`, `git_diff`. These are deferred (§21), not designed out — keep the architecture compatible.
+No multi-agent orchestration, no browser automation, no autonomous dependency install, no automatic git commit/push/PR/deploy. Avoid a general `run_shell` tool in v1; the MVP tools are `search_repo`, `list_files`, `read_file`, `str_replace`, `write_file`, `delete_file`, `run_tests`, `run_linter`, `git_status`, `git_diff`. These are deferred (§21), not designed out — keep the architecture compatible.
 
 ## Reuse note
 

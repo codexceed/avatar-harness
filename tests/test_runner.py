@@ -23,7 +23,7 @@ from avatar_harness.runner import AgentRunner
 from avatar_harness.state import PlannedCheck, TaskState
 from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import str_replace, write_file
+from avatar_harness.tools.edit import delete_file, str_replace, write_file
 from avatar_harness.tools.filesystem import read_file
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
@@ -501,6 +501,29 @@ def test_investigate_transient_edit_round_trip_verifies(git_repo):
     assert not any(
         e["old"] == "investigating" and e["new"] == "editing" for e in events if e["type"] == "phase_changed"
     )
+
+
+def test_investigate_write_file_probe_then_delete_verifies(git_repo):
+    # ADR-0015: the create-then-delete net-zero path, restored by delete_file (the capability
+    # apply_patch's /dev/null hunk used to carry). Create a scratch probe, read it, delete it,
+    # finalize — the investigate net-zero-diff contract passes because the tree matches baseline.
+    reg = _edit_registry()
+    reg.register(write_file)
+    reg.register(delete_file)
+    decisions = [
+        ModelDecision(
+            action=ToolCall(name="write_file", input={"path": "probe.py", "content": "PROBE = 1\n"})
+        ),
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "probe.py"})),
+        ModelDecision(action=ToolCall(name="delete_file", input={"path": "probe.py"})),
+        ModelDecision(action=FinalAnswer(answer="read probe.py (PROBE = 1), then deleted the scratch file")),
+    ]
+    state = TaskState(goal="check something with a scratch probe", task_kind="investigate")
+    result = _runner(git_repo, reg, decisions).run(state)
+    assert result.outcome == "success"
+    assert not (git_repo / "probe.py").exists()
+    assert Workspace(git_repo, allow_dirty=True).diff() == ""  # create-then-delete nets to zero
+    assert "probe.py" in result.files_modified  # the transient create+delete is on the ledger
 
 
 def test_investigate_leftover_diff_fails_then_repair_by_revert_succeeds(git_repo):
