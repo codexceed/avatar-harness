@@ -123,13 +123,15 @@ class ApprovalResolved(EventBase):
     """A pending approval (`approval_id`) was decided via the control plane.
 
     `via` records who decided: `"human"` answered a prompt, `"grant"` was auto-allowed
-    by a session-scoped `ApprovalGrant` with no prompt (still observable, invariant #5).
+    by a session-scoped `ApprovalGrant` with no prompt, `"auto"` was auto-denied by an
+    unattended/batch run's deny-by-default disposition or the approval-timeout backstop
+    (no human present). All are observable (invariant #5).
     """
 
     type: Literal["approval_resolved"] = "approval_resolved"
     approval_id: str
     allowed: bool
-    via: Literal["human", "grant"] = "human"
+    via: Literal["human", "grant", "auto"] = "human"
 
 
 class ModelUsage(EventBase):

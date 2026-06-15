@@ -104,10 +104,12 @@ ApprovalRequested(*, schema_version: Literal[1] = 1, event_id: int = 0, session_
 A pending approval (`approval_id`) was decided via the control plane.
 
 `via` records who decided: `"human"` answered a prompt, `"grant"` was auto-allowed
-by a session-scoped `ApprovalGrant` with no prompt (still observable, invariant #5).
+by a session-scoped `ApprovalGrant` with no prompt, `"auto"` was auto-denied by an
+unattended/batch run's deny-by-default disposition or the approval-timeout backstop
+(no human present). All are observable (invariant #5).
 
 ```python
-ApprovalResolved(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['approval_resolved'] = 'approval_resolved', approval_id: str, allowed: bool, via: Literal['human', 'grant'] = 'human') -> None
+ApprovalResolved(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['approval_resolved'] = 'approval_resolved', approval_id: str, allowed: bool, via: Literal['human', 'grant', 'auto'] = 'human') -> None
 ```
 
 **Fields**
@@ -123,7 +125,7 @@ ApprovalResolved(*, schema_version: Literal[1] = 1, event_id: int = 0, session_i
 | `type` | `Literal['approval_resolved']` | no |
 | `approval_id` | `str` | yes |
 | `allowed` | `bool` | yes |
-| `via` | `Literal['human', 'grant']` | no |
+| `via` | `Literal['human', 'grant', 'auto']` | no |
 ### `CancellationObserved`
 
 The loop observed a tripped cancellation token and is stopping (§8).

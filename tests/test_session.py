@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from avatar_harness.config import HarnessConfig
 from avatar_harness.context import ContextBuilder
 from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.event_types import ApprovalRequested, EventBase
+from avatar_harness.event_types import ApprovalRequested, ApprovalResolved, EventBase
 from avatar_harness.events import Emitter
 from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar_harness.runner import AgentRunner
@@ -184,6 +184,109 @@ async def test_cancel_records_feedback_and_stops(tmp_path):
     state = await run_task
     assert state.outcome == "incomplete"
     assert any(e.kind == "cancelled" for e in state.evidence)
+
+
+async def test_unattended_session_denies_ask_without_blocking(tmp_path):
+    # Batch/unattended (eval, autonomous wrappers): a tier-3 `ask` is auto-denied immediately —
+    # no human is present, so the run must terminate instead of blocking forever (the 51-min
+    # eval deadlock: a denylist refusal carried `ask=True`, and `request_approval` awaited a
+    # human `resolve_approval` that never came).
+    decisions = [
+        ModelDecision(action=ToolCall(name="risky", input={})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), decisions),
+        TaskState(goal="do it", task_kind="investigate"),
+        unattended=True,
+    )
+    # No resolve_approval is ever called; the run must still reach a terminal outcome.
+    state = await asyncio.wait_for(session.run(), timeout=5)
+    assert state.outcome is not None  # terminal, not hung on the gate
+    assert not (tmp_path / "RAN").exists()  # the gated tool was denied, never ran
+
+
+async def test_unattended_auto_deny_is_observable(tmp_path):
+    # The auto-deny is not silent: the gated attempt is still announced (ApprovalRequested) and
+    # its disposition recorded (ApprovalResolved allowed=False via="auto"), so the journal and
+    # the eval failure-classifier can see it (invariant #5).
+    decisions = [
+        ModelDecision(action=ToolCall(name="risky", input={})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), decisions),
+        TaskState(goal="do it", task_kind="investigate"),
+        unattended=True,
+    )
+    events = []
+    runner_task = asyncio.create_task(session.run())
+    async for ev in session.events():
+        events.append(ev)
+    await asyncio.wait_for(runner_task, timeout=5)
+    assert any(isinstance(e, ApprovalRequested) for e in events)  # the gated attempt is announced
+    resolved = [e for e in events if isinstance(e, ApprovalResolved)]
+    assert resolved and resolved[-1].allowed is False and resolved[-1].via == "auto"
+
+
+async def test_auto_denied_call_is_model_correctable(tmp_path):
+    # The auto-deny is fed back as recoverable feedback (not a system failure, not a terminate):
+    # the loop advances past the denied call to the next decision.
+    decisions = [
+        ModelDecision(action=ToolCall(name="risky", input={})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), decisions),
+        TaskState(goal="do it", task_kind="investigate"),
+        unattended=True,
+    )
+    state = await asyncio.wait_for(session.run(), timeout=5)
+    assert any(e.kind == "permission_blocked" for e in state.evidence)  # recorded as feedback
+    assert state.iterations >= 2  # advanced past the denied call to the final-answer turn
+
+
+async def test_attended_session_still_awaits_human(tmp_path):
+    # The default (attended) path is unchanged by the new flag: an `ask` blocks until a human
+    # resolves it, then the tool runs. Guards against the unattended branch leaking into the REPL.
+    decisions = [
+        ModelDecision(action=ToolCall(name="risky", input={})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), decisions),
+        TaskState(goal="do it", task_kind="investigate"),
+        unattended=False,  # explicit default
+    )
+    runner_task = asyncio.create_task(session.run())
+    approval_id = None
+    async for ev in session.events():
+        if isinstance(ev, ApprovalRequested):
+            approval_id = ev.approval_id
+            break
+    await asyncio.sleep(0.05)
+    assert approval_id is not None and not runner_task.done()  # blocked awaiting the human
+    await session.resolve_approval(approval_id, allow=True)
+    await asyncio.wait_for(runner_task, timeout=5)
+    assert (tmp_path / "RAN").exists()  # ran only after the human allowed it
+
+
+async def test_pending_approval_times_out_to_deny(tmp_path):
+    # Defense-in-depth backstop: an unresolved approval trips to deny after `approval_timeout`,
+    # so even a present-but-silent controller can't hang a run forever (the wall-clock budget
+    # can't save a run blocked *inside* the awaited gate).
+    decisions = [
+        ModelDecision(action=ToolCall(name="risky", input={})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), decisions),
+        TaskState(goal="do it", task_kind="investigate"),
+        approval_timeout=0.2,  # nobody resolves; the backstop denies
+    )
+    state = await asyncio.wait_for(session.run(), timeout=5)
+    assert state.outcome is not None  # terminal, not hung
+    assert not (tmp_path / "RAN").exists()  # the timed-out approval denied the call
 
 
 async def test_approval_announced_by_event_not_decided_by_it(tmp_path):

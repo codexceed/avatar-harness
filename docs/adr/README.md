@@ -21,6 +21,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0013](0013-evals-package-boundary-and-gates.md) | `evals/` stays an in-repo package, held to the harness quality gates via config | Accepted |
 | [0014](0014-greenfield-self-authored-verification.md) | Greenfield self-authored verification (the no-contract floor) | Accepted — implemented 2026-06-14 |
 | [0015](0015-string-anchored-edit-transport.md) | String-anchored editing (`str_replace`) as the primary edit transport | Proposed |
+| [0016](0016-autonomous-approval-disposition.md) | Autonomous approval disposition: unattended runs deny `ask`s by default | Accepted — implemented 2026-06-15 |
 
 ## Conventions
 

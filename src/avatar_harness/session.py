@@ -107,9 +107,17 @@ class Session:
         grants: The standing-approval list to consult and append to. Pass the multi-turn
             `SessionState.grants` (by reference) so a `[a] always` granted in one task
             persists to later tasks in the conversation; omit for a fresh per-run list.
+        unattended: When `True` (batch/eval/autonomous wrappers), an `ask` is auto-denied
+            immediately rather than awaiting a human — no `resolve_approval` will ever come,
+            so awaiting one deadlocks the run. The deny is still announced + recorded
+            (`ApprovalResolved(via="auto")`). `False` (default) keeps the interactive path.
+        approval_timeout: A backstop, in seconds, on a *blocking* (attended) approval: if no
+            `resolve_approval` arrives within it, the call is auto-denied so a run can't hang
+            forever inside the gate (the wall-clock budget can't preempt an awaited approval).
+            `None` (default) waits indefinitely — the right shape for a human at a REPL.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — keyword-only DI of the run's collaborators + approval-mode seams
         self,
         runner: AgentRunner,
         state: TaskState,
@@ -117,6 +125,8 @@ class Session:
         session_id: str | None = None,
         journal: JsonlEventJournal | None = None,
         grants: list[ApprovalGrant] | None = None,
+        unattended: bool = False,
+        approval_timeout: float | None = None,
     ) -> None:
         self.runner = runner
         self.state = state
@@ -125,6 +135,8 @@ class Session:
         self._pending: dict[str, _Pending] = {}
         # Shared by reference with the session scope when seeded, so grants persist across tasks.
         self._grants: list[ApprovalGrant] = grants if grants is not None else []
+        self._unattended = unattended
+        self._approval_timeout = approval_timeout
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
@@ -170,9 +182,12 @@ class Session:
     async def request_approval(self, approval_id: str, tool: str, reason: str, tool_input: dict) -> bool:
         """Announce a gated call (observation) and await the human's decision (control).
 
-        Called by the runner on a tier-3 `ask`. Emits `ApprovalRequested`, then blocks
-        *this run only* until `resolve_approval` completes the future — the decision
-        never returns through the event stream (§13).
+        Called by the runner on a tier-3 `ask`. Emits `ApprovalRequested`, then disposes of
+        it per mode: an attended session blocks *this run only* until `resolve_approval`
+        completes the future (decision never returns through the event stream, §13); an
+        `unattended` session auto-denies immediately (no human will come); and an
+        `approval_timeout` denies a blocking wait that no human answers in time. Every deny
+        is recorded as `ApprovalResolved(via="auto")`.
 
         A standing `ApprovalGrant` from an earlier `[a] always` short-circuits the human:
         the call is auto-allowed and recorded as `ApprovalResolved(via="grant")` with **no**
@@ -196,8 +211,10 @@ class Session:
                 )
             )
             return True
-        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        self._pending[approval_id] = _Pending(future=future, tool=tool, program=program, tier=tier)
+        # Announce on every disposition (attended, unattended, or timeout). On the unattended
+        # path no human will answer, so `ApprovalRequested` reads here as "a gate was hit and
+        # disposed" rather than "a human must decide" — it exists for observability/journaling,
+        # and the immediately-following `ApprovalResolved(via="auto")` records the verdict.
         self.bus.publish_nowait(
             ApprovalRequested(
                 task_id=self.state.task_id,
@@ -207,13 +224,37 @@ class Session:
                 input=tool_input,
             )
         )
-        allowed = await future
+        # Unattended (batch/eval/autonomous): no human will resolve this — deny now rather than
+        # deadlock awaiting a `resolve_approval` that never comes. The deny stays observable.
+        if self._unattended:
+            self._auto_deny(approval_id)
+            return False
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._pending[approval_id] = _Pending(future=future, tool=tool, program=program, tier=tier)
+        try:
+            allowed = await asyncio.wait_for(future, self._approval_timeout)
+        except TimeoutError:
+            # Backstop: the human never answered within `approval_timeout` — deny so the run
+            # can reach a terminal outcome instead of hanging inside the gate.
+            self._pending.pop(approval_id, None)
+            self._auto_deny(approval_id)
+            return False
         self.bus.publish_nowait(
             ApprovalResolved(
                 task_id=self.state.task_id, approval_id=approval_id, allowed=allowed, via="human"
             )
         )
         return allowed
+
+    def _auto_deny(self, approval_id: str) -> None:
+        """Record a no-human auto-deny (unattended disposition or timeout backstop).
+
+        Args:
+            approval_id: The pending approval being denied without a human decision.
+        """
+        self.bus.publish_nowait(
+            ApprovalResolved(task_id=self.state.task_id, approval_id=approval_id, allowed=False, via="auto")
+        )
 
     def _tier_of(self, tool: str) -> int:
         """The permission tier of `tool`, or the tier-4 ceiling if it is unknown.

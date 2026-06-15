@@ -350,13 +350,13 @@ What exists in `src/avatar_harness/` today (through Phase 3.2 — the MVP cockpi
 
 | Module | Contents | Maps to |
 | --- | --- | --- |
-| `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command` as the plan's override tier, `planner_model`) | `§8` config |
+| `config.py` | `HarnessConfig` (pydantic-settings, `AVATAR_*` env, budgets, `test_command`/`lint_command` as the plan's override tier, `planner_model`, `approval_timeout_seconds` gate backstop) | `§8` config |
 | `state.py` | `TaskState` + `Evidence` / `DecisionRecord` / `CommandRecord` / `CheckResult` / `VerifierResult` / `PlannedCheck`; `terminal`, `add_feedback`, `block`, `freeze_verification_plan` | `§7`, `§12` data shapes |
 | `events.py` · `eventlog.py` | `Emitter` (observation-only, stamps `ts` + `session_id`) + `EventLog` (JSONL subscriber; CLI defaults to a per-session `events/<session_id>.jsonl` + `latest.jsonl` pointer) | `§13`, `§23` |
 | `workspace.py` | Path confinement, pinned-baseline `diff`, atomic `apply_patch` (`git apply --index`, so created files are tracked + visible in the diff), bounded `run` + ordered `command_log` (a missing binary / empty / unparseable command is a failed `CommandOutput` — exit 127 — never a raise), clean-start assertion | `§8`, `§10`, `§15` |
 | `deps.py` | `RunDeps` (incl. the mirrored frozen `verification_plan` for `run_tests`/`run_linter`), `CancellationToken` — run-scoped, no globals | `§8` |
 | `event_types.py` | Typed `HarnessEvent` discriminated union (closed/versioned) + `EventSink`/`ApprovalController` protocols + `parse_event`/`dump_event`/`load_events` | `§13`, ADR-0001/0002 |
-| `session.py` | `Session` (two-plane: `events()` out · `resolve_approval(remember=)`/`cancel()` in, optional `journal=`) + `ApprovalGrant` (session-scoped `[a] always`; the gate stays harness-owned, the Session answers from a remembered grant) | `§13`, `§23` |
+| `session.py` | `Session` (two-plane: `events()` out · `resolve_approval(remember=)`/`cancel()` in, optional `journal=`; `unattended=` disposes an `ask` by deny-by-default for batch/eval/autonomous runs, `approval_timeout=` backstops a blocking attended wait — both auto-denies recorded `via="auto"`, ADR-0016) + `ApprovalGrant` (session-scoped `[a] always`; the gate stays harness-owned, the Session answers from a remembered grant) | `§13`, `§23` |
 | `bus.py` | `EventBus` — bounded per-subscriber fan-out (soft cap sheds only `*_update`; lifecycle/control never dropped) + the privileged journal hook; non-blocking, slow/broken subscriber never stalls the loop | `§13`, ADR-0001 |
 | `journal.py` | `JsonlEventJournal` — privileged lossless write-ahead sink; one JSON line per event, flushed per event, round-trips via `load_events` | ADR-0001 |
 | `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime` — handler exceptions isolated as failed results), `filesystem`, `search`, `edit` (`str_replace`/`write_file`/`delete_file`, ADR-0015), `commands` (`run_tests`/`run_linter`/`run_command` — `run_command` is tier-3, approval-gated, editing/verifying, and captures its file mutations into the diff) | `§10` |

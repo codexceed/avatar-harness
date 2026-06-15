@@ -131,6 +131,7 @@ def run_task(
             task_kind=spec.task_kind,
             conversational=conversational,
             journal=JsonlEventJournal(repo / "journal.jsonl"),
+            unattended=True,  # batch: auto-deny tier-3/denylist asks (no human to resolve them)
         )
         state = asyncio.run(session.run())
         # `outcome == "success"` is the verifier's verdict only for a no-probe (strict) task; in
