@@ -13,6 +13,7 @@ The app tracks its rendered transcript lines and status fields as plain attribut
 import asyncio
 from collections.abc import Callable, Iterator
 
+from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
 from textual.widget import Widget
@@ -24,6 +25,7 @@ from avatar_harness.event_types import (
     ApprovalRequested,
     DecisionError,
     HarnessEvent,
+    ModelDecisionEvent,
     ModelUpdate,
     PhaseChanged,
     ToolEnd,
@@ -132,14 +134,19 @@ class CockpitApp(App):
         self.query_one("#status", Static).update(self._status_text())
         self._write(self._format(event))
 
-    def _write(self, line: str | None) -> None:
-        """Append `line` to the transcript (and the `rendered` mirror); `None` is skipped.
+    def _write(self, line: str | Text | None) -> None:
+        """Append `line` to the transcript (and the plain-string `rendered` mirror); `None` is skipped.
+
+        A `Text` keeps its styling when written to the `RichLog` (which honors `Text`
+        styles regardless of `markup=False` — that flag only governs *string* markup
+        parsing), while `self.rendered` stays `list[str]` for headless substring asserts.
 
         Args:
-            line: The text to render, or `None` for events shown only in the status bar.
+            line: The text to render (styled `Text` or plain `str`), or `None` for events
+                shown only in the status bar.
         """
         if line is not None:
-            self.rendered.append(line)
+            self.rendered.append(line.plain if isinstance(line, Text) else line)
             self.query_one("#transcript", RichLog).write(line)
 
     def _prompt_approval(self, event: ApprovalRequested) -> None:
@@ -164,23 +171,39 @@ class CockpitApp(App):
 
         self.push_screen(modal, _resolve)
 
-    def _format(self, event: HarnessEvent) -> str | None:  # noqa: PLR0911 — a flat per-event switch
+    def _format(self, event: HarnessEvent) -> str | Text | None:  # noqa: PLR0911, C901 — a flat per-event switch
         """The transcript line for an event, or `None` for events shown only in the status bar.
+
+        Lines are styled `Text` so the transcript reads as a chat: the user goal (`▶ you`)
+        in cyan, model turns (`● agent`) in green, tool I/O dim — the label is
+        model-agnostic (`you`/`agent`), since this harness runs non-Claude models too.
 
         Args:
             event: The lifecycle event.
 
         Returns:
-            A one-line rendering, or `None` to skip the transcript.
+            A one-line rendering (styled or plain), or `None` to skip the transcript.
         """
         if isinstance(event, AgentStart):
-            return f"▶ {event.goal}"
+            # Drive mode already echoed the user's turn on submit (and AgentStart fires
+            # twice in plan mode); suppress it here. Observe mode (no repl — replay) has
+            # no submit echo, so AgentStart is the only user representation: keep it.
+            if self.repl is not None:
+                return None
+            line = Text("▶ you", style="bold cyan")
+            line.append(f"  {event.goal}", style="")
+            return line
+        if isinstance(event, ModelDecisionEvent):
+            return self._format_decision(event)
         if isinstance(event, ToolStart):
-            return f"→ {event.tool} {event.input}"
+            return Text(f"→ {event.tool} {event.input}", style="dim")
         if isinstance(event, ToolEnd):
-            return f"{'✓' if event.success else '✗'} {event.tool}: {event.summary or event.content}"
+            mark = "✓" if event.success else "✗"
+            return Text(f"{mark} {event.tool}: {event.summary or event.content}", style="dim")
         if isinstance(event, ModelUpdate):
-            return event.delta
+            line = Text("● agent", style="bold green")
+            line.append(f"  {event.delta}", style="")
+            return line
         if isinstance(event, ApprovalRequested):
             return f"⏸ approval needed: {event.tool}"
         if isinstance(event, DecisionError):
@@ -191,14 +214,40 @@ class CockpitApp(App):
             # read "success" even when verification failed (§23.5: the human decides).
             mark = "✓" if event.passed else "⚠"
             verb = "passed" if event.passed else "failed"
-            return (
-                f"{mark} verification {verb}: {event.summary}"
-                if event.summary
-                else f"{mark} verification {verb}"
-            )
+            line = Text(mark, style="green" if event.passed else "yellow")
+            line.append(f" verification {verb}", style="")
+            if event.summary:
+                line.append(f": {event.summary}", style="")
+            return line
         if isinstance(event, AgentEnd):
             return f"■ {event.outcome}"
         return None
+
+    def _format_decision(self, event: ModelDecisionEvent) -> Text | None:
+        """The model's turn for a `ModelDecisionEvent` — thought line + a spoken-message line.
+
+        `final_answer`/`ask_user` render `● agent  {action}` (the answer / the question);
+        a `tool_call` shows only its thought, since the call itself is rendered by
+        `ToolStart`/`ToolEnd` (no duplicate). The thought, when present, is a dim/italic
+        line above — the public display-channel summary, not private chain-of-thought
+        (ADR-0001 D6), so showing it keeps execution legible.
+
+        Args:
+            event: The model-decision event.
+
+        Returns:
+            The composed model turn, or `None` for a thoughtless `tool_call`.
+        """
+        lines: list[Text] = []
+        if event.thought:
+            lines.append(Text(event.thought, style="dim italic"))
+        if event.action_type in ("final_answer", "ask_user") and event.action:
+            line = Text("● agent", style="bold green")
+            line.append(f"  {event.action}", style="")
+            lines.append(line)
+        if not lines:
+            return None
+        return Text("\n").join(lines)
 
     def _status_text(self) -> str:
         """The status-bar line: mode · phase · outcome (· the verifier's verdict, once known).
@@ -239,6 +288,12 @@ class CockpitApp(App):
         if self.repl.is_meta(text):
             self._handle_meta(text)
         else:
+            # Echo the user's turn immediately, before the run starts: in drive mode the
+            # AgentStart goal line is suppressed (it would otherwise double here, and fire
+            # twice in plan mode), so this is the sole rendering of what the human typed.
+            line = Text("▶ you", style="bold cyan")
+            line.append(f"  {text}", style="")
+            self._write(line)
             # Disable input synchronously: classification runs before AgentStart (whose
             # handler used to be the only disabler), and that window let a second goal
             # start and race the first (PR-#32 review). Re-enabled in _run_goal's finally.

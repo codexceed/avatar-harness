@@ -278,8 +278,12 @@ def build_messages(context: ContextPacket, *, native_tools: bool = False) -> lis
     else:
         parts.append("Respond with your next action as a single JSON object.")
         system = _SYSTEM_TEMPLATE.format(mission=mission, tools=_format_tools(context.allowed_tools))
+    # Prior goals/replies ride as REAL chat turns between the system message and the working
+    # packet (ADR-0017) — the model under-weighted them flattened into "Recent evidence".
+    conversation = [{"role": turn.role, "content": turn.content} for turn in context.conversation]
     return [
         {"role": "system", "content": system},
+        *conversation,
         {"role": "user", "content": "\n".join(parts)},
     ]
 

@@ -22,6 +22,8 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0014](0014-greenfield-self-authored-verification.md) | Greenfield self-authored verification (the no-contract floor) | Accepted — implemented 2026-06-14 |
 | [0015](0015-string-anchored-edit-transport.md) | String-anchored editing (`str_replace`) as the primary edit transport | Proposed |
 | [0016](0016-autonomous-approval-disposition.md) | Autonomous approval disposition: unattended runs deny `ask`s by default | Accepted — implemented 2026-06-15 |
+| [0017](0017-multi-turn-history-as-chat-turns.md) | Multi-turn conversation history as real chat turns | Accepted — implemented 2026-06-15 |
+| [0018](0018-hide-whole-journal-directory.md) | Hide the whole journal directory from the agent's file tools | Accepted — implemented 2026-06-15 |
 
 ## Conventions
 

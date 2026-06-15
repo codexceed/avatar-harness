@@ -165,7 +165,8 @@ async def test_plan_task_seeds_history_and_grounding(git_repo):
     repl.set_mode("plan")
     session = repl.start("rework @calc.py")  # plan task with an @path reference
     assert session.state.task_kind == "investigate"  # still the read-only plan task
-    assert any("explain calc.py" in e.summary for e in _evidence(session, "history"))
+    # prior conversation rides as real chat turns (ADR-0017); @path grounding stays evidence
+    assert any("explain calc.py" in t.content for t in session.state.conversation)
     assert any("calc.py" in e.summary for e in _evidence(session, "grounding"))
 
 

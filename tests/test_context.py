@@ -1,5 +1,5 @@
 from avatar_harness.context import ContextBuilder
-from avatar_harness.state import DecisionRecord, TaskState
+from avatar_harness.state import ConversationTurn, DecisionRecord, TaskState
 from avatar_harness.tools import default_registry
 from avatar_harness.tools.base import ToolDefinition
 from avatar_harness.tools.filesystem import read_file
@@ -30,6 +30,18 @@ def test_context_packet_carries_task_kind(tmp_path, read_registry):
     state = TaskState(goal="fix the bug", task_kind="edit")
     packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
     assert packet.task_kind == "edit"
+
+
+def test_context_copies_conversation_into_packet(tmp_path, read_registry):
+    # Cross-goal conversation history is carried onto the packet as real chat turns
+    # (ADR-0017), so the model client can replay them as user/assistant messages.
+    state = TaskState(goal="and the button?", task_kind="investigate")
+    state.conversation = [
+        ConversationTurn(role="user", content="explain the widget"),
+        ConversationTurn(role="assistant", content="the widget lives in app.py"),
+    ]
+    packet = ContextBuilder().build(state, Workspace(tmp_path), read_registry)
+    assert packet.conversation == state.conversation
 
 
 def test_context_omits_out_of_phase_tools(tmp_path, read_registry):

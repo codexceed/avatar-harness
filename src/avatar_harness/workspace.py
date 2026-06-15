@@ -134,10 +134,12 @@ class Workspace:
             DEFAULT_SENSITIVE_PATH_GLOBS if sensitive_path_globs is None else sensitive_path_globs
         )
         # The harness's own journal lives under the workspace (default `events/<id>.jsonl`);
-        # hide exactly that file + its `latest.jsonl` pointer from the file tools so the agent
-        # never lists/reads/searches its own event log (never a whole `events/` dir — a real
-        # project may own one).
-        self._ignored_relpaths = _journal_ignores(self.root, log_path)
+        # hide the whole journal *directory* from the file tools so the agent never
+        # lists/reads/searches ANY session's event log — not just the current one (ADR-0018;
+        # a stray sibling journal leaking the harness's own trajectory is the dogfood leak).
+        # When the journal sits directly in the root, only its file + pointer are hidden
+        # (never the whole workspace).
+        self._ignored_relpaths, self._ignored_dirs = _journal_ignores(self.root, log_path)
         # The ledger of every command run through this handle, in order — the runner
         # reads it into `state.commands_run` so the artifact/log reflect what ran (§7).
         self.command_log: list[CommandOutput] = []
@@ -261,9 +263,12 @@ class Workspace:
             relpath: A workspace-relative POSIX path.
 
         Returns:
-            `True` for the harness's own journal file or its `latest.jsonl` pointer.
+            `True` for the harness's own journal directory (any file under it) or, when
+            the journal sits directly in the root, its file and `latest.jsonl` pointer.
         """
-        return relpath in self._ignored_relpaths
+        if relpath in self._ignored_relpaths:
+            return True
+        return any(relpath == d or relpath.startswith(f"{d}/") for d in self._ignored_dirs)
 
     # --- patch application (tier 1, §10) ---------------------------------
 
@@ -599,28 +604,36 @@ def _parse_patch_targets(diff: str) -> set[str]:
     return targets
 
 
-def _journal_ignores(root: Path, log_path: Path | str | None) -> set[str]:
-    """Workspace-relative paths of the harness's own journal, to hide from the file tools.
+def _journal_ignores(root: Path, log_path: Path | str | None) -> tuple[set[str], set[str]]:
+    """Workspace-relative journal paths to hide from the file tools (ADR-0018).
 
     The harness writes its event journal under the workspace (default `events/<id>.jsonl`
-    plus an `events/latest.jsonl` pointer). Those are harness plumbing, not the user's
-    project — so the file tools skip exactly the active log file and its pointer. A whole
-    `events/` directory is never hidden, since a real project may legitimately own one.
+    plus an `events/latest.jsonl` pointer). That directory is harness plumbing, not the
+    user's project — so when it is a real subdirectory of the workspace, the *whole*
+    directory is hidden (every session's journal + the pointer), closing the leak where
+    the agent lists/reads a sibling run's event log. When the journal sits directly in the
+    root (e.g. `--log ./run.jsonl`), only its file and `latest.jsonl` pointer are hidden —
+    never the entire workspace.
 
     Args:
         root: The resolved workspace root.
         log_path: The active journal path (root/cwd-relative or absolute), or `None`.
 
     Returns:
-        Workspace-relative POSIX paths to hide; empty when the journal is outside the root.
+        A `(files, dirs)` pair of workspace-relative POSIX paths to hide — files matched
+        exactly, dirs matched as prefixes. Both empty when the journal is outside the root.
     """
     if not log_path:
-        return set()
+        return set(), set()
     base = Path(log_path)
     base = base if base.is_absolute() else (root / base)
-    out: set[str] = set()
+    journal_dir = base.parent.resolve()
+    if journal_dir.is_relative_to(root) and journal_dir != root:
+        return set(), {journal_dir.relative_to(root).as_posix()}  # hide the whole journal dir
+    # The journal sits directly in the root: hide just its file + pointer, not the workspace.
+    files: set[str] = set()
     for candidate in (base, base.parent / "latest.jsonl"):
         resolved = candidate.resolve()
         if resolved.is_relative_to(root):
-            out.add(resolved.relative_to(root).as_posix())
-    return out
+            files.add(resolved.relative_to(root).as_posix())
+    return files, set()

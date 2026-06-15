@@ -121,6 +121,13 @@ Returns:
 
 Record a finished goal: append the terminal task and the agent's reply turn.
 
+A goal that ended by asking the user records the **question** as its agent turn,
+not the bare outcome. Otherwise the next user message — which is the *answer* —
+seeds history as `agent: blocked` and reads to the model as a fresh, contextless
+goal, so it re-asks and the conversation goes in circles (dogfood
+`events/f0957ed4…jsonl`). Preference: the final answer, then the open question,
+then the outcome.
+
 Args:
     state: The terminal `TaskState` returned by `session.run()`.
 

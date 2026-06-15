@@ -125,7 +125,8 @@ Args:
     relpath: A workspace-relative POSIX path.
 
 Returns:
-    `True` for the harness's own journal file or its `latest.jsonl` pointer.
+    `True` for the harness's own journal directory (any file under it) or, when
+    the journal sits directly in the root, its file and `latest.jsonl` pointer.
 
 #### `Workspace.list_files(self, glob: str) -> list[str]`
 

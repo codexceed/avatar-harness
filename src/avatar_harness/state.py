@@ -21,6 +21,18 @@ class Evidence(BaseModel):
     detail: str | None = None
 
 
+class ConversationTurn(BaseModel):
+    """One cross-goal conversation turn, replayed to the model as a real chat message (ADR-0017).
+
+    Distinct from ``Evidence``: prior user goals and agent replies are sent as genuine
+    ``role="user"``/``role="assistant"`` messages preceding the working packet, not flattened
+    into "Recent evidence" bullets the model under-weights.
+    """
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class DecisionRecord(BaseModel):
     """Why the agent chose what it chose, and how it turned out (§7).
 
@@ -112,6 +124,10 @@ class TaskState(BaseModel):
     files_read: set[str] = Field(default_factory=set)
     files_modified: set[str] = Field(default_factory=set)
     commands_run: list[CommandRecord] = Field(default_factory=list)
+
+    # Cross-goal conversation history, replayed as real chat turns ahead of the working
+    # packet (ADR-0017). Derived from the session's history each turn; not transcript bleed.
+    conversation: list[ConversationTurn] = Field(default_factory=list)
 
     evidence: list[Evidence] = Field(default_factory=list)
     decisions: list[DecisionRecord] = Field(default_factory=list)

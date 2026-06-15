@@ -50,7 +50,7 @@ Returns:
 The compact, per-turn working set assembled for one model decision (§9).
 
 ```python
-ContextPacket(*, goal: str, constraints: list[str] = <factory>, phase: str, task_kind: str = 'investigate', plan: list[str] = <factory>, files_read: list[str] = <factory>, files_modified: list[str] = <factory>, prior_actions: list[str] = <factory>, recent_evidence: list[str] = <factory>, allowed_tools: list[ToolSummary] = <factory>, latest_error: str | None = None, has_uncommitted_changes: bool = False) -> None
+ContextPacket(*, goal: str, constraints: list[str] = <factory>, conversation: list[ConversationTurn] = <factory>, phase: str, task_kind: str = 'investigate', plan: list[str] = <factory>, files_read: list[str] = <factory>, files_modified: list[str] = <factory>, prior_actions: list[str] = <factory>, recent_evidence: list[str] = <factory>, allowed_tools: list[ToolSummary] = <factory>, latest_error: str | None = None, has_uncommitted_changes: bool = False) -> None
 ```
 
 **Fields**
@@ -59,6 +59,7 @@ ContextPacket(*, goal: str, constraints: list[str] = <factory>, phase: str, task
 | --- | --- | --- |
 | `goal` | `str` | yes |
 | `constraints` | `list[str]` | no |
+| `conversation` | `list[ConversationTurn]` | no |
 | `phase` | `str` | yes |
 | `task_kind` | `str` | no |
 | `plan` | `list[str]` | no |
