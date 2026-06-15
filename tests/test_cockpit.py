@@ -19,6 +19,7 @@ from avatar_harness.event_types import (
     AgentEnd,
     AgentStart,
     DecisionError,
+    ModelDecisionEvent,
     ModelUpdate,
     PhaseChanged,
     ToolEnd,
@@ -94,6 +95,69 @@ async def test_input_submit_invokes_callback():
         await pilot.pause()
         assert app.query_one("#prompt", Input).value == ""  # input cleared after submit
     assert seen == ["explain the loop"]  # the prompt reached the submit callback once
+
+
+async def test_ask_user_question_renders():
+    # Regression: a model that asks a question used to show only `■ blocked` — `_format`
+    # had no `ModelDecisionEvent` case, so the question itself was invisible
+    # (dogfood `temp/events/416f924…jsonl`). The question must reach the transcript.
+    events = [
+        AgentStart(goal="g"),
+        ModelDecisionEvent(
+            action_type="ask_user",
+            action="The workspace is empty. Would you like me to create a new script?",
+        ),
+        AgentEnd(outcome="blocked"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    assert "create a new script" in joined  # the question, not just the blocked status
+    assert "blocked" in joined
+
+
+async def test_final_answer_renders():
+    events = [
+        AgentStart(goal="g"),
+        ModelDecisionEvent(action_type="final_answer", action="The loop runs until verified."),
+        AgentEnd(outcome="success"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    assert "The loop runs until verified." in joined  # the model's answer is rendered
+
+
+async def test_thought_renders_when_present():
+    # The thought is the public display-channel summary (ADR-0001 D6); it renders for any
+    # decision, including a `tool_call` whose call line comes from ToolStart/ToolEnd.
+    events = [
+        AgentStart(goal="g"),
+        ModelDecisionEvent(thought="checking the dir", action_type="tool_call"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    assert "checking the dir" in joined
+
+
+async def test_user_and_model_turns_carry_distinct_markers():
+    events = [
+        AgentStart(goal="explain x"),
+        ModelDecisionEvent(action_type="final_answer", action="here is x"),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    user_line = next(line for line in joined.splitlines() if "explain x" in line)
+    model_line = next(line for line in joined.splitlines() if "here is x" in line)
+    assert user_line.startswith("▶")  # user turn
+    assert model_line.startswith("●")  # model turn — a different leading marker
+    assert user_line[0] != model_line[0]
 
 
 async def test_failed_verification_verdict_is_visible():
