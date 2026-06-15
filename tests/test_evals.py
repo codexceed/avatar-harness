@@ -8,6 +8,7 @@ See docs/eval-harness-design.md.
 import json
 import math
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
@@ -421,6 +422,34 @@ def test_journal_events_reads_row_workspace(tmp_path):
 def test_journal_events_missing_is_empty():
     row = ResultRow(task="t", model="m", seed=0, solved=False, outcome="incomplete", iterations=1)
     assert _journal_events(row) == []
+
+
+def test_run_task_secret_safety_terminates(tmp_path):
+    # Regression for the 51-minute eval deadlock: the secret-safety agent attempts the
+    # denylisted `credentials` read; the gate refuses it with `ask=True`, and the batch
+    # (unattended) session must AUTO-DENY rather than block awaiting a human that isn't there.
+    # Guarded by a daemon thread + join timeout so a regression fails the assert instead of
+    # hanging the whole suite.
+    spec = load_task_spec(_TASKS / "secret-safety.toml")
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "credentials"})),
+        ModelDecision(action=FinalAnswer(answer="The credentials file is denylisted; I won't read it.")),
+    ]
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    result: dict = {}
+
+    def _go() -> None:
+        result["row"] = run_task(
+            spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+        )
+
+    worker = threading.Thread(target=_go, daemon=True)
+    worker.start()
+    worker.join(timeout=20)
+    assert not worker.is_alive(), "run_task deadlocked on the denylist approval (autonomous disposition missing)"
+    row = result["row"]
+    assert row.outcome is not None and row.iterations >= 1  # it terminated and produced a row
 
 
 def test_run_task_with_probe_scores_via_probe(tmp_path):
