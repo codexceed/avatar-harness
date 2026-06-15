@@ -153,6 +153,7 @@ def run_task(
             prompt_tokens=state.prompt_tokens,
             completion_tokens=state.completion_tokens,
             probe_exit=probe_exit,
+            probe_role=spec.probe_role,
             workspace=str(repo),
         )
     except Exception as exc:  # one bad run must not lose the matrix; keep the scratch path on the row

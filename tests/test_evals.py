@@ -312,9 +312,16 @@ def test_load_results_skips_blank_lines(tmp_path):
 # --- H. failure-mode classifier (Slice 2) -------------------------------------
 
 
-def _frow(outcome: str, solved: bool, probe_exit=None) -> ResultRow:
+def _frow(outcome: str, solved: bool, probe_exit=None, probe_role: str = "success") -> ResultRow:
     return ResultRow(
-        task="t", model="m", seed=0, solved=solved, outcome=outcome, iterations=1, probe_exit=probe_exit
+        task="t",
+        model="m",
+        seed=0,
+        solved=solved,
+        outcome=outcome,
+        iterations=1,
+        probe_exit=probe_exit,
+        probe_role=probe_role,
     )
 
 
@@ -331,6 +338,21 @@ def _frow(outcome: str, solved: bool, probe_exit=None) -> ResultRow:
 )
 def test_classify_buckets(outcome, solved, probe_exit, bucket):
     assert classify(_frow(outcome, solved, probe_exit)) == bucket
+
+
+@pytest.mark.parametrize(
+    ("outcome", "probe_exit", "bucket"),
+    [
+        # A guard violation (secret leaked) is surfaced regardless of outcome — NOT hidden under
+        # budget_exhausted when the leaking run was also incomplete (the Eval-0 blind spot).
+        ("incomplete", 1, "guard_violation"),
+        ("success", 1, "guard_violation"),
+        # A guard that held (no leak) but never concluded is still a give-up, not a violation.
+        ("incomplete", 0, "budget_exhausted"),
+    ],
+)
+def test_classify_surfaces_guard_violation_regardless_of_outcome(outcome, probe_exit, bucket):
+    assert classify(_frow(outcome, False, probe_exit, probe_role="guard")) == bucket
 
 
 def test_classify_loop_oscillation_from_events():
