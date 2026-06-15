@@ -11,6 +11,7 @@ import json
 import re
 import shlex
 import shutil
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -215,21 +216,82 @@ def _cleanup_workspaces(rows: list[ResultRow], run_workspace: Path, *, preexisti
         shutil.rmtree(run_workspace, ignore_errors=True)
 
 
-def _write_results(rows: list[ResultRow]) -> Path:
+def _write_results(rows: list[ResultRow], stamp: str | None = None) -> Path:
     """Write rows to a timestamped JSONL file under ``evals/results/``.
 
     Args:
         rows: The result rows to persist.
+        stamp: The timestamp for the filename; `None` generates a fresh one (so the JSONL and
+            its sibling ``<stamp>.summary.json`` share one stamp when the caller passes it).
 
     Returns:
         The path written.
     """
     results = _EVALS_ROOT / "results"
     results.mkdir(exist_ok=True)
-    stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = stamp or datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     path = results / f"{stamp}.jsonl"
     write_results(rows, path)
     return path
+
+
+def build_summary(
+    rows: list[ResultRow],
+    *,
+    models: list[str],
+    seeds: int,
+    temperature: float,
+    stamp: str,
+    events_for: Callable[[ResultRow], Sequence[dict] | None] | None,
+) -> dict:
+    """Build the aggregate-metrics summary the runner persists alongside the per-run JSONL.
+
+    Reuses the same metric/classifier functions ``main()`` prints, so the artifact and the
+    stdout summary can never drift. Floats are rounded to 4 decimals.
+
+    Args:
+        rows: The result rows from the run.
+        models: The model ids in matrix order (one ``per_model`` entry each).
+        seeds: The seeds-per-task count for the run.
+        temperature: The sampling temperature for the run.
+        stamp: The shared timestamp (pairs the summary with ``<stamp>.jsonl``).
+        events_for: Resolver of a row's journal events, threaded into ``failure_histogram`` so
+            ``loop_oscillation`` / ``decision_error`` refinements are included.
+
+    Returns:
+        A JSON-serializable summary dict.
+    """
+    per_model = []
+    for model in models:
+        mrows = [r for r in rows if r.model == model]
+        per_model.append(
+            {
+                "model": model,
+                "pass_at_1": round(pass_at_1(mrows), 4),
+                "pass_caret_k": round(pass_caret_k(mrows), 4),
+                "n": len(mrows),
+            }
+        )
+    return {
+        "stamp": stamp,
+        "n": len(rows),
+        "temperature": temperature,
+        "seeds": seeds,
+        "models": models,
+        "overall_pass_at_1": round(pass_at_1(rows), 4),
+        "per_model": per_model,
+        "failure_histogram": failure_histogram(rows, events_for=events_for),
+    }
+
+
+def write_summary(summary: dict, path: Path) -> None:
+    """Write the summary dict as a single JSON object to ``path``.
+
+    Args:
+        summary: The summary from `build_summary`.
+        path: The destination ``<stamp>.summary.json`` file.
+    """
+    Path(path).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -293,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                 rows.append(row)
                 print(f"{model}  {spec.id}  seed={seed}  -> {'PASS' if row.solved else row.outcome}")
 
-    out = _write_results(rows)
+    out = _write_results(rows, stamp)
     print(f"\nwrote {len(rows)} rows -> {out}")
     # Per-model: a global pass^k conflates models (all rows of one task collapse into one
     # group), so report each model on its own — pass@1 (capability) and pass^k (reliability).
@@ -306,6 +368,21 @@ def main(argv: list[str] | None = None) -> int:
     hist = failure_histogram(rows, events_for=_journal_events)
     if hist:
         print("failure modes: " + ", ".join(f"{k}={v}" for k, v in sorted(hist.items())))
+
+    # Persist the aggregate metrics + histogram as a sibling artifact, sharing the results stamp.
+    # MUST precede cleanup: the histogram reads journals that cleanup deletes (already read above,
+    # but build_summary re-derives it via the same resolver, so order matters either way).
+    summary = build_summary(
+        rows,
+        models=models,
+        seeds=args.seeds,
+        temperature=args.temperature,
+        stamp=stamp,
+        events_for=_journal_events,
+    )
+    summary_path = out.with_name(f"{stamp}.summary.json")
+    write_summary(summary, summary_path)
+    print(f"wrote summary -> {summary_path}")
 
     if args.cleanup:
         _cleanup_workspaces(rows, run_workspace, preexisting=preexisting)
