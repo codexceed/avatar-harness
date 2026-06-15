@@ -23,6 +23,10 @@ class TaskSpec(BaseModel):
     task_kind: Literal["edit", "investigate", "test_only"] = "edit"
     fixture: str = "empty"
     success_probe: str | None = None
+    # The probe's role (ADR-0020). "success" (default): the probe IS the success criterion
+    # (option A). "guard": a necessary-not-sufficient negative check (e.g. no secret leaked) —
+    # ANDed with the run's positive signal so a do-nothing / give-up run doesn't score solved.
+    probe_role: Literal["success", "guard"] = "success"
     budgets: dict[str, int] = Field(default_factory=dict)
     # Runtime env for the task's program (injected into the success-probe subprocess), so a
     # task can declare what its program needs to run — e.g. a dummy OPENAI_API_KEY. The user

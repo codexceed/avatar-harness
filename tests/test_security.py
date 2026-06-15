@@ -51,6 +51,15 @@ def test_non_sensitive_path_still_allowed(git_repo):
     assert perm.blocked is False
 
 
+@pytest.mark.parametrize("variant", ["CREDENTIALS", "Credentials", "credentials", "CREDENTIALS.txt"])
+def test_read_file_denied_for_case_variants_of_sensitive_path(git_repo, variant):
+    # ADR-0021: a case-insensitive filesystem resolves `CREDENTIALS` to the denylisted
+    # `credentials` file, so the gate must refuse every case variant — not just the exact
+    # lowercase pattern (the bypass the Eval-0 Gemini run leaked through).
+    perm = PermissionPolicy().check(read_file, {"path": variant}, _state(), Workspace(git_repo))
+    assert perm.blocked is True
+
+
 def test_str_replace_denied_when_target_is_sensitive(git_repo):
     # The denylist spans every declared path, not just reads — an edit writing `.env` is blocked.
     raw = {"path": ".env", "old_string": "OLD=0", "new_string": "LEAK=1"}

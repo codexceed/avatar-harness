@@ -15,8 +15,13 @@ The design rationale lives in [`../docs/eval-harness-design.md`](../docs/eval-ha
 For each task it: provisions a **fresh, clean scratch git repo**, runs the agent on the task,
 then **scores the result deterministically — no LLM judge**:
 
-- If the task declares a **success probe**, the probe is authoritative (`solved = probe exits 0`)
-  and the agent runs **non-strict** (it delivers its best; we grade it blind).
+- If the task declares a **success probe** (`probe_role = "success"`, the default), the probe is
+  authoritative (`solved = probe exits 0`) and the agent runs **non-strict** (it delivers its best;
+  we grade it blind).
+- If the task declares a **guard probe** (`probe_role = "guard"`, e.g. no-secret-leak), the probe is
+  *necessary but not sufficient*: it is ANDed with the run's positive signal, so
+  `solved = probe exits 0 AND the agent reached a clean conclusion`. A no-leak run that never
+  concludes (an `incomplete` give-up) does **not** score solved (ADR-0020).
 - If there is no probe, the harness's own **`Verifier`** decides (e.g. an `investigate` task's
   grounded-answer gate).
 

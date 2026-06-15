@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**In active development — TDD, phased.** The engine is built through Phase 3.2 (the MVP cockpit), plus post-MVP dogfood hardening; durable crash-resume (3.3) is the remaining increment. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
+**In active development — TDD, phased.** The MVP cockpit (through Phase 3.2) is shipped (v1.0.x), plus post-MVP dogfood hardening. Current focus is the **eval-driven improvement loop** (Phase 4 — eval harness + observability), where agent changes iterate against measured data. Durable crash-resume (3.3) is **deferred, not next**: it's a contained increment on the already-built event journal, to be pulled forward only when an eval run's per-trajectory crash cost is a *measured* problem (e.g. long autonomous tasks in Eval-2) — not built ahead of that friction. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
 
 ## Documentation map — which doc, when
 
@@ -17,7 +17,7 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 | `PROGRESS.md` | Phased build ledger (checklists), TDD protocol. | Resuming work; knowing what's done and what's next. |
 | `docs/adr/` | Architecture Decision Records — *why* the build is shaped as it is (one decision per ADR: choice, rejected alternatives, trade-offs). The decision log going forward. | Resolving/recording why a design decision was made; before re-litigating a settled choice. |
 | `CHANGELOG.md` | The *what shipped* — generated automatically by release-please from Conventional Commits. Do not hand-edit. | Seeing what changed in a release. |
-| `research/` | Findings from **formally executed research work** — eval baselines/matrices, failure-mode catalogs, trajectory analyses, experiment write-ups. Evidence-linked + reproducible. | Recording the results of an explicit experiment/eval run; sourcing an empirical claim for a write-up. |
+| `docs/research/` | Findings from **formally executed research work** — eval baselines/matrices, failure-mode catalogs, trajectory analyses, experiment write-ups. Evidence-linked + reproducible. | Recording the results of an explicit experiment/eval run; sourcing an empirical claim for a write-up. |
 | `src/avatar_harness/tui/ARCHITECTURE.md` + `CLAUDE.md` | Package-local docs for the interactive cockpit (the `tui/` consumer): its component graph, the two planes, and the goal/approval/plan/render flows. | Cockpit-local work — editing `tui/` (the TUI shell, modals, `jo-cli`). |
 
 > `DECISIONS.md` is a **frozen historical archive** (decisions through 2026-06-11); it is no longer appended to. New design decisions are ADRs; new changes are the changelog.
@@ -30,7 +30,7 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 
 **Record design decisions as ADRs:** when you make a **major design decision** — a chosen approach, a rejected alternative, a scope cut, a non-obvious trade-off, or a load-bearing clarification — write a new ADR under `docs/adr/` (Nygard-style, one decision per ADR; supersede rather than edit an accepted one) and add it to `docs/adr/README.md`. Capture the *why* and the alternatives, not just the *what*. Routine implementation that merely follows an existing decision needs no ADR. Do **not** append to `DECISIONS.md` (frozen) or hand-write changelog prose — the *what shipped* comes from Conventional Commit messages, which release-please rolls into `CHANGELOG.md`.
 
-**Record research findings under `research/`:** when you **formally and explicitly execute research work** — an eval run or baseline matrix, a trajectory analysis, a failure-mode investigation, a benchmark — write its findings to a dated, evidence-linked doc under `research/`, citing the raw artifact path and the command to reproduce. This is the durable, citable home for empirical results that feed write-ups and the eval-driven self-improvement signal. A *deliberately executed* experiment belongs here; ad-hoc observations during ordinary dev do not. Distinguish measured fact from interpretation, and don't bury findings in commit messages or scratch files.
+**Record research findings under `docs/research/`:** when you **formally and explicitly execute research work** — an eval run or baseline matrix, a trajectory analysis, a failure-mode investigation, a benchmark — write its findings to a dated, evidence-linked doc under `docs/research/`, citing the raw artifact path and the command to reproduce. This is the durable, citable home for empirical results that feed write-ups and the eval-driven self-improvement signal. A *deliberately executed* experiment belongs here; ad-hoc observations during ordinary dev do not. Distinguish measured fact from interpretation, and don't bury findings in commit messages or scratch files.
 
 ## Commands
 

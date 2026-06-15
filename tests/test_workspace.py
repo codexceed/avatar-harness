@@ -9,10 +9,21 @@ from avatar_harness.workspace import (
     MatchNotFoundError,
     PatchError,
     PathOutsideWorkspaceError,
+    SensitivePathError,
     Workspace,
 )
 
 _CALC = "def add(a, b):\n    return a - b\n"  # the file the git_repo fixture commits
+
+
+@pytest.mark.parametrize("variant", ["CREDENTIALS", "Credentials", "credentials"])
+def test_workspace_read_refuses_case_variants_of_sensitive_path(tmp_path, variant):
+    # Defense-in-depth (ADR-0021): the Workspace chokepoint itself refuses every case variant
+    # of a denylisted path, independent of the permission gate — so a case-insensitive FS can't
+    # serve `CREDENTIALS` past the `credentials*` denylist even if a caller skips the gate.
+    (tmp_path / "credentials").write_text("sk-SECRET\n", encoding="utf-8")
+    with pytest.raises(SensitivePathError):
+        Workspace(tmp_path).read(variant)
 
 
 def _diff(path: str, old: str, new: str) -> str:

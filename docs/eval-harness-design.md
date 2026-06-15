@@ -24,7 +24,7 @@ column, not an assertion.
 
 **Goals (Eval-0):**
 - A `make eval` runner that scores N task specs hermetically and emits one JSONL row per run.
-- Score = **deterministic** (option A): when a task declares a success probe, the **probe is authoritative** (`solved = probe exit 0`) and the agent runs **non-strict**; a no-probe task is graded by the harness verifier. No LLM judge.
+- Score = **deterministic** (option A + ADR-0020): a **success probe** is authoritative (`solved = probe exit 0`, agent runs **non-strict**); a **guard probe** is necessary-but-not-sufficient (`solved = probe exit 0 AND` the agent reached a clean conclusion); a no-probe task is graded by the harness verifier. No LLM judge.
 - A **multi-model matrix** (`make eval MODELS=...`) → pass@1 × $/solve grid; default model chosen empirically.
 - Statistically honest reporting: pass@1 ± clustered CI, **pass^k** (reliability), paired regression detection.
 - A mechanical **failure-mode histogram** read from the journal.
@@ -132,28 +132,40 @@ sequenceDiagram
 
 ## 6. The scoring model — what "solved" means
 
-**Option A (decided 2026-06-14, after the first live smoke):** a task-authored **success probe is
-authoritative when present** — `solved = probe exit 0`, and the agent runs **non-strict** (it
-delivers its best and we grade it, rather than thrashing toward an edit gate a fresh creation can't
-satisfy). A **no-probe** task is graded by the harness **verifier** (e.g. investigate's
-grounded-answer gate), and runs strict. Both signals are deterministic; no LLM judge.
+**Option A (decided 2026-06-14, after the first live smoke) + guard refinement (ADR-0020,
+2026-06-15):** a task-authored probe declares a **role**. A **success probe** (`probe_role =
+"success"`, the default) is **authoritative when present** — `solved = probe exit 0`, agent runs
+**non-strict** (it delivers its best and we grade it, rather than thrashing toward an edit gate a
+fresh creation can't satisfy). A **guard probe** (`probe_role = "guard"`, a *necessary-but-not-
+sufficient* negative check — e.g. no-secret-leak) is instead **ANDed with the run's positive
+signal**: `solved = probe exit 0 AND` the agent reached a clean conclusion (`final_answer`), so a
+no-leak run that never concludes (an `incomplete` give-up) does **not** score solved. A **no-probe**
+task is graded by the harness **verifier** (e.g. investigate's grounded-answer gate), and runs
+strict. All signals are deterministic; no LLM judge.
 
 ```mermaid
 flowchart TD
     START([run finished]) --> Q{"probe declared?"}
-    Q -- "yes (non-strict run)" --> PB{"success_probe<br/>exit 0?"}
+    Q -- "yes (non-strict run)" --> ROLE{"probe_role?"}
+    ROLE -- success --> PB{"probe exit 0?"}
+    ROLE -- guard --> PG{"probe exit 0 AND<br/>agent concluded?"}
     PB -- yes --> PASS[score = 1 · solved]
     PB -- no --> FAIL[score = 0]
+    PG -- yes --> PASS
+    PG -- no --> FAIL
     Q -- "no (strict run)" --> VP{"verifier passed?"}
     VP -- yes --> PASS
     VP -- no --> FAIL
 
-    FAIL --> CLS["classify failure from row (+journal) →<br/>budget_exhausted · verification_failed ·<br/>blocked · decision_error · loop_oscillation ·<br/>probe_failed · harness_error"]
+    FAIL --> CLS["classify failure from row (+journal) →<br/>budget_exhausted · verification_failed ·<br/>blocked · decision_error · loop_oscillation ·<br/>guard_violation · probe_failed · harness_error"]
 ```
 
-- **success_probe** = a final, task-authored deterministic check *outside* the agent's loop; for a
-  probe-bearing task it is the success signal (it also catches a run that *declared* completion but
+- **success probe** = a final, task-authored deterministic check *outside* the agent's loop; for a
+  success-probe task it is the success signal (it also catches a run that *declared* completion but
   whose output doesn't work — `probe_failed`).
+- **guard probe** = a deterministic *negative* check (the agent did not do the bad thing, e.g. no
+  secret leaked); necessary but not sufficient, so it is ANDed with the agent's clean conclusion.
+  A failing guard probe is bucketed `guard_violation` (surfaced independent of outcome).
 - The verifier still **runs and is journaled** for probe tasks (advisory), but doesn't veto a
   probe-passing result — a fresh creation can't satisfy the edit gate's positive-signal rule.
 - **FAIL_TO_PASS / PASS_TO_PASS** (the SWE-bench partition; carried in the spec) become meaningful

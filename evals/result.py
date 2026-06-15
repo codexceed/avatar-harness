@@ -19,6 +19,9 @@ class ResultRow(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     probe_exit: int | None = None
+    # The declared probe's role (ADR-0020), carried so the failure classifier can distinguish a
+    # guard violation (e.g. a secret leaked) from an ordinary success-probe failure (code broken).
+    probe_role: str = "success"
     workspace: str | None = None  # the scratch repo this ran in (for inspecting the agent's output)
 
     def to_jsonl(self) -> str:
