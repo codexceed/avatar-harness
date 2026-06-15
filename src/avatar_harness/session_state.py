@@ -32,7 +32,7 @@ from avatar_harness.harness import Harness
 from avatar_harness.intent import ModeClassifier
 from avatar_harness.journal import JsonlEventJournal
 from avatar_harness.session import ApprovalGrant, Session
-from avatar_harness.state import TaskState
+from avatar_harness.state import ConversationTurn, TaskState
 from avatar_harness.workspace import PathOutsideWorkspaceError, SensitivePathError, Workspace
 
 TaskKind = Literal["edit", "investigate", "test_only"]
@@ -609,13 +609,19 @@ class ReplSession:
         return ws.diff()
 
     def _seed_history(self, task: TaskState) -> None:
-        """Seed prior conversation into `task` as initial `history` evidence (not transcript bleed).
+        """Seed prior conversation onto `task` as real chat turns (ADR-0017, not evidence bullets).
+
+        Prior goals/replies become `ConversationTurn`s the model client replays as genuine
+        `role="user"`/`role="assistant"` messages ahead of the working packet — the model
+        under-weighted them as flattened "Recent evidence" and re-asked answered questions.
+        An agent turn maps to `"assistant"`; a user turn to `"user"`.
 
         Args:
             task: The fresh per-goal `TaskState` to seed.
         """
         for turn in self.state.history:
-            task.add_feedback(f"{turn.role}: {turn.text}", kind="history")
+            role: Literal["user", "assistant"] = "assistant" if turn.role == "agent" else "user"
+            task.conversation.append(ConversationTurn(role=role, content=turn.text))
 
     def _ground_paths(self, task: TaskState, prompt: str) -> None:
         """Seed any `@path` references in `prompt` as `grounding` evidence on `task`.

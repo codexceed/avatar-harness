@@ -20,7 +20,7 @@ from avatar_harness.model_client import (
     parse_decision,
 )
 from avatar_harness.runner import AgentRunner
-from avatar_harness.state import TaskState
+from avatar_harness.state import ConversationTurn, TaskState
 from avatar_harness.verifier import Verifier
 from avatar_harness.workspace import Workspace
 
@@ -249,6 +249,24 @@ def test_native_system_prompt_drops_json_envelope():
     assert "JSON object" in legacy_sys  # legacy contract untouched
     assert "JSON object" not in native_sys
     assert "WORKING code change" in native_sys  # still kind-aware (edit framing)
+
+
+def test_build_messages_replays_conversation_as_real_turns():
+    # Cross-goal history rides as REAL user/assistant messages between the system message
+    # and the working packet (ADR-0017) — not flattened into the packet's evidence bullets,
+    # which the model under-weighted (it re-asked answered questions).
+    packet = _packet(
+        conversation=[
+            ConversationTurn(role="user", content="explain the widget"),
+            ConversationTurn(role="assistant", content="the widget lives in app.py"),
+        ]
+    )
+    messages = build_messages(packet)
+    assert messages[0]["role"] == "system"
+    assert messages[1] == {"role": "user", "content": "explain the widget"}
+    assert messages[2] == {"role": "assistant", "content": "the widget lives in app.py"}
+    assert messages[-1]["role"] == "user"  # the working packet is last
+    assert packet.goal in messages[-1]["content"]  # ...and carries the current goal
 
 
 def test_openai_client_records_parse_retry_trace():

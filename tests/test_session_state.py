@@ -114,11 +114,13 @@ async def test_history_seeds_next_task_context(tmp_path):
     ] * 2
     repl = _repl(tmp_path, decisions)
     await repl.submit("explain the widget in app.py")
-    # the next task carries the prior conversation as initial (history) evidence
+    # the next task carries the prior conversation as real chat turns (ADR-0017), not evidence
     session2 = repl.start("and what about the button?")
-    history_ev = [e for e in session2.state.evidence if e.kind == "history"]
-    assert history_ev  # prior turns seeded, not forgotten
-    assert any("explain the widget" in e.summary for e in history_ev)
+    convo = session2.state.conversation
+    assert convo  # prior turns seeded, not forgotten
+    assert convo[0].role == "user" and "explain the widget" in convo[0].content
+    assert any(t.role == "assistant" for t in convo)  # the prior reply rides as an assistant turn
+    assert not any(e.kind == "history" for e in session2.state.evidence)  # no longer evidence bullets
     st = await session2.run()  # finish it so the session closes cleanly
     repl.record(st)
 
@@ -134,11 +136,11 @@ async def test_blocked_question_recorded_as_agent_turn_seeds_next_goal(tmp_path)
     assert state.outcome == "blocked"
     assert repl.state.history[-1].role == "agent"
     assert repl.state.history[-1].text == question  # the question, not "blocked"
-    # the next goal (the answer) seeds the question as history evidence, not the outcome
+    # the next goal (the answer) seeds the question as an assistant chat turn, not the outcome
     session2 = repl.start("basic streaming, minimal")
-    history_ev = [e for e in session2.state.evidence if e.kind == "history"]
-    assert any(question in e.summary for e in history_ev)
-    assert not any(e.summary.strip() == "agent: blocked" for e in history_ev)
+    convo = session2.state.conversation
+    assert any(t.role == "assistant" and t.content == question for t in convo)
+    assert not any(t.content.strip() == "blocked" for t in convo)
 
 
 # --- visible-mode routing ----------------------------------------------------------------
