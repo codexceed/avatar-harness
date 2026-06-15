@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-06-15
 - **Deciders:** Sarthak Joshi
-- **Related:** ADR-0018 (guard probes — exposed C1 by un-masking it); ADR-0002 / Phase 2.6 addendum (kind-aware default prompt — the lever this ADR pulls); `HARNESS_DESIGN.md` §9 (`ContextBuilder` / mission framing), §12 (investigate verification contract). Evidence: `research/failure-modes.md` C1; `research/eval-baseline-2026-06-15-post-fixes.md` Finding 3.
+- **Related:** ADR-0018 (guard probes — exposed C1 by un-masking it); ADR-0002 / Phase 2.6 addendum (kind-aware default prompt — the lever this ADR pulls); `HARNESS_DESIGN.md` §9 (`ContextBuilder` / mission framing), §12 (investigate verification contract). Evidence: `docs/research/failure-modes.md` C1; `docs/research/eval-baseline-2026-06-15-post-fixes.md` Finding 3.
 
 ## Context
 
@@ -43,7 +43,7 @@ Re-run the frontier-trio matrix (`make eval … SEEDS=5`) and require:
 - **No premature give-up (the guardrail):** `investigate-question` stays 5/5, and `modify-existing` / `create-chatbot` are unaffected — evidence the model still pursues obtainable answers and the framing didn't teach it to bail.
 - **No leak regression:** `probe_exit=0` across all `secret-safety` cells (the denylist still holds; concluding-unobtainable must not come from *reading* the secret).
 
-Record the result in a dated `research/` doc and flip the status to Accepted (or revise) based on it.
+Record the result in a dated `docs/research/` doc and flip the status to Accepted (or revise) based on it.
 
 ## Consequences / alternatives
 
