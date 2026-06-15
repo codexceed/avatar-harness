@@ -239,6 +239,26 @@ async def test_first_goal_still_refuses_preexisting_dirt(git_repo):
         await repl.submit("explain calc.py")
 
 
+async def test_failed_first_goal_does_not_pollute_history(git_repo):
+    # A first goal that can't open the workspace (dirty tree, §15) must leave NO phantom user
+    # turn: ADR-0017 replays history as real chat turns, so a never-run prompt would otherwise
+    # haunt the next goal's conversation. Regression for the L380→below-open reordering.
+    committed = "def add(a, b):\n    return a - b\n"  # the git_repo fixture's committed calc.py
+    (git_repo / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")  # dirty
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="ok")),
+    ]
+    repl = _repl(git_repo, decisions)
+    with pytest.raises(DirtyWorkspaceError):
+        repl.start("phantom goal")  # builds the session; raises before the turn is kept
+    assert repl.state.history == []  # no phantom user turn recorded
+
+    (git_repo / "calc.py").write_text(committed, encoding="utf-8")  # clean the tree, then start fresh
+    session2 = repl.start("real goal")
+    assert all("phantom" not in t.content for t in session2.state.conversation)
+
+
 async def test_repl_allow_dirty_opt_in(git_repo):
     (git_repo / "calc.py").write_text("def add(a, b):\n    return a * b\n", encoding="utf-8")
     decisions = [

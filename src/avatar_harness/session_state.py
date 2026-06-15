@@ -374,10 +374,8 @@ class ReplSession:
             A not-yet-started `Session` wired with the session-scoped grants.
         """
         task = TaskState(goal=prompt, task_kind=kind, constraints=list(extra_constraints or ()))
-        self._seed_history(task)  # prior turns become initial evidence (before this turn is added)
+        self._seed_history(task)  # prior turns become the task's conversation (before this turn is added)
         self._ground_paths(task, prompt)  # @path references seed the named files as context
-        if append_turn:
-            self.state.history.append(Turn(role="user", text=prompt))
         # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.
         # Strict clean-start applies to the sitting's FIRST goal only: once a workspace has
         # opened, later dirt is the session's own work product (or deliberate user edits
@@ -386,6 +384,11 @@ class ReplSession:
             allow_dirty=self.allow_dirty or self._tree_claimed, conversational=not self.auto
         )
         self._tree_claimed = True  # only reached when the workspace opened (no DirtyWorkspaceError)
+        # Record the user turn ONLY after the workspace opens: a goal that fails to start
+        # (e.g. DirtyWorkspaceError on the first goal) must not leave a phantom prompt that
+        # `_seed_history` would replay as a real user turn on the next goal (ADR-0017).
+        if append_turn:
+            self.state.history.append(Turn(role="user", text=prompt))
         return Session(runner, task, grants=self.state.grants, journal=self.journal)
 
     def record(self, state: TaskState) -> None:
@@ -402,12 +405,12 @@ class ReplSession:
             state: The terminal `TaskState` returned by `session.run()`.
         """
         self.state.tasks.append(state)
-        reply = (
-            state.final_answer
-            or (state.open_questions[-1] if state.open_questions else None)
-            or state.outcome
-            or "done"
-        )
+        # The open question stands in for the reply only when the goal actually blocked on
+        # it. Guarding on `blocked` pins today's "an ask always blocks" assumption: once the
+        # runner's anticipated interactive-answer path lets a goal answer an ask inline and
+        # still succeed, a leftover open question must not shadow the real answer/outcome.
+        asked = state.outcome == "blocked" and bool(state.open_questions)
+        reply = state.final_answer or (state.open_questions[-1] if asked else None) or state.outcome or "done"
         self.state.history.append(Turn(role="agent", text=reply, task_id=state.task_id))
         # The routing memo is intra-goal only (start() re-resolves the same prompt):
         # a finished goal changes the conversation, so the same text next turn must
