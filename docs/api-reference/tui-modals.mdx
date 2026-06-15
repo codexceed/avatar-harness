@@ -26,10 +26,17 @@ ApprovalChoice(allow: bool, remember: bool) -> None
 
 Render a gated call and collect a `[y]/[a]/[d]` decision (control plane, §13).
 
+A bounded, centered dialog with a solid background and border so it reads as a
+*blocking* prompt sitting above the transcript — not a transcript line. The exact
+command (or call arguments) is shown up front so the human knows precisely what they
+are approving; `[v]` toggles the full raw arguments. The keys `[y]/[a]/[d]/[v]` and
+the equivalent clickable buttons share one dismiss contract.
+
 Args:
     tool: The tool name awaiting approval.
     reason: The gate's reason, shown to the human.
-    tool_input: The proposed call arguments (the command/diff detail, shown via `[v]`).
+    tool_input: The proposed call arguments; its `command` (or the whole dict) is
+        shown up front, with the full raw arguments behind `[v]`.
 
 ```python
 ApprovalModal(*, tool: str, reason: str, tool_input: dict) -> None
@@ -49,14 +56,21 @@ Deny this call.
 
 #### `ApprovalModal.action_toggle_view(self) -> None`
 
-Toggle the command/diff detail line.
+Toggle the full raw-arguments line (the command itself is always shown).
 
 #### `ApprovalModal.compose(self) -> Iterator[Widget]`
 
-Render the request summary, the (toggleable) detail, and the key hints.
+Render the bounded dialog: summary, the (toggleable) detail, buttons, key hints.
 
 Yields:
-    The prompt, detail, and hint widgets.
+    The dialog container holding the prompt, detail, buttons, and hint widgets.
+
+#### `ApprovalModal.on_button_pressed(self, event: Pressed) -> None`
+
+Route a button to the same decision its key binding makes (view toggles, no dismiss).
+
+Args:
+    event: The Textual `Button.Pressed` message identifying which action was chosen.
 ### `DiffModal`
 
 A read-only, scrollable diff viewer (dismissed with escape/enter).
