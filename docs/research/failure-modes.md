@@ -60,6 +60,18 @@ Status legend: ✅ fixed · 🔧 open · 📋 designed-not-built.
 - **Fix:** directory patterns expand to their contained files (capped with an overflow note).
 - **Feeds:** minor; a "silent zero is a lie" footnote.
 
+### A7 · Multi-turn history under-weighted as "evidence" → the agent re-asked ✅
+- **Mechanism:** cross-goal conversation was carried forward as `Evidence(kind="history")` and flattened into "Recent evidence" bullets inside the **single** user packet (`build_messages` emitted only `[system, user(packet)]`). A chat model weights prior `user`/`assistant` turns as the live thread but reads "evidence" as lower-priority context — so a follow-up that *answered* a prior `ask_user` arrived as a fresh, contextless goal.
+- **Evidence:** dogfood cockpit session — the agent asked the *same* clarifying question on two consecutive goals (goal 1 ended on `ask_user`; the user's answer landed as goal 2; the model re-asked).
+- **Fix:** ADR-0017 — send cross-goal history as real `role="user"`/`role="assistant"` messages between the system message and the working packet. Refines (not breaks) invariant #1: the messages are still *derived* from `TaskState.conversation`.
+- **Feeds:** Path C — "the *shape* of context matters, not just its content."
+
+### A8 · Sibling-session journals were readable → trajectory leak + loop ✅
+- **Mechanism:** the workspace hid only the *current* session's journal file + its `latest.jsonl` pointer, on the reasoning that "a real project may legitimately own `events/`." But a directory that accumulates journals across runs (the dogfood case) left every *other* session's `events/<id>.jsonl` fully listable and readable — a confinement-scope gap (invariant #5).
+- **Evidence:** dogfood cockpit session — the agent `list_files`'d the tree, found prior-run journals, read one (leaking the harness's own trajectory back into its context), and looped chasing a non-existent `events/latest.jsonl`.
+- **Fix:** ADR-0018 — hide the entire journal *directory* (all sessions' journals + pointer) as a path prefix when it is a real subdir; a root-level `--log` still hides only the journal pair so it can never blank the workspace.
+- **Feeds:** Path C; security-adjacent — a journal can contain a secret leaked by an *earlier* run, so reading a sibling journal is also a cross-run exfiltration channel. Also narrows C1's search surface (the agent can no longer mine the journal for a leaked token).
+
 ---
 
 ## B — Measurement / construct-validity failures
@@ -86,10 +98,10 @@ Status legend: ✅ fixed · 🔧 open · 📋 designed-not-built.
 
 ## C — Model behavioral failures (harness working correctly)
 
-### C1 · Failure-to-conclude / won't-accept-unknowable 🔧 *(model)*
+### C1 · Failure-to-conclude / won't-accept-unknowable 🔧 *(model)* · 📋 fix designed (ADR-0022)
 - **Mechanism:** denied the token, sonnet refuses to conclude it is unknowable and spends ~17 of 20 turns hunting for a *leaked copy* — re-reading the event log and the compiled `.pyc`, firing escalating `search_repo` regexes — never emitting `final_answer`, so it hits the iteration cap → `incomplete`. gpt-5.1 accepts the denial *as* the answer in 4 turns → `success`.
 - **Evidence:** the sonnet (all seeds) vs. gpt-5.1 secret-safety trajectories. The harness behaved correctly throughout — **the token never leaked for either model**; the difference is purely model behavior. **Cross-model confirmation (post-fix re-run):** Gemini exhibits the *identical* pathology — 0/5, all `incomplete`, 13 iters/seed — so this is not sonnet-specific. Only gpt-5.1 concludes (4 turns). The honest cost spread to reach the same safe outcome: gpt 4.4k tok / gemini 92k / sonnet 337k (~77×). See [`eval-baseline-2026-06-15-post-fixes.md`](eval-baseline-2026-06-15-post-fixes.md) Finding 3.
-- **Status:** a genuine capability/behavior signal, not a harness bug — now *measured cross-model* (was masked by B1's probe until the guard fix). (Whether it's "bad" is task-dependent — persistence is sometimes a virtue.) Open: whether to nudge conclusion via prompt/scaffold is a question for the next loop iteration.
+- **Status:** a genuine capability/behavior signal, not a harness bug — now *measured cross-model* (was masked by B1's probe until the guard fix). (Whether it's "bad" is task-dependent — persistence is sometimes a virtue.) **Proposed fix:** ADR-0022 (📋 designed-not-built, *Proposed*) shapes it at the investigate mission prompt — a grounded "unobtainable" (the resource is denied / denylisted / absent) is declared a valid `final_answer`, scoped to the `investigate` kind and conditioned on a *structural* block (not mere difficulty). Promotion to Accepted is gated on a measured re-run that must fix C1 *without* regressing the tasks that require persistence (`investigate-question` stays 5/5). ADR-0018 (A8) independently narrowed the symptom by removing the journal from the agent's reach — one of the avenues sonnet was mining for a leaked copy.
 - **Feeds:** T3 — the behavioral story behind the 77–88× token gap; the kind of thing evals *should* surface.
 
 ### C2 · `apply_patch` dialect mismatch ✅
