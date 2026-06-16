@@ -19,16 +19,9 @@ dependencies = [
 # `openai` and raises a clear error if the extra is missing.
 [project.optional-dependencies]
 openai = ["openai>=1.40"]
-# The interactive cockpit's dependencies. NOTE: the cockpit itself now lives in the
-# sibling `jo-cli` package; this extra is retained transitionally so `avatar.tui` (not
-# yet extracted) imports under the dev toolchain. It is removed when `jo` is split out.
-textual = ["textual>=0.50", "rich>=13"]  # rich: the cockpit styles transcript lines (rich.text.Text)
 
 [project.scripts]
 avatar = "avatar.cli:main"
-# The cockpit's launcher, retained transitionally until the `jo` package is extracted
-# (it then owns `jo = "jo.cli:main"` and this line is removed).
-jo-cli = "avatar.tui.cli:main"
 
 [build-system]
 requires = ["hatchling"]

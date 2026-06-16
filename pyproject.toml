@@ -8,7 +8,7 @@
 # `evals/` and `tests/` stay at the repo root as dev tooling / the unified suite.
 
 [tool.uv.workspace]
-members = ["avatar-harness"]  # "jo" is added when the cockpit is extracted into its own package
+members = ["avatar-harness", "jo-cli"]
 
 [dependency-groups]
 # Hard-gate tools are pinned and installed (reproducible CI gate).
@@ -23,7 +23,8 @@ dev = [
     "pytest-asyncio>=0.23",
     "pre-commit>=3.7",
     "openai>=1.40",  # the OpenAI extra, installed for dev/CI so the test suite can exercise it
-    "textual>=0.50",  # the TUI extra, installed for dev/CI so the cockpit tests can run
+    # textual/rich are runtime deps of the `jo-cli` member, so the workspace install already
+    # provides them for the cockpit tests — no need to list them here.
 ]
 
 # --- Ruff: lint + format. Encodes readability (#1) and verbosity ceilings (#2). ---
@@ -78,7 +79,7 @@ ignore = [
 # varies by environment (editable install vs clean CI checkout), which can make a
 # mis-sorted import block pass locally but fail CI — pinning closes that blind spot.
 [tool.ruff.lint.isort]
-known-first-party = ["avatar", "evals"]
+known-first-party = ["avatar", "jo", "evals"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -117,13 +118,13 @@ check-class-attributes = false
 # Member packages + dev tooling are all held to the type gate, except evals' probes (runtime
 # scripts that import agent-generated modules, e.g. `import calc`, unresolvable statically) and
 # its fixtures (deliberately-imperfect sample repos), excluded as ruff excludes them.
-project-includes = ["avatar-harness", "tests", "evals"]
+project-includes = ["avatar-harness", "jo-cli", "tests", "evals"]
 project-excludes = ["**/__pycache__/**", "**/.[!/.]*/**", "evals/fixtures", "evals/probes"]
-# Member dirs are import roots so `import avatar` resolves to avatar-harness/avatar (flat layout).
-# `tests` is an import root too, so shared test stubs in `tests/conftest.py` (e.g. ScriptedModel,
-# imported as `from conftest import ...`) resolve under the type checker as they do under pytest.
-# `.` makes the root-level `evals` package importable from tests.
-search-path = ["avatar-harness", "tests", "."]
+# Member dirs are import roots so `import avatar` / `import jo` resolve to avatar-harness/avatar
+# and jo-cli/jo (flat layout). `tests` is an import root too, so shared test stubs in
+# `tests/conftest.py` (e.g. ScriptedModel, imported as `from conftest import ...`) resolve under
+# the type checker as they do under pytest. `.` makes the root-level `evals` package importable.
+search-path = ["avatar-harness", "jo-cli", "tests", "."]
 python-version = "3.12"
 
 # --- interrogate: docstring coverage ratchet (soft). Run via uvx. ---

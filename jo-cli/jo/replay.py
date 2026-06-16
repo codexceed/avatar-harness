@@ -9,7 +9,7 @@ import, so it stays usable wherever events are available.
 
 from collections.abc import AsyncIterator, Sequence
 
-from avatar.event_types import HarnessEvent
+from avatar import HarnessEvent
 
 
 class ReplaySession:

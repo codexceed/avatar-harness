@@ -9,6 +9,12 @@
       "extra-files": [
         "avatar/__init__.py"
       ]
+    },
+    "jo-cli": {
+      "release-type": "python",
+      "package-name": "jo-cli",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true
     }
   }
 }

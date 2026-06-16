@@ -27,9 +27,9 @@ from avatar.session_state import ReplSession
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar.tools.edit import str_replace
 from avatar.tools.filesystem import read_file
-from avatar.tui import cli as jo_cli
-from avatar.tui.app import CockpitApp
-from avatar.tui.modals import ApprovalModal, DiffModal, PlanModal
+from jo import cli as jo_cli
+from jo.app import CockpitApp
+from jo.modals import ApprovalModal, DiffModal, PlanModal
 
 
 class _Empty(BaseModel):

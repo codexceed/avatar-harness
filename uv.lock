@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "avatar-harness",
+    "jo-cli",
 ]
 
 [manifest.dependency-groups]
@@ -17,7 +18,6 @@ dev = [
     { name = "pytest", specifier = ">=8.2" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "ruff", specifier = ">=0.5" },
-    { name = "textual", specifier = ">=0.50" },
 ]
 
 [[package]]
@@ -55,20 +55,14 @@ dependencies = [
 openai = [
     { name = "openai" },
 ]
-textual = [
-    { name = "rich" },
-    { name = "textual" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
-    { name = "rich", marker = "extra == 'textual'", specifier = ">=13" },
-    { name = "textual", marker = "extra == 'textual'", specifier = ">=0.50" },
 ]
-provides-extras = ["openai", "textual"]
+provides-extras = ["openai"]
 
 [[package]]
 name = "certifi"
@@ -302,6 +296,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/95/a06692b29e77473f286e1ec1f426d3ca44d7b5843be8ad21d7a5f3fcdcc0/jiter-0.15.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:b6c0ffae686c39bf3737be60793783267628783ea42545632c10b291105aee45", size = 305128, upload-time = "2026-05-19T10:09:43.657Z" },
     { url = "https://files.pythonhosted.org/packages/23/85/7270d7ad41d6061a25b950c6bf91d638bd9aacb113200a8c8d57a055fd67/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d54fb5b31dea401a41af3f8a7d2512e9b6a6a005491e6166c7e4ffab9639a9c", size = 340459, upload-time = "2026-05-19T10:09:45.452Z" },
     { url = "https://files.pythonhosted.org/packages/c8/8d/302cb2057b7513327b4d575cff6b1d066ee6431a5357fc3f8867cd684406/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:54d5d6090cdc1b7c9e780dfb04949a990adb1e301a2fc0bbcee7de4638d33f9a", size = 344469, upload-time = "2026-05-19T10:09:46.864Z" },
+]
+
+[[package]]
+name = "jo-cli"
+version = "0.1.0"
+source = { editable = "jo-cli" }
+dependencies = [
+    { name = "avatar-harness", extra = ["openai"] },
+    { name = "rich" },
+    { name = "textual" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "avatar-harness", extras = ["openai"], editable = "avatar-harness" },
+    { name = "rich", specifier = ">=13" },
+    { name = "textual", specifier = ">=0.50" },
 ]
 
 [[package]]

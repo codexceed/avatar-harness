@@ -17,15 +17,15 @@ from textual.app import App
 from textual.widgets import Static, TextArea
 
 from avatar.event_types import AgentStart, ApprovalRequested
-from avatar.tui.app import CockpitApp
-from avatar.tui.modals import (
+from jo.app import CockpitApp
+from jo.modals import (
     ApprovalChoice,
     ApprovalModal,
     DiffModal,
     PlanChoice,
     PlanModal,
 )
-from avatar.tui.replay import ReplaySession
+from jo.replay import ReplaySession
 
 
 class _Host(App):

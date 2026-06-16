@@ -1,4 +1,4 @@
-"""jo-cli — the interactive cockpit's own entry point.
+"""jo — the interactive cockpit's own entry point (the `jo-cli` distribution).
 
 The harness is an independent core under many consumers (TUIs, eval drivers,
 autonomous wrappers); the cockpit is one of them, so it owns its launcher. The
@@ -14,12 +14,16 @@ nothing journaled.
 import argparse
 from uuid import uuid4
 
-from avatar.config import HarnessConfig
-from avatar.harness import Harness
-from avatar.journal import JsonlEventJournal, resolve_log_path, update_latest_pointer
-from avatar.model_client import ModelClient
-from avatar.session_state import ReplSession
-from avatar.tui import load_cockpit
+from avatar import (
+    Harness,
+    HarnessConfig,
+    JsonlEventJournal,
+    ModelClient,
+    ReplSession,
+    resolve_log_path,
+    update_latest_pointer,
+)
+from jo import load_cockpit
 
 
 def main(
@@ -28,7 +32,7 @@ def main(
     config: HarnessConfig | None = None,
     model_client: ModelClient | None = None,
 ) -> int:
-    """jo-cli entry point: build a `ReplSession` over the cockpit and run it to exit.
+    """`jo` entry point: build a `ReplSession` over the cockpit and run it to exit.
 
     Args:
         argv: Argument vector; falls back to `sys.argv` when omitted.
@@ -39,7 +43,7 @@ def main(
         Process exit code (`0` once the cockpit is dismissed).
     """
     parser = argparse.ArgumentParser(
-        prog="jo-cli",
+        prog="jo",
         description="jo — the interactive cockpit (a multi-turn TUI) over avatar-harness.",
     )
     parser.add_argument(

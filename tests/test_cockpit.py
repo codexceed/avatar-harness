@@ -26,8 +26,8 @@ from avatar.event_types import (
     ToolStart,
     VerificationEnd,
 )
-from avatar.tui.app import CockpitApp
-from avatar.tui.replay import ReplaySession
+from jo.app import CockpitApp
+from jo.replay import ReplaySession
 
 
 async def _settle(app, pilot) -> None:

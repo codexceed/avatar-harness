@@ -1,7 +1,8 @@
-# ARCHITECTURE — `tui/` (the cockpit)
+# ARCHITECTURE — `jo` (the cockpit)
 
-A package-local map of the interactive Textual cockpit, in the same visual style as the
-root [`ARCHITECTURE.md`](../../../ARCHITECTURE.md). This is the whole-package picture for
+A package-local map of the interactive Textual cockpit — the standalone `jo-cli`
+distribution — in the same visual style as the root
+[`ARCHITECTURE.md`](../ARCHITECTURE.md). This is the whole-package picture for
 cockpit-local work; for *why* the engine around it is shaped as it is, follow the `§N` links
 into `HARNESS_DESIGN.md` (the source-of-truth spec) and the root architecture map. For the
 package's working rules, see [`CLAUDE.md`](./CLAUDE.md).
@@ -10,42 +11,43 @@ package's working rules, see [`CLAUDE.md`](./CLAUDE.md).
 
 ## 1. What this package is
 
-The **interactive cockpit** — a full-screen Textual shell (`jo-cli`) that turns a multi-turn
-conversation into observable harness runs: a status bar, a scrollable chat transcript, and an
-input box.
+The **interactive cockpit** — a full-screen Textual shell (the `jo` command) that turns a
+multi-turn conversation into observable harness runs: a status bar, a scrollable chat
+transcript, and an input box.
 
 Two properties define it:
 
-- **A pure consumer of the core engine.** The import direction is strictly **consumer → core,
-  never back** (`cli.py` docstring): this package consumes the public `Harness` / `ReplSession`
-  / `Session` surface, and nothing in the core imports the TUI. The harness is an independent
-  core under many consumers (TUIs, eval drivers, autonomous wrappers); the cockpit is one of
-  them, so it owns its launcher.
-- **Behind the optional `[textual]` extra.** The core engine + SDK import without `textual`, so
-  `import avatar` never pulls in this package's heavy imports. `load_cockpit()`
-  (`__init__.py`) is the one guarded entry — it returns `CockpitApp` with a clear install hint
-  when the extra is absent.
+- **A pure consumer of the core engine.** A separate distribution (`jo-cli`) that depends on
+  `avatar-harness`. The import direction is strictly **consumer → core, never back**
+  (`cli.py` docstring): this package consumes the public `Harness` / `ReplSession` / `Session`
+  surface (from the top-level `avatar` package), and nothing in the core imports `jo`. The
+  harness is an independent core under many consumers (TUIs, eval drivers, autonomous wrappers);
+  the cockpit is one of them, so it owns its launcher (ADR-0023).
+- **Textual is this package's own dependency.** The core engine + SDK import without `textual`,
+  so `import avatar` never pulls in this package's heavy imports. `load_cockpit()`
+  (`__init__.py`) is the one guarded entry — it returns `CockpitApp` lazily so `replay.py` stays
+  importable without forcing a Textual import at package load.
 
 The cockpit sits **outside the loop** (§13): it is an observation subscriber + an input/control
 source, never a step the runner awaits.
 
 ## 2. Component graph
 
-`jo-cli` builds a `ReplSession` over the core and hands it to a `CockpitApp`. The app drives the
-REPL from input, observes each per-goal `Session`'s event stream, and acts only through the
-modals → the session's control plane.
+The `jo` command builds a `ReplSession` over the core and hands it to a `CockpitApp`. The app
+drives the REPL from input, observes each per-goal `Session`'s event stream, and acts only
+through the modals → the session's control plane.
 
 ```mermaid
 flowchart TD
-    subgraph tui["tui/ (this package — behind the [textual] extra)"]
-        CLI["jo-cli (cli.py): build ReplSession, run CockpitApp"]
+    subgraph jo["jo (this package — the jo-cli distribution)"]
+        CLI["jo (cli.py): build ReplSession, run CockpitApp"]
         APP["CockpitApp (app.py): status bar + transcript + input"]
         MOD["modals.py: ApprovalModal / DiffModal / PlanModal"]
         RP["ReplaySession (replay.py): engine-free event stream"]
         INIT["load_cockpit (__init__.py): guarded import"]
     end
 
-    subgraph core["core engine (consumed — never imports tui/)"]
+    subgraph core["core engine (consumed — never imports jo)"]
         REPL["ReplSession (session_state.py): multi-turn scope"]
         SESS["Session (session.py): two-plane boundary"]
         RUN["AgentRunner: the loop"]
@@ -70,11 +72,11 @@ flowchart TD
 
 | Component | Role |
 | --- | --- |
-| `cli.py` (`jo-cli`) | The cockpit's own entry point: parse `--auto`/`--log`/`--allow-dirty`, build a journaled `ReplSession`, `load_cockpit()`, run the app. Consumer → core only. |
+| `cli.py` (`jo`) | The cockpit's own entry point: parse `--auto`/`--log`/`--allow-dirty`, build a journaled `ReplSession`, `load_cockpit()`, run the app. Consumer → core only. |
 | `app.py` (`CockpitApp`) | The shell: status bar + `RichLog` transcript + `Input`. Two modes — **observe** a fixed `session=` stream, or **drive** a live `repl=` `ReplSession`. Renders `events()`; acts via modals. |
 | `modals.py` | The control surfaces: `ApprovalModal` → `ApprovalChoice`, `DiffModal` → `None`, `PlanModal` → `PlanChoice`. Each `dismiss`es a small typed result the app routes. |
 | `replay.py` (`ReplaySession`) | A session-shaped object that replays a fixed event list with no engine — the basis for headless tests and a future `--replay <journal>` viewer. No Textual import. |
-| `__init__.py` (`load_cockpit`) | The guarded import behind the `[textual]` extra; raises a clear install hint when `textual` is absent. |
+| `__init__.py` (`load_cockpit`) | The guarded (lazy) import of the Textual app; raises a clear hint if `textual` is somehow absent (it is a hard dependency of `jo-cli`). |
 
 ## 3. The two planes (don't conflate them — §13)
 
@@ -236,12 +238,13 @@ the `■ blocked` from `AgentEnd`).
 - **observe** mode (a fixed `session=` stream — `ReplaySession` for tests, a future `--replay`)
   and **drive** mode (the live `repl=` multi-turn REPL).
 - The three modals — approval, diff, plan — wired to the control plane and the plan flow.
-- Journaled sittings: `jo-cli` writes one write-ahead `events/<session_id>.jsonl` (or `--log`),
+- Journaled sittings: `jo` writes one write-ahead `events/<session_id>.jsonl` (or `--log`),
   so an interactive run is as replayable as a batch one.
 - The chat-style transcript (user / model / tool vocabulary) and a live status bar
   (mode · phase · outcome · verdict).
 
 **The boundary it must keep:** a pure **consumer of the core** (consumer → core, never back), an
-**observer + control-caller only** (control never flows through `events()`, §13), behind the
-optional `[textual]` extra, and **headless-testable** (assert on `rendered`/status; drive with
-`ReplaySession` or the `Pilot` test harness; never snapshot the rendered screen).
+**observer + control-caller only** (control never flows through `events()`, §13), a separate
+distribution owning its `textual` dependency, and **headless-testable** (assert on
+`rendered`/status; drive with `ReplaySession` or the `Pilot` test harness; never snapshot the
+rendered screen).

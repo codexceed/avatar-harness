@@ -2,9 +2,9 @@
 
 A minimal, ground-up **coding agent harness** — the runtime around an LLM that turns a natural-language coding task into a bounded, verifiable engineering loop. The model proposes actions; the harness owns execution, state, permissions, logging, and verification.
 
-Use it three ways: a **batch CLI** (`avatar`) for one-shot tasks, an **interactive cockpit** (`jo-cli`, a Textual TUI) for a multi-turn REPL, or a **library** (`from avatar import Harness`) to embed the engine.
+Use it three ways: a **batch CLI** (`avatar`) for one-shot tasks, an **interactive cockpit** (`jo`, the Textual TUI from the separate `jo-cli` package) for a multi-turn REPL, or a **library** (`from avatar import Harness`) to embed the engine.
 
-> This repository is a **uv workspace**: the `avatar-harness` SDK lives in [`avatar-harness/`](avatar-harness/) (import `avatar`, CLI `avatar`); `evals/` and `tests/` stay at the repo root. The interactive cockpit (`jo-cli`) currently ships with the SDK behind the `[textual]` extra; it is being extracted into its own `jo-cli` package.
+> This repository is a **uv workspace** with two distributable packages: the `avatar-harness` SDK lives in [`avatar/`](avatar-harness/) (import `avatar`, CLI `avatar`) and the reference cockpit ships as [`jo-cli`](jo-cli/) (import `jo`, CLI `jo`). `evals/` and `tests/` stay at the repo root. See [ADR-0023](docs/adr/0023-two-package-workspace-avatar-sdk-jo-cli.md).
 
 > Status: the engine and the interactive cockpit are built and tested; durable crash-resume is the remaining increment — see [`PROGRESS.md`](PROGRESS.md). New here? Start with the **[Quickstart](docs/guides/quickstart.mdx)**.
 
@@ -24,7 +24,7 @@ cd avatar-harness
 make install          # uv sync — deps + dev tools, reproducible from uv.lock
 ```
 
-**As a library** (from source — not yet on PyPI): `pip install -e './avatar-harness[openai]'` from a clone (the SDK member), or `pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness#subdirectory=avatar-harness'`. Add the `textual` extra (`'./avatar-harness[openai,textual]'`) for the bundled cockpit. Quote the extras (zsh expands brackets). `openai` is optional — install the base package and inject your own `ModelClient`. Quote the extras (zsh expands brackets). `openai` is optional — install the base package and inject your own `ModelClient`.
+**As a library** (from source — not yet on PyPI): `pip install -e './avatar-harness[openai]'` from a clone (the SDK member), or `pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness#subdirectory=avatar-harness'`. For the cockpit, install the separate `jo-cli` package (`pip install -e ./jo-cli` from a clone). Quote the extras (zsh expands brackets). `openai` is optional — install the base package and inject your own `ModelClient`.
 
 ## Configuration
 
@@ -57,8 +57,11 @@ It prints a timestamped event trajectory, then a `Status:` line and the cited an
 
 ### Interactive cockpit (jo)
 
+The cockpit ships as the separate [`jo-cli`](jo-cli/) package (the `jo` command). In this
+workspace it's already installed by `make install`; standalone, `pip install jo-cli`.
+
 ```bash
-uv run jo-cli          # needs the [textual] extra
+uv run jo               # launch the cockpit (the jo-cli package)
 ```
 
 A full-screen multi-turn REPL — status bar (mode · phase · outcome), streaming transcript, input box — where the agent reads/edits/runs/verifies with you in the loop:
@@ -72,7 +75,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 
 | Flag | Command | Default | Meaning |
 | --- | --- | --- | --- |
-| `--auto` | `jo-cli` | off | Keep the strict verification gate (default: conversational — verify runs + reports, you decide). |
+| `--auto` | `jo` | off | Keep the strict verification gate (default: conversational — verify runs + reports, you decide). |
 | `--log PATH` | both | `events/<session_id>.jsonl` | Where to write the append-only JSONL event log. |
 | `--allow-dirty` | both | off | Run despite uncommitted **tracked** changes in the workspace. |
 
