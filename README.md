@@ -70,6 +70,9 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 - **Ground a goal** in a file with `@path/to/file`.
 - **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`delete_file`) auto-allow when their paths validate inside the workspace.
 - **Conversational by default** — verification runs and is reported, but the reply isn't gated on it (you're the terminal authority); `--auto` keeps the strict gate.
+- **Prompt history** — `↑`/`↓` recall the prompts you submitted this sitting (stepping past the newest restores your in-progress draft).
+- **`Ctrl+C`** copies the current selection if one is active, else cancels the in-flight run, else quits.
+- **Copying text** — to copy with your OS clipboard shortcut (e.g. `Cmd+C`), use your terminal's native selection: in **iTerm2** hold **Option** while drag-selecting, in **Terminal.app** / **GNOME Terminal** / **Windows Terminal** hold **Shift**, then copy as usual. (A plain mouse drag selects *within* the app — copy that with `Ctrl+C`.)
 
 ### Flags
 

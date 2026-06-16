@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from avatar.config import HarnessConfig
 from avatar.harness import Harness
 from avatar.intent import ModeClassifier
-from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
 from avatar.session_state import ReplSession
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar.tools.edit import str_replace
@@ -242,6 +242,33 @@ async def test_goal_error_renders_instead_of_crashing(git_repo):
         assert "DirtyWorkspaceError" in joined  # surfaced to the human...
         assert not app.query_one("#prompt").disabled  # ...and the REPL is still usable
     # reaching here at all means the app survived the failed goal
+
+
+class _RaisingModel(ModelClient):
+    """A model whose decide() raises — simulates an auth/network failure surfaced mid-run."""
+
+    def decide(self, context: object) -> ModelDecision:
+        raise RuntimeError("missing AVATAR_API_KEY")
+
+
+async def test_ctrl_c_quits_after_goal_fails_mid_run(git_repo):
+    # A goal that fails *inside* the run (e.g. a missing API key surfaced from the model
+    # client) left its per-goal Session non-terminal; ctrl+c then kept trying to cancel a
+    # dead run and never quit. After a finished goal there is no live run → ctrl+c must quit.
+    config = HarnessConfig(workspace_root=str(git_repo))
+    harness = Harness(config=config, model=_RaisingModel(), tools=_read_registry())
+    repl = ReplSession(harness)
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain things")
+        await _settle(app, pilot)
+        assert "goal failed" in "\n".join(app.rendered).lower()  # the failure surfaced...
+        assert app._session is None  # ...leaving no crashed session for ctrl+c to stick on
+        exited: list[bool] = []
+        app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert exited  # ctrl+c quits instead of silently cancelling a dead run
 
 
 def test_jo_cli_threads_allow_dirty(git_repo, monkeypatch):

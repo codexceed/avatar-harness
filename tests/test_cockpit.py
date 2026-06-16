@@ -26,7 +26,7 @@ from avatar.event_types import (
     ToolStart,
     VerificationEnd,
 )
-from jo.app import CockpitApp
+from jo.app import CockpitApp, HistoryInput
 from jo.replay import ReplaySession
 
 
@@ -95,6 +95,77 @@ async def test_input_submit_invokes_callback():
         await pilot.pause()
         assert app.query_one("#prompt", Input).value == ""  # input cleared after submit
     assert seen == ["explain the loop"]  # the prompt reached the submit callback once
+
+
+async def test_up_arrow_recalls_prompt_history():
+    # ↑ walks back through submitted prompts (newest first), ↓ walks forward, and stepping
+    # past the newest restores the half-typed draft. History accrues across submits.
+    seen: list[str] = []
+    app = CockpitApp(ReplaySession([]), on_submit=seen.append)
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        for line in ("first goal", "second goal"):
+            inp.value = line
+            await pilot.press("enter")
+            await pilot.pause()
+        inp.value = "draft"  # a fresh, unsubmitted line
+        await pilot.press("up")
+        assert inp.value == "second goal"  # newest first
+        await pilot.press("up")
+        assert inp.value == "first goal"  # then older
+        await pilot.press("up")
+        assert inp.value == "first goal"  # clamped at the oldest entry
+        await pilot.press("down")
+        assert inp.value == "second goal"
+        await pilot.press("down")
+        assert inp.value == "draft"  # past the newest → the stashed draft returns
+    assert seen == ["first goal", "second goal"]
+
+
+async def test_history_skips_consecutive_duplicates():
+    # Resubmitting the same line shouldn't stack identical history entries.
+    app = CockpitApp(ReplaySession([]))
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        for _ in range(3):
+            inp.value = "same goal"
+            await pilot.press("enter")
+            await pilot.pause()
+        await pilot.press("up")
+        assert inp.value == "same goal"
+        await pilot.press("up")
+        assert inp.value == "same goal"  # only one entry — no duplicate stack to walk
+    assert inp._history == ["same goal"]
+
+
+async def test_ctrl_c_copies_active_selection_instead_of_quitting():
+    # ctrl+c is bound (priority) to the app's cancel/quit, which shadows Textual's own
+    # copy-selection action. With text selected, ctrl+c must copy it rather than quit.
+    app = CockpitApp(ReplaySession([]))
+    async with app.run_test() as pilot:
+        copied: list[str] = []
+        exited: list[bool] = []
+        app.copy_to_clipboard = copied.append  # type: ignore[method-assign]
+        app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
+        app.screen.get_selected_text = lambda: "selected text"  # type: ignore[method-assign]
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert copied == ["selected text"]  # the selection was copied...
+        assert not exited  # ...and the app did not quit
+
+
+async def test_ctrl_c_quits_when_nothing_selected_and_idle():
+    # No selection, no live run (observe mode) → ctrl+c quits, as before.
+    app = CockpitApp(ReplaySession([]))
+    async with app.run_test() as pilot:
+        exited: list[bool] = []
+        app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
+        app.screen.get_selected_text = lambda: None  # type: ignore[method-assign]
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert exited  # fell through to quit
 
 
 async def test_ask_user_question_renders():
