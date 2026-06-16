@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.1](https://github.com/codexceed/avatar-harness/compare/v1.2.0...v1.2.1) (2026-06-16)
+
+
+### Documentation
+
+* add the distribution plan to the locked blog roadmap ([#73](https://github.com/codexceed/avatar-harness/issues/73)) ([13bd47c](https://github.com/codexceed/avatar-harness/commit/13bd47cdeb1618c07182c5cc5bdd4612e1854beb))
+* lock the blog rollout roadmap (Codex-cross-validated) ([#69](https://github.com/codexceed/avatar-harness/issues/69)) ([32512f5](https://github.com/codexceed/avatar-harness/commit/32512f57690b88af52e8d67652be730847239507))
+* **research:** catalog A7/A8 scaffold modes + link C1 to ADR-0022 ([#68](https://github.com/codexceed/avatar-harness/issues/68)) ([6141543](https://github.com/codexceed/avatar-harness/commit/61415430c7cefb68f1e3941e5480dbf13ede0b8c))
+
 ## [1.2.0](https://github.com/codexceed/avatar-harness/compare/v1.1.0...v1.2.0) (2026-06-15)
 
 
