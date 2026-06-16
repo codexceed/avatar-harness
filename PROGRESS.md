@@ -45,7 +45,7 @@ CLI shell + `config` + `TaskState` + event spine; loop echoes. No model, no tool
 - [x] `cli.py` — echo loop + `main()`
 
 **Exit criteria**
-- [x] `uv run avatar-harness "<task>"` starts, emits `agent_start … agent_end`, exits clean
+- [x] `uv run avatar "<task>"` starts, emits `agent_start … agent_end`, exits clean
 - [x] `TaskState` round-trips through pydantic JSON
 - [x] all Phase 0 tests green · `ruff` + `pyright` clean
 
@@ -250,14 +250,14 @@ The high/medium-impact items from a core-library assessment (cross-validated by 
 - [x] `test_system_failure_is_surfaced_not_retried` (system error distinct from model-correctable)
 
 **Lane C — public API + Harness facade** [landed green]
-- [x] `test_public_api_exports_stable_surface` (`from avatar_harness import Harness, TaskState, ToolDefinition, ToolResult, RunDeps, ModelClient, Workspace, HarnessConfig`)
+- [x] `test_public_api_exports_stable_surface` (`from avatar import Harness, TaskState, ToolDefinition, ToolResult, RunDeps, ModelClient, Workspace, HarnessConfig`)
 - [x] `test_harness_from_env_runs_investigate_end_to_end`
 - [x] `test_harness_overrides_each_seam` (inject model / tools / verifier / policy)
 - [x] `test_cli_delegates_to_harness_facade` (CLI wires through the facade, not bespoke construction)
 
 **Lane D — model boundary** [landed green]
 - [x] `test_default_prompt_is_kind_aware` (now genuinely kind-aware via the addendum — edit vs investigate framing differs)
-- [x] `test_core_imports_without_openai` (`import avatar_harness` works with `openai` absent — lazy/guarded provider import)
+- [x] `test_core_imports_without_openai` (`import avatar` works with `openai` absent — lazy/guarded provider import)
 - [x] `test_custom_model_client_runs_end_to_end` (provider fully swappable; prompt contract behind the adapter)
 
 **Addendum — kind-aware prompt + lazy client** [landed green]
@@ -269,7 +269,7 @@ The high/medium-impact items from a core-library assessment (cross-validated by 
 - [x] a third-party tool that raises can't crash a run (returns a failed `ToolResult`)
 - [x] `state.phase` advances `investigating → editing → verifying`, emits `phase_changed`, and an out-of-phase tool call is refused at execution
 - [x] wall-clock/context budgets and the cancellation token are honored by the loop (→ `incomplete`)
-- [x] `from avatar_harness import Harness` runs a task in ≤3 lines; the CLI delegates to the same facade
+- [x] `from avatar import Harness` runs a task in ≤3 lines; the CLI delegates to the same facade
 - [x] the default model adapter is provider- and kind-neutral; `openai` is an optional extra
 - [x] all lanes green · `make check` clean
 
@@ -293,7 +293,7 @@ The single sequential spine the lanes fan out around: the typed event union, the
 - [x] **Lane 1 · Engine internals** — the foundation `EventBus` grew into its own `bus.py` with **bounded per-subscriber queues** (soft cap; only droppable `*_update` events are shed at the cap, lifecycle/control always enqueue and may exceed it; **drop-newest**, coalescing deferred), plus a privileged write-ahead `JsonlEventJournal` (`journal.py`): every published event is journaled **losslessly + flushed per event** *before* the (lossy) fan-out, so a slow/broken subscriber never blocks publish or peers and the journal stays complete even when a subscriber sheds (drops show as `event_id` gaps). Journal is **bus-internal** (sync append) so **zero `runner.py` edits**; the awaited journal + durable resume stay 3.3. `Session` gained an optional `journal=`; `EventBus`/`JsonlEventJournal` exported. One hardcoded drop policy (no `DropPolicy` enum until a 2nd consumer — rule of three). (10 tests; 186/186 green; `make check` clean.)
 - **Lane 2 · Textual cockpit** — decomposed into three reviewable sub-increments (the cockpit is too big + dependency-heavy for one PR):
   - [x] **2a · multi-turn `SessionState` + `ReplSession`** — the session scope above `TaskState` (§23): conversation `history`, the sequence of per-goal `tasks`, session-scoped `grants`, current `mode`. `ReplSession` runs each goal as one fresh `TaskState` through the existing single-task `Session` (**one code path** — batch is the degenerate one-`submit` case), seeds the new task from prior history (in-session only; explicit, not transcript bleed), and carries grants across tasks (`Session` gained a shared-by-reference `grants=` seam). Visible heuristic `default_mode` → `task_kind` + explicit `set_mode` override (no hidden classifier; `/mode` wiring is the tail). Pure logic, zero new deps. `ReplSession`/`SessionState`/`Turn` exported. (8 tests; 194/194 green; `make check` clean.)
-  - [x] **2b · Textual cockpit shell** — `CockpitApp` (`tui/app.py`): full-screen status bar (mode · phase · outcome) + scrollable transcript fed by a worker draining `session.events()` + input box (submit → injected callback). Pure observation subscriber + input source, never in the loop (§13). A `ReplaySession` (`tui/replay.py`) replays a fixed event list through the same `events()`/`resolve_approval`/`cancel` surface (no model/engine) — deterministic `Pilot`/`run_test()` tests + a future `--replay` viewer. Optional **`[textual]` extra** (+ dev group); `load_cockpit()` guards it with an install hint; `import avatar_harness` never pulls in textual. (6 cockpit tests + a core-import guard; 201/201 green; `make check` clean.)
+  - [x] **2b · Textual cockpit shell** — `CockpitApp` (`tui/app.py`): full-screen status bar (mode · phase · outcome) + scrollable transcript fed by a worker draining `session.events()` + input box (submit → injected callback). Pure observation subscriber + input source, never in the loop (§13). A `ReplaySession` (`tui/replay.py`) replays a fixed event list through the same `events()`/`resolve_approval`/`cancel` surface (no model/engine) — deterministic `Pilot`/`run_test()` tests + a future `--replay` viewer. Optional **`[textual]` extra** (+ dev group); `load_cockpit()` guards it with an install hint; `import avatar` never pulls in textual. (6 cockpit tests + a core-import guard; 201/201 green; `make check` clean.)
   - [x] **2c · modals** (`tui/modals.py`) — three `ModalScreen`s returning typed results: **`ApprovalModal`** → `ApprovalChoice` (`[y]` once / `[a]` always-scoped→`remember=True` PR-#10 grant / `[d]` deny / `[v]` detail), which `CockpitApp` **auto-pops on an `ApprovalRequested` event** and routes to `session.resolve_approval` (the event announces, the modal decides, §13); **`DiffModal`** → read-only scrollable diff viewer; **`PlanModal`** → `PlanChoice` (editable plan, approve/revise — the plan *flow* is the tail). (7 `Pilot` tests; 208/208 green; `make check` clean.)
 - **Lane 3 · `run_command`** — *Independent.*
   - [x] **The tool** — tier-3 over `Workspace.run` (argv, no shell metacharacters), **editing/verifying only** (ADR-0002 — keeps `investigating` read-only, avoids the command-ungrounded verifier dead-end); default-blocked in batch, approval-gated in the REPL; a ran-but-failed command is `success=True` evidence; timeout/empty-command are model-correctable/system failures. **Mutation capture (PR #9 review fix):** a command's created/changed files are attributed into `files_changed` and **staged** (`Workspace.status_paths`/`stage`) so codegen/migrations flow into the diff → artifact → verifier, not a blind subsystem. Registered in `default_registry`. (10 tests; 168/168 green.)

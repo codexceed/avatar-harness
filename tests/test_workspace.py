@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from avatar_harness.workspace import (
+from avatar.workspace import (
     AmbiguousMatchError,
     DirtyWorkspaceError,
     EmptyAnchorError,

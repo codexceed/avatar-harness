@@ -12,11 +12,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.event_types import VerificationPlanFrozen, dump_event, parse_event
-from avatar_harness.planner import VerificationPlanner
-from avatar_harness.state import PlannedCheck, TaskState
-from avatar_harness.workspace import Workspace
+from avatar.config import HarnessConfig
+from avatar.event_types import VerificationPlanFrozen, dump_event, parse_event
+from avatar.planner import VerificationPlanner
+from avatar.state import PlannedCheck, TaskState
+from avatar.workspace import Workspace
 
 
 def _config(**kw) -> HarnessConfig:

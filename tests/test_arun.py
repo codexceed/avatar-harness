@@ -11,12 +11,12 @@ import time
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.event_types import EventBase
-from avatar_harness.events import Emitter
-from avatar_harness.model_client import (
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
+from avatar.deps import CancellationToken, RunDeps
+from avatar.event_types import EventBase
+from avatar.events import Emitter
+from avatar.model_client import (
     DecisionParseError,
     DecisionRetryNote,
     DecisionUsage,
@@ -25,14 +25,14 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
-from avatar_harness.runner import AgentRunner
-from avatar_harness.session import EventBus
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.tools.search import search_repo
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.runner import AgentRunner
+from avatar.session import EventBus
+from avatar.state import TaskState
+from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar.tools.filesystem import read_file
+from avatar.tools.search import search_repo
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def _runner(tmp_path, registry, decisions, *, event_sink=None, token=None, **config_kw) -> AgentRunner:

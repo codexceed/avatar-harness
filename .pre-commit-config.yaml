@@ -14,7 +14,7 @@ repos:
     hooks:
       - id: compileall
         name: compileall (syntax — compiles)
-        entry: python -m compileall -q src tests evals
+        entry: python -m compileall -q avatar-harness tests evals
         language: system
         types: [python]
         pass_filenames: false
@@ -28,14 +28,16 @@ repos:
 
       - id: pydoclint
         name: pydoclint (Google docstrings)
-        entry: uv run pydoclint src evals
+        entry: uv run pydoclint avatar-harness evals
         language: system
         types: [python]
         pass_filenames: false
 
       - id: deptry
         name: deptry (dependency hygiene)
-        entry: uv run deptry src evals
+        # deptry resolves against one package's declared deps; run it inside the member
+        # (the virtual workspace root declares none). evals is dev tooling, not gated.
+        entry: bash -c 'cd avatar-harness && uv run deptry avatar'
         language: system
         types: [python]
         pass_filenames: false

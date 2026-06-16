@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from avatar_harness.event_types import (
+from avatar.event_types import (
     AgentStart,
     ApprovalRequested,
     DecisionError,
@@ -22,7 +22,7 @@ from avatar_harness.event_types import (
     load_events,
     parse_event,
 )
-from avatar_harness.eventlog import EventLog
+from avatar.eventlog import EventLog
 
 _TS = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 

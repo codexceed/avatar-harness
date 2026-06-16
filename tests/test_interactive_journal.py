@@ -11,16 +11,16 @@ per-goal `Session` — **one journal per REPL sitting**, shared by reference the
 
 from conftest import ScriptedModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.event_types import load_events
-from avatar_harness.harness import Harness
-from avatar_harness.journal import JsonlEventJournal
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.session_state import ReplSession
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.tui import cli as jo_cli
-from avatar_harness.tui.app import CockpitApp
+from avatar.config import HarnessConfig
+from avatar.event_types import load_events
+from avatar.harness import Harness
+from avatar.journal import JsonlEventJournal
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.session_state import ReplSession
+from avatar.tools.base import ToolRegistry
+from avatar.tools.filesystem import read_file
+from avatar.tui import cli as jo_cli
+from avatar.tui.app import CockpitApp
 
 
 def _read_registry() -> ToolRegistry:

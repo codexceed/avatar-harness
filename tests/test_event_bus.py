@@ -10,14 +10,14 @@ visible as `event_id` gaps, never silent reordering. The privileged journal (tes
 
 import asyncio
 
-from avatar_harness.bus import EventBus
-from avatar_harness.event_types import (
+from avatar.bus import EventBus
+from avatar.event_types import (
     AgentStart,
     ModelUpdate,
     PhaseChanged,
     load_events,
 )
-from avatar_harness.journal import JsonlEventJournal
+from avatar.journal import JsonlEventJournal
 
 
 def _drain(queue: asyncio.Queue) -> list:

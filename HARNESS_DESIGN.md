@@ -619,7 +619,7 @@ Agents fail constantly; the harness expects it.
 ## 17. Suggested package layout
 
 ```text
-src/avatar_harness/
+avatar-harness/avatar/
   __init__.py        # curated public SDK surface (Harness, Session, event types, …)
   cli.py
   config.py

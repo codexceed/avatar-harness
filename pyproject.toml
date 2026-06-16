@@ -1,26 +1,14 @@
-[project]
-name = "avatar-harness"
-version = "1.2.0"
-description = "A minimal, ground-up coding agent harness: a bounded, verifiable loop around an LLM."
-readme = "README.md"
-requires-python = ">=3.12"
-license = { file = "LICENSE" }
-authors = [{ name = "Sarthak Joshi" }]
-keywords = ["llm", "agent", "coding-agent", "harness", "tool-calling"]
+# avatar-harness — uv workspace root (virtual: ships nothing of its own).
+#
+# It ties together the distributable members and centralizes the dev toolchain +
+# lint/type/test config so the gate runs once over the whole repo. Each member owns
+# its package metadata in its own pyproject.toml:
+#   avatar-harness/  -> the `avatar-harness` SDK (import `avatar`, CLI `avatar`)
+#   jo-cli/          -> the `jo-cli` reference cockpit (import `jo`, CLI `jo`)   [added on extraction]
+# `evals/` and `tests/` stay at the repo root as dev tooling / the unified suite.
 
-dependencies = [
-    "pydantic>=2.7",
-    "pydantic-settings>=2.3",
-]
-
-# Provider backends are optional extras: the core package (state, tools, runner,
-# verifier, prompt assembly) imports without them. `OpenAIModelClient` lazily imports
-# `openai` and raises a clear error if the extra is missing.
-[project.optional-dependencies]
-openai = ["openai>=1.40"]
-# The interactive TUI cockpit (Phase 3.1 Lane 2). The core engine + SDK import without
-# it; `avatar_harness.tui` guards its import and the CLI prints an install hint.
-textual = ["textual>=0.50", "rich>=13"]  # rich: the cockpit styles transcript lines (rich.text.Text)
+[tool.uv.workspace]
+members = ["avatar-harness"]  # "jo" is added when the cockpit is extracted into its own package
 
 [dependency-groups]
 # Hard-gate tools are pinned and installed (reproducible CI gate).
@@ -37,20 +25,6 @@ dev = [
     "openai>=1.40",  # the OpenAI extra, installed for dev/CI so the test suite can exercise it
     "textual>=0.50",  # the TUI extra, installed for dev/CI so the cockpit tests can run
 ]
-
-[project.scripts]
-avatar-harness = "avatar_harness.cli:main"
-# The cockpit's own launcher (needs the [textual] extra at runtime; prints an install
-# hint without it). The TUI is a consumer of the core, so it owns its entry point —
-# the batch CLI never imports the TUI.
-jo-cli = "avatar_harness.tui.cli:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/avatar_harness"]
 
 # --- Ruff: lint + format. Encodes readability (#1) and verbosity ceilings (#2). ---
 [tool.ruff]
@@ -89,10 +63,10 @@ ignore = [
 "**/__init__.py" = ["D104"]
 # By-design: the harness exists to run external commands (ripgrep, test/lint runners).
 # Subprocess use in these modules is the feature, not a smell — they validate paths/args themselves.
-"src/avatar_harness/tools/search.py" = ["S603", "S607"]
-"src/avatar_harness/workspace.py" = ["S603", "S607"]
+"avatar-harness/avatar/tools/search.py" = ["S603", "S607"]
+"avatar-harness/avatar/workspace.py" = ["S603", "S607"]
 # The CLI legitimately writes to stdout.
-"src/avatar_harness/cli.py" = ["T201"]
+"avatar-harness/avatar/cli.py" = ["T201"]
 # Build tooling, not library code: relax annotation/print/complexity strictness.
 "scripts/**" = ["ANN", "T20", "C901", "PLR0912", "PLR0913", "PLR0915"]
 # Eval tooling (dev, not shipped): running external commands and printing a report is the
@@ -104,7 +78,7 @@ ignore = [
 # varies by environment (editable install vs clean CI checkout), which can make a
 # mis-sorted import block pass locally but fail CI — pinning closes that blind spot.
 [tool.ruff.lint.isort]
-known-first-party = ["avatar_harness"]
+known-first-party = ["avatar", "evals"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -122,8 +96,8 @@ convention = "google"
 # Types live in signatures (Pyrefly checks them), NOT duplicated in docstrings.
 [tool.pydoclint]
 style = "google"
-# evals library modules are gated like src; its probes (lightweight scripts) and fixtures
-# (sample data) are excluded, mirroring the ruff carve-outs for those paths.
+# evals library modules are gated like the members; its probes (lightweight scripts) and
+# fixtures (sample data) are excluded, mirroring the ruff carve-outs for those paths.
 exclude = '\.venv|evals/fixtures|evals/probes'
 arg-type-hints-in-docstring = false
 check-return-types = false
@@ -140,25 +114,17 @@ check-class-attributes = false
 
 # --- Pyrefly: sole hard type gate (#1). Pinned to 1.0.x; bump deliberately. ---
 [tool.pyrefly]
-# `evals` (dev tooling) is held to the same type gate as `src` — except its probes (runtime
+# Member packages + dev tooling are all held to the type gate, except evals' probes (runtime
 # scripts that import agent-generated modules, e.g. `import calc`, unresolvable statically) and
 # its fixtures (deliberately-imperfect sample repos), excluded as ruff excludes them.
-project-includes = ["src", "tests", "evals"]
+project-includes = ["avatar-harness", "tests", "evals"]
 project-excludes = ["**/__pycache__/**", "**/.[!/.]*/**", "evals/fixtures", "evals/probes"]
+# Member dirs are import roots so `import avatar` resolves to avatar-harness/avatar (flat layout).
 # `tests` is an import root too, so shared test stubs in `tests/conftest.py` (e.g. ScriptedModel,
 # imported as `from conftest import ...`) resolve under the type checker as they do under pytest.
 # `.` makes the root-level `evals` package importable from tests.
-search-path = ["src", "tests", "."]
+search-path = ["avatar-harness", "tests", "."]
 python-version = "3.12"
-
-# --- deptry: dependency hygiene — unused/missing/transitive (#5). ---
-[tool.deptry]
-# `evals` is a first-party package living outside `src/` (dev tooling); without this deptry
-# reads its intra-package imports as a missing third-party dep.
-known_first_party = ["evals"]
-# Probes (which import agent-generated modules like `calc`) and fixtures aren't dep-checked,
-# mirroring the ruff/pyrefly/pydoclint carve-outs for those paths.
-extend_exclude = ["evals/fixtures", "evals/probes"]
 
 # --- interrogate: docstring coverage ratchet (soft). Run via uvx. ---
 [tool.interrogate]
@@ -174,5 +140,6 @@ exclude = ["tests", "build", "dist"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 # Repo root on sys.path so tests can import the root-level `evals` package (dev tooling,
-# deliberately outside the shipped `src/avatar_harness`).
+# deliberately outside the shipped members). The `avatar`/`jo` packages resolve via the
+# editable workspace install, not this path.
 pythonpath = ["."]

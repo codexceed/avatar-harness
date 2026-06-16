@@ -8,18 +8,20 @@ description: From install to a verifier-checked answer in five minutes.
 avatar-harness is a Python 3.12+ library. It is **not yet published to PyPI** —
 install it from source:
 
+The repo is a uv workspace; the SDK is the `avatar-harness/` member (import `avatar`).
+
 ```bash
 # From a clone (editable):
 git clone https://github.com/codexceed/avatar-harness.git
 cd avatar-harness
-pip install -e '.[openai]'            # the default OpenAI-compatible model client
-pip install -e '.[openai,textual]'    # + the bundled Textual cockpit, `jo-cli` (optional)
+pip install -e './avatar-harness[openai]'           # the SDK + default OpenAI-compatible model client
+pip install -e './avatar-harness[openai,textual]'   # + the bundled Textual cockpit, `jo-cli` (optional)
 
 # Or straight from GitHub into your own project's environment
 # (uses your git credentials while the repo is private):
-pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
+pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness#subdirectory=avatar-harness'
 # uv equivalent:
-uv add 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
+uv add 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness#subdirectory=avatar-harness'
 ```
 
 <Note>
@@ -56,7 +58,7 @@ denylist, context-compaction budgets) is in the [SDK guide](/guides/sdk#configur
 ## First run — the CLI
 
 ```bash
-avatar-harness "where does the agent loop terminate, and what sets outcome=success?"
+avatar "where does the agent loop terminate, and what sets outcome=success?"
 ```
 
 The CLI streams a timestamped event trajectory as the agent works, then prints
@@ -74,7 +76,7 @@ a `Status:` line and the cited answer. The whole run is journaled to
 The same engine, importable. Five lines to a verifier-checked answer:
 
 ```python
-from avatar_harness import Harness
+from avatar import Harness
 
 harness = Harness.from_env()                  # AVATAR_* / .env; no key needed to construct
 state = harness.run("explain how str_replace anchors edits")
@@ -89,7 +91,7 @@ outcomes are `incomplete` (budget exhausted), `blocked` (needs human input), and
 Every collaborator is an injectable seam:
 
 ```python
-from avatar_harness import Harness, HarnessConfig
+from avatar import Harness, HarnessConfig
 
 harness = Harness(
     # test_command is the always-wins override; left unset, the harness detects

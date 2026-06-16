@@ -13,19 +13,19 @@ on the result* shifts with who is in the loop:
 
 from conftest import ScriptedModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.events import Emitter
-from avatar_harness.harness import Harness
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.runner import AgentRunner
-from avatar_harness.session_state import ReplSession
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
+from avatar.deps import CancellationToken, RunDeps
+from avatar.events import Emitter
+from avatar.harness import Harness
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.runner import AgentRunner
+from avatar.session_state import ReplSession
+from avatar.state import TaskState
+from avatar.tools.base import ToolRegistry
+from avatar.tools.filesystem import read_file
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def _runner(tmp_path, registry, decisions, *, conversational=False, emitter=None, **cfg) -> AgentRunner:

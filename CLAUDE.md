@@ -18,7 +18,7 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 | `docs/adr/` | Architecture Decision Records — *why* the build is shaped as it is (one decision per ADR: choice, rejected alternatives, trade-offs). The decision log going forward. | Resolving/recording why a design decision was made; before re-litigating a settled choice. |
 | `CHANGELOG.md` | The *what shipped* — generated automatically by release-please from Conventional Commits. Do not hand-edit. | Seeing what changed in a release. |
 | `docs/research/` | Findings from **formally executed research work** — eval baselines/matrices, failure-mode catalogs, trajectory analyses, experiment write-ups. Evidence-linked + reproducible. | Recording the results of an explicit experiment/eval run; sourcing an empirical claim for a write-up. |
-| `src/avatar_harness/tui/ARCHITECTURE.md` + `CLAUDE.md` | Package-local docs for the interactive cockpit (the `tui/` consumer): its component graph, the two planes, and the goal/approval/plan/render flows. | Cockpit-local work — editing `tui/` (the TUI shell, modals, `jo-cli`). |
+| `avatar-harness/avatar/tui/ARCHITECTURE.md` + `CLAUDE.md` | Package-local docs for the interactive cockpit (the `tui/` consumer): its component graph, the two planes, and the goal/approval/plan/render flows. | Cockpit-local work — editing `tui/` (the TUI shell, modals, `jo-cli`). |
 
 > `DECISIONS.md` is a **frozen historical archive** (decisions through 2026-06-11); it is no longer appended to. New design decisions are ADRs; new changes are the changelog.
 

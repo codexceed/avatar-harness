@@ -12,19 +12,19 @@ import time
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.event_types import ApprovalRequested, ApprovalResolved, EventBase
-from avatar_harness.events import Emitter
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.runner import AgentRunner
-from avatar_harness.session import Session
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
+from avatar.deps import CancellationToken, RunDeps
+from avatar.event_types import ApprovalRequested, ApprovalResolved, EventBase
+from avatar.events import Emitter
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.runner import AgentRunner
+from avatar.session import Session
+from avatar.state import TaskState
+from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar.tools.filesystem import read_file
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 class _Empty(BaseModel):

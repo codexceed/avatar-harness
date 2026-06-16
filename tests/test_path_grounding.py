@@ -9,11 +9,11 @@ never a leaked secret.
 
 from conftest import ScriptedModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.harness import Harness
-from avatar_harness.session_state import ReplSession
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.filesystem import read_file
+from avatar.config import HarnessConfig
+from avatar.harness import Harness
+from avatar.session_state import ReplSession
+from avatar.tools.base import ToolRegistry
+from avatar.tools.filesystem import read_file
 
 
 def _repl(root) -> ReplSession:

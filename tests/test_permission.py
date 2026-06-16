@@ -1,12 +1,12 @@
 from pydantic import BaseModel
 
-from avatar_harness.permission import PermissionPolicy, ToolPermission
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolDefinition, ToolResult
-from avatar_harness.tools.commands import run_tests
-from avatar_harness.tools.edit import str_replace, write_file
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.workspace import Workspace
+from avatar.permission import PermissionPolicy, ToolPermission
+from avatar.state import TaskState
+from avatar.tools.base import ToolDefinition, ToolResult
+from avatar.tools.commands import run_tests
+from avatar.tools.edit import str_replace, write_file
+from avatar.tools.filesystem import read_file
+from avatar.workspace import Workspace
 
 
 def _noop_handler(args: BaseModel, deps: object) -> ToolResult:

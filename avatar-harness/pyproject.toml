@@ -1,0 +1,43 @@
+[project]
+name = "avatar-harness"
+version = "1.2.0"
+description = "A minimal, ground-up coding agent harness: a bounded, verifiable loop around an LLM."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Sarthak Joshi" }]
+keywords = ["llm", "agent", "coding-agent", "harness", "tool-calling"]
+
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+# Provider backends are optional extras: the core package (state, tools, runner,
+# verifier, prompt assembly) imports without them. `OpenAIModelClient` lazily imports
+# `openai` and raises a clear error if the extra is missing.
+[project.optional-dependencies]
+openai = ["openai>=1.40"]
+# The interactive cockpit's dependencies. NOTE: the cockpit itself now lives in the
+# sibling `jo-cli` package; this extra is retained transitionally so `avatar.tui` (not
+# yet extracted) imports under the dev toolchain. It is removed when `jo` is split out.
+textual = ["textual>=0.50", "rich>=13"]  # rich: the cockpit styles transcript lines (rich.text.Text)
+
+[project.scripts]
+avatar = "avatar.cli:main"
+# The cockpit's launcher, retained transitionally until the `jo` package is extracted
+# (it then owns `jo = "jo.cli:main"` and this line is removed).
+jo-cli = "avatar.tui.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["avatar"]
+
+# The distribution is `avatar-harness` but the import package is `avatar`; tell deptry so
+# it doesn't read intra-package `import avatar` as a transitive third-party dependency.
+[tool.deptry]
+known_first_party = ["avatar"]

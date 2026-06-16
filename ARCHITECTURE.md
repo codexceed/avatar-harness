@@ -346,7 +346,7 @@ If the patch were wrong, the verifier returns `passed=false`, `recommended_next_
 
 ## 6. Current implementation footprint
 
-What exists in `src/avatar_harness/` today (through Phase 3.2 — the MVP cockpit — plus the post-MVP dogfood hardening):
+What exists in `avatar-harness/avatar/` today (through Phase 3.2 — the MVP cockpit — plus the post-MVP dogfood hardening):
 
 | Module | Contents | Maps to |
 | --- | --- | --- |

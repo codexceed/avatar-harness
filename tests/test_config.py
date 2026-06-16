@@ -1,4 +1,4 @@
-from avatar_harness.config import HarnessConfig
+from avatar.config import HarnessConfig
 
 
 def test_config_loads_defaults(monkeypatch):

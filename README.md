@@ -2,7 +2,9 @@
 
 A minimal, ground-up **coding agent harness** — the runtime around an LLM that turns a natural-language coding task into a bounded, verifiable engineering loop. The model proposes actions; the harness owns execution, state, permissions, logging, and verification.
 
-Use it three ways: a **batch CLI** (`avatar-harness`) for one-shot tasks, an **interactive cockpit** (`jo-cli`, a Textual TUI) for a multi-turn REPL, or a **library** (`from avatar_harness import Harness`) to embed the engine.
+Use it three ways: a **batch CLI** (`avatar`) for one-shot tasks, an **interactive cockpit** (`jo-cli`, a Textual TUI) for a multi-turn REPL, or a **library** (`from avatar import Harness`) to embed the engine.
+
+> This repository is a **uv workspace**: the `avatar-harness` SDK lives in [`avatar-harness/`](avatar-harness/) (import `avatar`, CLI `avatar`); `evals/` and `tests/` stay at the repo root. The interactive cockpit (`jo-cli`) currently ships with the SDK behind the `[textual]` extra; it is being extracted into its own `jo-cli` package.
 
 > Status: the engine and the interactive cockpit are built and tested; durable crash-resume is the remaining increment — see [`PROGRESS.md`](PROGRESS.md). New here? Start with the **[Quickstart](docs/guides/quickstart.mdx)**.
 
@@ -22,7 +24,7 @@ cd avatar-harness
 make install          # uv sync — deps + dev tools, reproducible from uv.lock
 ```
 
-**As a library** (from source — not yet on PyPI): `pip install -e '.[openai]'` from a clone, or `pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'`. Add the `textual` extra (`'.[openai,textual]'`) for the cockpit. Quote the extras (zsh expands brackets). `openai` is optional — install the base package and inject your own `ModelClient`.
+**As a library** (from source — not yet on PyPI): `pip install -e './avatar-harness[openai]'` from a clone (the SDK member), or `pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness#subdirectory=avatar-harness'`. Add the `textual` extra (`'./avatar-harness[openai,textual]'`) for the bundled cockpit. Quote the extras (zsh expands brackets). `openai` is optional — install the base package and inject your own `ModelClient`. Quote the extras (zsh expands brackets). `openai` is optional — install the base package and inject your own `ModelClient`.
 
 ## Configuration
 
@@ -40,14 +42,14 @@ AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbat
 
 Point at OpenAI instead: `AVATAR_BASE_URL=https://api.openai.com/v1`, `AVATAR_MODEL=gpt-4o-mini`.
 
-For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile); a greenfield repo that declares no contract gets a model-authored **smoke check**, run by the harness, as a fallback floor (ADR-0014) — so a from-scratch project verifies out of the box. Set `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` for a stronger, declared contract (it always wins over the floor). The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `src/avatar_harness/config.py` is the source of truth.
+For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile); a greenfield repo that declares no contract gets a model-authored **smoke check**, run by the harness, as a fallback floor (ADR-0014) — so a from-scratch project verifies out of the box. Set `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` for a stronger, declared contract (it always wins over the floor). The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `avatar-harness/avatar/config.py` is the source of truth.
 
 ## Usage
 
 ### Batch CLI
 
 ```bash
-uv run avatar-harness "where does the agent loop terminate, and what sets outcome=success?"
+uv run avatar "where does the agent loop terminate, and what sets outcome=success?"
 make run TASK="explain how str_replace anchors edits"   # via the Makefile
 ```
 
@@ -79,7 +81,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 ### As a library
 
 ```python
-from avatar_harness import Harness
+from avatar import Harness
 
 harness = Harness.from_env()                 # config from AVATAR_* / .env; no API key needed to construct
 state = harness.run("explain how str_replace anchors edits")

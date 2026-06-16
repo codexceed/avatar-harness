@@ -1,6 +1,6 @@
-from avatar_harness.artifact import ArtifactManager
-from avatar_harness.state import CheckResult, CommandRecord, TaskState, VerifierResult
-from avatar_harness.workspace import Workspace
+from avatar.artifact import ArtifactManager
+from avatar.state import CheckResult, CommandRecord, TaskState, VerifierResult
+from avatar.workspace import Workspace
 
 _FIX = (
     "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
