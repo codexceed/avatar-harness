@@ -10,15 +10,15 @@ from typing import Literal
 
 import pytest
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.permission import PermissionPolicy
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolRegistry, ToolRuntime
-from avatar_harness.tools.edit import StrReplaceInput, str_replace, write_file
-from avatar_harness.tools.filesystem import ListFilesInput, ReadFileInput, list_files, read_file
-from avatar_harness.tools.search import search_repo
-from avatar_harness.workspace import SensitivePathError, Workspace
+from avatar.config import HarnessConfig
+from avatar.deps import CancellationToken, RunDeps
+from avatar.permission import PermissionPolicy
+from avatar.state import TaskState
+from avatar.tools.base import ToolRegistry, ToolRuntime
+from avatar.tools.edit import StrReplaceInput, str_replace, write_file
+from avatar.tools.filesystem import ListFilesInput, ReadFileInput, list_files, read_file
+from avatar.tools.search import search_repo
+from avatar.workspace import SensitivePathError, Workspace
 
 
 def _state(kind: Literal["edit", "investigate", "test_only"] = "edit") -> TaskState:

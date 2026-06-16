@@ -10,20 +10,20 @@ import asyncio
 
 from conftest import ScriptedModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.events import Emitter
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.permission import PermissionPolicy
-from avatar_harness.runner import AgentRunner
-from avatar_harness.session import Session
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.commands import run_command
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
+from avatar.deps import CancellationToken, RunDeps
+from avatar.events import Emitter
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.permission import PermissionPolicy
+from avatar.runner import AgentRunner
+from avatar.session import Session
+from avatar.state import TaskState
+from avatar.tools.base import ToolRegistry
+from avatar.tools.commands import run_command
+from avatar.tools.filesystem import read_file
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def _deps(tmp_path, **cfg) -> RunDeps:

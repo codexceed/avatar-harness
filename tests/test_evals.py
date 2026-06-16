@@ -15,9 +15,9 @@ import pytest
 from conftest import ScriptedModel
 from pydantic import ValidationError
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.workspace import Workspace
+from avatar.config import HarnessConfig
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.workspace import Workspace
 from evals.classify import classify, failure_histogram
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision

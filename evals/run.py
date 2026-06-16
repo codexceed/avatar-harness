@@ -15,10 +15,10 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.harness import Harness
-from avatar_harness.journal import JsonlEventJournal
-from avatar_harness.model_client import ModelClient
+from avatar.config import HarnessConfig
+from avatar.harness import Harness
+from avatar.journal import JsonlEventJournal
+from avatar.model_client import ModelClient
 from evals.classify import failure_histogram
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision

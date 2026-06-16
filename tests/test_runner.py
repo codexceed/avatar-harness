@@ -5,12 +5,12 @@ from types import SimpleNamespace
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.event_types import VerificationPlanFrozen, VerificationStart
-from avatar_harness.events import Emitter
-from avatar_harness.model_client import (
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
+from avatar.deps import CancellationToken, RunDeps
+from avatar.event_types import VerificationPlanFrozen, VerificationStart
+from avatar.events import Emitter
+from avatar.model_client import (
     AskUser,
     DecisionParseError,
     FinalAnswer,
@@ -18,15 +18,15 @@ from avatar_harness.model_client import (
     ModelDecision,
     ToolCall,
 )
-from avatar_harness.planner import VerificationPlanner
-from avatar_harness.runner import AgentRunner
-from avatar_harness.state import PlannedCheck, TaskState
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import delete_file, str_replace, write_file
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.planner import VerificationPlanner
+from avatar.runner import AgentRunner
+from avatar.state import PlannedCheck, TaskState
+from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar.tools.commands import run_linter, run_tests
+from avatar.tools.edit import delete_file, str_replace, write_file
+from avatar.tools.filesystem import read_file
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def _runner(

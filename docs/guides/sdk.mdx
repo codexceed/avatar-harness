@@ -3,7 +3,7 @@ title: SDK guide
 description: The curated public surface — what to import, which seam to build on, and how the two planes relate.
 ---
 
-Everything documented here is exported from `avatar_harness.__all__` — the
+Everything documented here is exported from `avatar.__all__` — the
 stable surface to build against. Deep imports of internal modules may break
 without notice; the generated **API reference** covers internals page by page.
 
@@ -27,7 +27,7 @@ constructor kwarg (model, tools, verifier, policy, context builder, emitter) —
 swap a seam, keep the rest:
 
 ```python
-from avatar_harness import Harness
+from avatar import Harness
 
 harness = Harness.from_env()    # HarnessConfig() from AVATAR_* / .env
 ```
@@ -51,7 +51,7 @@ The interactive contract, and the load-bearing boundary of the whole SDK
 
 ```python
 import asyncio
-from avatar_harness import ApprovalRequested, Harness
+from avatar import ApprovalRequested, Harness
 
 harness = Harness.from_env()
 session = harness.session("fix the failing auth test", task_kind="edit")
@@ -119,7 +119,7 @@ on its `type` discriminator:
 | `CancellationObserved` | `reason` | The loop saw a tripped token and is stopping. |
 
 Two further events ride the stream and the journal but are not yet exported in
-`__all__` (deep-import from `avatar_harness.event_types` for now): `ModelUsage`
+`__all__` (deep-import from `avatar.event_types` for now): `ModelUsage`
 (`prompt_tokens`/`completion_tokens` per turn) and `DecisionError` (a malformed
 model reply, with a capped raw excerpt).
 
@@ -134,7 +134,7 @@ runs as a fresh task through the same single-task `Session` — batch is just th
 degenerate one-submit case.
 
 ```python
-from avatar_harness import Harness, ReplSession
+from avatar import Harness, ReplSession
 
 repl = ReplSession(Harness.from_env())
 state = await repl.submit("how does the permission gate work?")   # goal 1
@@ -164,7 +164,7 @@ What it gives you over raw sessions:
   repair gate; the human is the terminal authority. `ReplSession(harness,
   auto=True)` restores the strict gate.
 
-The bundled Textual cockpit (`jo-cli`, its own entry point — the TUI is a
+The Textual cockpit (the separate `jo-cli` package, the `jo` command — a
 consumer of the core, never part of it) is exactly this surface rendered
 full-screen — nothing it does is unavailable to your own UI.
 
@@ -203,7 +203,7 @@ local `.env`):
 deterministic and offline:
 
 ```python
-from avatar_harness import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
+from avatar import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
 
 class ScriptedModel(ModelClient):
     def __init__(self, decisions):

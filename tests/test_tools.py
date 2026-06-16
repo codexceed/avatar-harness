@@ -4,11 +4,11 @@ import sys
 
 from pydantic import BaseModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.state import PlannedCheck
-from avatar_harness.tools import default_registry, filesystem
-from avatar_harness.tools.base import (
+from avatar.config import HarnessConfig
+from avatar.deps import CancellationToken, RunDeps
+from avatar.state import PlannedCheck
+from avatar.tools import default_registry, filesystem
+from avatar.tools.base import (
     ToolDefinition,
     ToolRegistry,
     ToolResult,
@@ -16,17 +16,17 @@ from avatar_harness.tools.base import (
     is_edit_intent,
     phase_admits_tool,
 )
-from avatar_harness.tools.commands import run_linter, run_tests
-from avatar_harness.tools.edit import (
+from avatar.tools.commands import run_linter, run_tests
+from avatar.tools.edit import (
     DeleteFileInput,
     StrReplaceInput,
     delete_file,
     str_replace,
     write_file,
 )
-from avatar_harness.tools.filesystem import list_files, read_file
-from avatar_harness.tools.search import search_repo
-from avatar_harness.workspace import Workspace
+from avatar.tools.filesystem import list_files, read_file
+from avatar.tools.search import search_repo
+from avatar.workspace import Workspace
 
 
 def _registry() -> ToolRegistry:
@@ -77,11 +77,11 @@ def test_search_repo_searches_tree_when_stdin_is_a_pipe(tmp_path):
     # promptly, proving the search reads the workspace, not stdin.
     (tmp_path / "a.py").write_text("def login():\n    pass\n", encoding="utf-8")
     code = (
-        "from avatar_harness.config import HarnessConfig\n"
-        "from avatar_harness.deps import CancellationToken, RunDeps\n"
-        "from avatar_harness.tools.base import ToolRegistry, ToolRuntime\n"
-        "from avatar_harness.tools.search import search_repo\n"
-        "from avatar_harness.workspace import Workspace\n"
+        "from avatar.config import HarnessConfig\n"
+        "from avatar.deps import CancellationToken, RunDeps\n"
+        "from avatar.tools.base import ToolRegistry, ToolRuntime\n"
+        "from avatar.tools.search import search_repo\n"
+        "from avatar.workspace import Workspace\n"
         f"ws = Workspace({str(tmp_path)!r})\n"
         "deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())\n"
         "reg = ToolRegistry()\n"

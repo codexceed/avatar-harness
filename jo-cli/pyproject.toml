@@ -1,0 +1,38 @@
+[project]
+name = "jo-cli"
+version = "0.1.0"
+description = "jo — an interactive Textual cockpit (a reference coding agent) built on the avatar-harness core."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Sarthak Joshi" }]
+keywords = ["llm", "agent", "coding-agent", "tui", "textual", "cockpit", "repl"]
+
+dependencies = [
+    # The harness core. `[openai]` so the cockpit runs out of the box against an
+    # OpenAI-compatible endpoint; inject your own ModelClient to target another backend.
+    "avatar-harness[openai]>=1.2,<2",
+    "textual>=0.50",
+    "rich>=13",  # the cockpit styles transcript lines (rich.text.Text)
+]
+
+[project.scripts]
+jo = "jo.cli:main"
+
+# Resolve the harness from the local workspace member rather than PyPI during development.
+[tool.uv.sources]
+avatar-harness = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jo"]
+
+[tool.deptry]
+known_first_party = ["jo"]
+# `avatar` is imported from the `avatar-harness` distribution (dist != import name).
+[tool.deptry.package_module_name_map]
+avatar-harness = ["avatar"]

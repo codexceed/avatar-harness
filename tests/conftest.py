@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from avatar_harness.model_client import ModelClient, ModelDecision
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.filesystem import list_files, read_file
-from avatar_harness.tools.search import search_repo
+from avatar.model_client import ModelClient, ModelDecision
+from avatar.tools.base import ToolRegistry
+from avatar.tools.filesystem import list_files, read_file
+from avatar.tools.search import search_repo
 
 
 class ScriptedModel(ModelClient):

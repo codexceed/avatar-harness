@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder, ContextPacket, ToolSummary
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.events import Emitter
-from avatar_harness.model_client import (
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder, ContextPacket, ToolSummary
+from avatar.deps import CancellationToken, RunDeps
+from avatar.events import Emitter
+from avatar.model_client import (
     DecisionParseError,
     FinalAnswer,
     ModelClient,
@@ -19,10 +19,10 @@ from avatar_harness.model_client import (
     build_messages,
     parse_decision,
 )
-from avatar_harness.runner import AgentRunner
-from avatar_harness.state import ConversationTurn, TaskState
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.runner import AgentRunner
+from avatar.state import ConversationTurn, TaskState
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def test_parses_tool_call_decision():
@@ -335,9 +335,9 @@ def test_core_imports_without_openai(monkeypatch):
 
     # A fresh import of the module under the simulated absence must not fail at import
     # time — the openai dependency must be lazy. Load it under an alias so we never
-    # rebind the canonical `avatar_harness.model_client` (whose classes the runner and
+    # rebind the canonical `avatar.model_client` (whose classes the runner and
     # other tests share — reloading it would break discriminated-union identity).
-    spec = importlib.util.find_spec("avatar_harness.model_client")
+    spec = importlib.util.find_spec("avatar.model_client")
     assert spec is not None and spec.loader is not None
     isolated = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(isolated)  # would raise here if `import openai` were eager

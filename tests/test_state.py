@@ -1,4 +1,4 @@
-from avatar_harness.state import TaskState
+from avatar.state import TaskState
 
 
 def test_taskstate_roundtrips():

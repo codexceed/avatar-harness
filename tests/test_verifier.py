@@ -1,7 +1,7 @@
-from avatar_harness.config import HarnessConfig
-from avatar_harness.state import PlannedCheck, TaskState
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.config import HarnessConfig
+from avatar.state import PlannedCheck, TaskState
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def _investigate_state(**kwargs) -> TaskState:

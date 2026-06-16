@@ -1,8 +1,8 @@
 import json
 from datetime import datetime
 
-from avatar_harness.eventlog import EventLog
-from avatar_harness.events import Emitter
+from avatar.eventlog import EventLog
+from avatar.events import Emitter
 
 
 def test_emitter_is_fire_and_forget():

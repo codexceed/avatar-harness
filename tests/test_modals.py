@@ -16,16 +16,16 @@ pytest.importorskip("textual")
 from textual.app import App
 from textual.widgets import Static, TextArea
 
-from avatar_harness.event_types import AgentStart, ApprovalRequested
-from avatar_harness.tui.app import CockpitApp
-from avatar_harness.tui.modals import (
+from avatar.event_types import AgentStart, ApprovalRequested
+from jo.app import CockpitApp
+from jo.modals import (
     ApprovalChoice,
     ApprovalModal,
     DiffModal,
     PlanChoice,
     PlanModal,
 )
-from avatar_harness.tui.replay import ReplaySession
+from jo.replay import ReplaySession
 
 
 class _Host(App):

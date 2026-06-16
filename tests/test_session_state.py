@@ -13,14 +13,14 @@ import pytest
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.harness import Harness
-from avatar_harness.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.session_state import ReplSession, default_mode
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.tools.edit import write_file
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.workspace import DirtyWorkspaceError
+from avatar.config import HarnessConfig
+from avatar.harness import Harness
+from avatar.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
+from avatar.session_state import ReplSession, default_mode
+from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar.tools.edit import write_file
+from avatar.tools.filesystem import read_file
+from avatar.workspace import DirtyWorkspaceError
 
 
 class _Empty(BaseModel):

@@ -1,9 +1,9 @@
-from avatar_harness.context import ContextBuilder
-from avatar_harness.state import ConversationTurn, DecisionRecord, TaskState
-from avatar_harness.tools import default_registry
-from avatar_harness.tools.base import ToolDefinition
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.workspace import Workspace
+from avatar.context import ContextBuilder
+from avatar.state import ConversationTurn, DecisionRecord, TaskState
+from avatar.tools import default_registry
+from avatar.tools.base import ToolDefinition
+from avatar.tools.filesystem import read_file
+from avatar.workspace import Workspace
 
 
 def test_context_contains_goal_phase_and_recent_evidence(tmp_path, read_registry):

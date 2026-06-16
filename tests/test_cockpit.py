@@ -15,7 +15,7 @@ pytest.importorskip("textual")  # the cockpit lives behind the optional [textual
 
 from textual.widgets import Input
 
-from avatar_harness.event_types import (
+from avatar.event_types import (
     AgentEnd,
     AgentStart,
     DecisionError,
@@ -26,8 +26,8 @@ from avatar_harness.event_types import (
     ToolStart,
     VerificationEnd,
 )
-from avatar_harness.tui.app import CockpitApp
-from avatar_harness.tui.replay import ReplaySession
+from jo.app import CockpitApp
+from jo.replay import ReplaySession
 
 
 async def _settle(app, pilot) -> None:

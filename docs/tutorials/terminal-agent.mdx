@@ -22,9 +22,9 @@ brackets otherwise):
 
 ```bash
 # from a clone:
-pip install -e '.[openai]'
+pip install -e './avatar-harness[openai]'
 # or straight from GitHub (uses your git credentials while the repo is private):
-pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness'
+pip install 'avatar-harness[openai] @ git+https://github.com/codexceed/avatar-harness#subdirectory=avatar-harness'
 ```
 
 Plus `rg` and `git` on `PATH`, and a `.env` (or exported variables):
@@ -57,7 +57,7 @@ The smallest possible consumer — no streaming, no UI. Complete and runnable
 exactly as written:
 
 ```python
-from avatar_harness import Harness
+from avatar import Harness
 
 state = Harness.from_env().run("create a basic chatbot in chatbot.py", task_kind="edit")
 print(state.outcome, "\n", state.final_answer)
@@ -96,7 +96,7 @@ goal and lets the two run together:
 ```python
 import asyncio
 
-from avatar_harness import (
+from avatar import (
     AgentEnd,
     Harness,
     ModelDecisionEvent,
@@ -225,7 +225,7 @@ return 0 if state.outcome == "success" else 1
 ```
 
 For the richer formatted artifact the batch CLI prints (status + files +
-commands + diff reference), see `avatar_harness.artifact.ArtifactManager` — not
+commands + diff reference), see `avatar.artifact.ArtifactManager` — not
 yet on the exported surface, so treat it as internal for now.
 
 ## The full listing
@@ -240,7 +240,7 @@ import signal
 import sys
 from pathlib import Path
 
-from avatar_harness import (
+from avatar import (
     AgentEnd,
     ApprovalRequested,
     Harness,
@@ -348,7 +348,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from avatar_harness import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
+from avatar import FinalAnswer, Harness, HarnessConfig, ModelClient, ModelDecision, ToolCall
 
 CHATBOT = '''"""A basic command-line echo chatbot."""
 
@@ -421,7 +421,7 @@ verification to `success`. Real loop, real verifier, zero network.
   [SDK guide](/guides/sdk#multi-turn-conversations--replsession).
 - **Your own tools / model / verifier:** every collaborator is a `Harness`
   constructor kwarg.
-- **A real UI:** the bundled cockpit (`jo-cli`) is this same surface rendered
-  with Textual — `src/avatar_harness/tui/app.py` is the reference
-  implementation, and `tui/cli.py` shows how a consumer ships its own entry
+- **A real UI:** the cockpit (the separate `jo-cli` package, the `jo` command) is
+  this same surface rendered with Textual — `jo-cli/jo/app.py` is the reference
+  implementation, and `jo-cli/jo/cli.py` shows how a consumer ships its own entry
   point over the core.

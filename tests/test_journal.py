@@ -11,26 +11,26 @@ import asyncio
 
 from conftest import ScriptedModel
 
-from avatar_harness.bus import EventBus
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextBuilder
-from avatar_harness.deps import CancellationToken, RunDeps
-from avatar_harness.event_types import (
+from avatar.bus import EventBus
+from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
+from avatar.deps import CancellationToken, RunDeps
+from avatar.event_types import (
     AgentEnd,
     AgentStart,
     PhaseChanged,
     load_events,
 )
-from avatar_harness.events import Emitter
-from avatar_harness.journal import JsonlEventJournal
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.runner import AgentRunner
-from avatar_harness.session import Session
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.events import Emitter
+from avatar.journal import JsonlEventJournal
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.runner import AgentRunner
+from avatar.session import Session
+from avatar.state import TaskState
+from avatar.tools.base import ToolRegistry
+from avatar.tools.filesystem import read_file
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 def _runner(tmp_path, decisions) -> AgentRunner:

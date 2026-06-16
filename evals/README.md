@@ -2,7 +2,7 @@
 
 A small, self-contained tool that **measures the agent harness** by running it on fixed tasks
 and scoring the results deterministically. It is intentionally an **independent entity** from the
-agent harness in `src/avatar_harness/`: it imports only the public `Harness` facade, ships no
+agent harness in `avatar-harness/avatar/`: it imports only the public `Harness` facade, ships no
 runtime code into the package, and can be reasoned about (and run) on its own.
 
 The design rationale lives in [`../docs/eval-harness-design.md`](../docs/eval-harness-design.md)
@@ -206,7 +206,7 @@ evals/
 
 ## Relationship to the agent harness
 
-`evals/` is **dev/eval tooling, not shipped code.** It lives outside `src/avatar_harness/`, is not
+`evals/` is **dev/eval tooling, not shipped code.** It lives outside `avatar-harness/avatar/`, is not
 type-checked as part of the package (only lint-gated by ruff), and depends on the harness solely
 through the public facade (`Harness(config=…).session(...)`). Deleting `evals/` would not affect the
 shipped harness in any way.

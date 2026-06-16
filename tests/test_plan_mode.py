@@ -15,13 +15,13 @@ tests it is injected, returning a `PlanDecision(approved, text)`.
 import pytest
 from conftest import CyclingModel, ScriptedModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.harness import Harness
-from avatar_harness.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.session_state import PlanDecision, ReplSession, default_mode
-from avatar_harness.tools.base import ToolRegistry
-from avatar_harness.tools.edit import str_replace
-from avatar_harness.tools.filesystem import read_file
+from avatar.config import HarnessConfig
+from avatar.harness import Harness
+from avatar.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
+from avatar.session_state import PlanDecision, ReplSession, default_mode
+from avatar.tools.base import ToolRegistry
+from avatar.tools.edit import str_replace
+from avatar.tools.filesystem import read_file
 
 # An exact-text edit against the `git_repo` fixture's calc.py (fixes the `-` bug).
 _FIX = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}

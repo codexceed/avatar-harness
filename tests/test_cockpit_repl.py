@@ -19,17 +19,17 @@ pytest.importorskip("textual")  # the cockpit lives behind the optional [textual
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
-from avatar_harness.config import HarnessConfig
-from avatar_harness.harness import Harness
-from avatar_harness.intent import ModeClassifier
-from avatar_harness.model_client import FinalAnswer, ModelDecision, ToolCall
-from avatar_harness.session_state import ReplSession
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.tools.edit import str_replace
-from avatar_harness.tools.filesystem import read_file
-from avatar_harness.tui import cli as jo_cli
-from avatar_harness.tui.app import CockpitApp
-from avatar_harness.tui.modals import ApprovalModal, DiffModal, PlanModal
+from avatar.config import HarnessConfig
+from avatar.harness import Harness
+from avatar.intent import ModeClassifier
+from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.session_state import ReplSession
+from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar.tools.edit import str_replace
+from avatar.tools.filesystem import read_file
+from jo import cli as jo_cli
+from jo.app import CockpitApp
+from jo.modals import ApprovalModal, DiffModal, PlanModal
 
 
 class _Empty(BaseModel):

@@ -15,23 +15,23 @@ from unittest.mock import patch
 
 from pydantic import BaseModel
 
-import avatar_harness
-from avatar_harness import cli
-from avatar_harness.config import HarnessConfig
-from avatar_harness.context import ContextPacket
-from avatar_harness.events import Emitter
-from avatar_harness.harness import Harness
-from avatar_harness.model_client import (
+import avatar
+from avatar import cli
+from avatar.config import HarnessConfig
+from avatar.context import ContextPacket
+from avatar.events import Emitter
+from avatar.harness import Harness
+from avatar.model_client import (
     FinalAnswer,
     ModelClient,
     ModelDecision,
     ToolCall,
 )
-from avatar_harness.permission import PermissionPolicy, ToolPermission
-from avatar_harness.state import TaskState
-from avatar_harness.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar_harness.verifier import Verifier
-from avatar_harness.workspace import Workspace
+from avatar.permission import PermissionPolicy, ToolPermission
+from avatar.state import TaskState
+from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
+from avatar.verifier import Verifier
+from avatar.workspace import Workspace
 
 
 class _OneShotModel(ModelClient):
@@ -107,20 +107,20 @@ def test_public_api_exports_stable_surface():
     # accidental churn of the public contract: every name is both importable from
     # the top-level package and listed in `__all__`.
     for name in (*_STABLE_SURFACE, *_ASYNC_SURFACE):
-        assert name in avatar_harness.__all__
-        assert getattr(avatar_harness, name, None) is not None
+        assert name in avatar.__all__
+        assert getattr(avatar, name, None) is not None
 
 
 def test_core_imports_without_textual():
-    # The TUI cockpit is behind the optional [textual] extra: importing the core
-    # package — INCLUDING the batch CLI shell — must not pull in textual (or the
-    # tui package). The CLI is the load-bearing case: the core's shell knowing one
-    # specific consumer is the layering inversion `jo-cli` exists to prevent.
+    # The cockpit ships as the separate `jo-cli` package (import `jo`): importing the
+    # core — INCLUDING the batch CLI shell — must not pull in textual or the `jo`
+    # package. The CLI is the load-bearing case: the core's shell knowing one specific
+    # consumer is the layering inversion the package split exists to prevent.
     # Checked in a fresh interpreter so it is independent of other tests' imports.
     code = (
-        "import avatar_harness, avatar_harness.cli, sys; "
+        "import avatar, avatar.cli, sys; "
         "assert 'textual' not in sys.modules, sorted(m for m in sys.modules if 'textual' in m); "
-        "assert 'avatar_harness.tui' not in sys.modules"
+        "assert 'jo' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
 

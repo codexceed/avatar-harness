@@ -9,8 +9,8 @@
 ## Context
 
 The Eval-0 harness (ADR-0004) lives in a root-level `evals/` package, deliberately **outside**
-`src/avatar_harness` because it is dev tooling, not shipped code (the wheel only packages
-`src/avatar_harness`). A side effect of that placement: `evals/` was held to a *weaker* quality bar
+`avatar-harness/avatar` because it is dev tooling, not shipped code (the wheel only packages
+`avatar-harness/avatar`). A side effect of that placement: `evals/` was held to a *weaker* quality bar
 than the harness. `ruff` (lint + format) and `pytest` covered it, but the three remaining hard gates —
 **pyrefly** (type), **pydoclint** (docstring/signature agreement), **deptry** (dependency hygiene) —
 and the compile/import **smoke** were all scoped to `src` (or `src`+`tests`). So eval-harness code could

@@ -67,11 +67,6 @@
               "api-reference/tools-edit",
               "api-reference/tools-filesystem",
               "api-reference/tools-search",
-              "api-reference/tui",
-              "api-reference/tui-app",
-              "api-reference/tui-cli",
-              "api-reference/tui-modals",
-              "api-reference/tui-replay",
               "api-reference/verifier",
               "api-reference/workspace"
             ]

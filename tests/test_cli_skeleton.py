@@ -2,11 +2,11 @@ import json
 
 import pytest
 
-from avatar_harness.cli import main, run_agent
-from avatar_harness.config import HarnessConfig
-from avatar_harness.events import Emitter
-from avatar_harness.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
-from avatar_harness.workspace import DirtyWorkspaceError
+from avatar.cli import main, run_agent
+from avatar.config import HarnessConfig
+from avatar.events import Emitter
+from avatar.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
+from avatar.workspace import DirtyWorkspaceError
 
 _FIX = {"path": "calc.py", "old_string": "return a - b", "new_string": "return a + b"}
 

@@ -1,6 +1,6 @@
 """Generate Mintlify MDX API-reference pages from the package's docstrings.
 
-The code is the single source of truth. This walks ``avatar_harness`` with the
+The code is the single source of truth. This walks ``avatar`` with the
 standard library only (no extra dependencies, per the project's minimal-deps
 goal), reads each public module/class/function's signature and Google-style
 docstring, and emits one MDX page per module under ``docs/api-reference/``. It
@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-import avatar_harness
+import avatar
 
 DOCS_ROOT = Path("docs")
 API_DIR = DOCS_ROOT / "api-reference"
@@ -52,14 +52,14 @@ def _type_str(annotation: object) -> str:
 
 
 def _slug(module_name: str) -> str:
-    """Turn ``avatar_harness.tools.search`` into the page slug ``tools-search``."""
-    return module_name.removeprefix(avatar_harness.__name__ + ".").replace(".", "-")
+    """Turn ``avatar.tools.search`` into the page slug ``tools-search``."""
+    return module_name.removeprefix(avatar.__name__ + ".").replace(".", "-")
 
 
 def _iter_modules() -> list[ModuleType]:
     """Import and return every non-private submodule of the package, sorted by name."""
     modules: list[ModuleType] = []
-    for info in pkgutil.walk_packages(avatar_harness.__path__, avatar_harness.__name__ + "."):
+    for info in pkgutil.walk_packages(avatar.__path__, avatar.__name__ + "."):
         if any(part.startswith("_") for part in info.name.split(".")):
             continue
         modules.append(importlib.import_module(info.name))
@@ -88,7 +88,7 @@ def _signature(obj: object) -> str:
     # `<function X.<lambda> at 0x10b8…>`) so the generated output is reproducible —
     # otherwise every run differs and `--check` can never pass.
     sig = re.sub(r" at 0x[0-9a-fA-F]+", "", sig)
-    return _shorten(sig)  # `avatar_harness.model_client.ModelClient` -> `ModelClient`
+    return _shorten(sig)  # `avatar.model_client.ModelClient` -> `ModelClient`
 
 
 def _docblock(obj: object) -> str:
