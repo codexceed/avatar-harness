@@ -40,6 +40,45 @@ Claude's addition** (Codex's blind spot — it critiqued only the content-risk a
 
 **Cadence:** pick a rhythm (≈ one post / 1–2 weeks). Seven posts without a cadence is a backlog, not a presence.
 
+## Distribution plan (the layer amendment #1 names)
+
+**Goals this serves:** contribute to public knowledge · get real feedback on process/conclusions ·
+credential as an applied AI engineer pushing the frontier. **The governing risk for an unknown
+author is invisibility, not being-wrong** (so syndicate deliberately), bounded by the rollout's
+error-risk discipline below (so don't swing on an unverified claim).
+
+**Canonical home — your own domain.** Every post lands first on an **owned static blog**
+(`yourname.dev/writing`, Astro/Hugo/11ty — *not* Substack-as-primary, *not* Medium):
+- Credibility compounds on a URL you own; a body of work *is* the credential and accrues SEO + backlinks. Platform posts credential the platform.
+- Cross-posts set **`rel=canonical`** back to your copy, so syndication never cannibalizes your search authority.
+- You control format/length/code-rendering — load-bearing for dense empirical posts.
+- Run a **newsletter (Substack/Buttondown) in parallel as the owned-audience capture layer** (email > algorithm), *mirrored* from the blog, never the home.
+
+**Per-post landing + cross-post (escalation ladder — warm up before you swing):**
+
+| Post | Canonical | Primary cross-post | Also | Notes |
+| --- | --- | --- | --- | --- |
+| 1 scaffold-not-model | blog + X thread | **HN** | Lobste.rs | strongest hook → leads; validates voice while unproven. HN-shaped: empirical, counterintuitive, debuggable, no promo smell. |
+| 2 pass@1-hides | blog + X | HN | Latent Space orbit | methodology crowd; pairs with #1. |
+| 3 failure-mode catalog | blog + X | Lobste.rs, r/LocalLLaMA | HF (if a dataset) | reference/appendix piece; practitioner audience. |
+| 4 verifier-is-not-a-tool | blog + X | HN | **LessWrong** | architecture + first safety-adjacent angle. |
+| 5 manifesto | blog + X | **X-primary** | — | highest format-risk → ride the audience you've built, *not* a cold HN swing. |
+| ⭐ oracle-gaming (flagship) | blog + X | **HN + LessWrong/AF** | HF (result file) | reward-hacking/eval-gaming is live in applied *and* alignment circles — the credibility peak. Bring the experiment, not an argument. |
+| 0 context piece | blog | (evergreen) | repo README | publish *after* 1–2 land, as the "what is this" anchor everything links back to. |
+
+**The arc (build the base before the peak):**
+1. **Posts 1–2 — establish empirical credibility** on HN/X while the voice is unproven. Low-risk artifact-backed claims; an ignored post costs nothing.
+2. **Posts 3–4 — convert readers into an owned audience** (RSS/newsletter/X follows). By here you're off the HN-roulette dependency.
+3. **Manifesto (5) + flagship (⭐) cash it in** — the two highest-risk/highest-reward pieces ride the accumulated base + the research venues (LessWrong/AF), where the frontier-contributor credential actually lands.
+
+**Two feedback rules (goal: real critique, visibly metabolized):**
+- **A venue's comments on post N become post N+1's "what could still be wrong" section** — visibly incorporating critique is itself a credibility signal and closes the loop.
+- **Stagger, don't blast.** blog + X on day 0, HN day 1–2 (Tue–Thu AM ET land best), Reddit/LW later that week — so issues surfaced early are fixed before the bigger swing.
+
+> Older sections below (**Risk-calibrated rollout**, **Distribution targets**, **Recommended
+> publishing sequence**) are the prior reasoning; this section is the current plan and supersedes
+> their venue sequencing where they differ.
+
 ---
 
 ## Framing — set the honest baseline first
