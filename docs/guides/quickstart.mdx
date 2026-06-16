@@ -8,14 +8,15 @@ description: From install to a verifier-checked answer in five minutes.
 avatar-harness is a Python 3.12+ library. It is **not yet published to PyPI** —
 install it from source:
 
-The repo is a uv workspace; the SDK is the `avatar-harness/` member (import `avatar`).
+The repo is a uv workspace with two packages: the SDK (`avatar-harness/`, import `avatar`)
+and the cockpit (`jo-cli/`, import `jo`).
 
 ```bash
 # From a clone (editable):
 git clone https://github.com/codexceed/avatar-harness.git
 cd avatar-harness
-pip install -e './avatar-harness[openai]'           # the SDK + default OpenAI-compatible model client
-pip install -e './avatar-harness[openai,textual]'   # + the bundled Textual cockpit, `jo-cli` (optional)
+pip install -e './avatar-harness[openai]'   # the SDK + default OpenAI-compatible model client
+pip install -e ./jo-cli                 # + the Textual cockpit, the `jo` command (optional)
 
 # Or straight from GitHub into your own project's environment
 # (uses your git credentials while the repo is private):

@@ -19,8 +19,8 @@ from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar.session_state import ReplSession
 from avatar.tools.base import ToolRegistry
 from avatar.tools.filesystem import read_file
-from avatar.tui import cli as jo_cli
-from avatar.tui.app import CockpitApp
+from jo import cli as jo_cli
+from jo.app import CockpitApp
 
 
 def _read_registry() -> ToolRegistry:

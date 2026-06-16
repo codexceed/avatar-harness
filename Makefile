@@ -51,13 +51,14 @@ typecheck:
 
 # Docstring<->signature agreement (Google style).
 docstrings:
-	uv run pydoclint avatar-harness evals
+	uv run pydoclint avatar-harness jo-cli evals
 
 # Dependency hygiene (unused / missing / transitive). deptry resolves imports against a
-# single package's declared deps, so it runs inside the member (the virtual workspace root
+# single package's declared deps, so it runs inside each member (the virtual workspace root
 # declares none). evals is dev tooling, not a distributable package — not deptry-gated.
 deps:
 	cd avatar-harness && uv run deptry avatar
+	cd jo-cli && uv run deptry jo
 
 # Generate Mintlify API-reference MDX from docstrings (source of truth = the code).
 docs-api:
@@ -73,8 +74,8 @@ docs-validate:
 
 # Stage 0: compiles AND imports — the cheap "does it run" gate, before tests.
 smoke:
-	uv run python -m compileall -q avatar-harness tests evals
-	uv run python -c "import importlib, pkgutil, avatar as p; [importlib.import_module(m.name) for m in pkgutil.walk_packages(p.__path__, p.__name__ + '.')]"
+	uv run python -m compileall -q avatar-harness jo-cli tests evals
+	uv run python -c "import importlib, pkgutil, avatar, jo; [importlib.import_module(m.name) for p in (avatar, jo) for m in pkgutil.walk_packages(p.__path__, p.__name__ + '.')]"
 
 # --- HARD gate: fail-fast, staged. Run before committing. ---
 # Stage 0 (compile/import) -> Stage 1 (lint/types/docs/deps) -> Stage 2 (tests).
@@ -83,22 +84,23 @@ check-hard:
 	uv run ruff check .
 	$(MAKE) smoke
 	uv run pyrefly check
-	uv run pydoclint avatar-harness evals
+	uv run pydoclint avatar-harness jo-cli evals
 	cd avatar-harness && uv run deptry avatar
+	cd jo-cli && uv run deptry jo
 	uv run pytest
 
 # --- SOFT gate: report only, never blocks (note the leading `-`). ---
 check-soft:
-	-uvx interrogate -c pyproject.toml -vv avatar-harness
-	-uvx vulture avatar-harness --min-confidence 80
+	-uvx interrogate -c pyproject.toml -vv avatar-harness jo-cli
+	-uvx vulture avatar-harness jo-cli --min-confidence 80
 	-uv run --with pip-audit pip-audit
 	-uv run python scripts/gen_api_docs.py --check
 	# semgrep (deep SAST) — heavier; enable when desired:
-	# -uvx semgrep --config auto avatar
+	# -uvx semgrep --config auto avatar-harness jo-cli
 
 # Default gate alias.
 check: check-hard
 
 # Remove tooling caches and build artifacts.
 clean:
-	rm -rf .ruff_cache .pytest_cache .pyrefly_cache dist build avatar-harness/*.egg-info events
+	rm -rf .ruff_cache .pytest_cache .pyrefly_cache dist build avatar-harness/*.egg-info jo-cli/*.egg-info events

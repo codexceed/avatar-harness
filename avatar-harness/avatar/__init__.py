@@ -35,6 +35,7 @@ from avatar.event_types import (
     ApprovalRequested,
     ApprovalResolved,
     CancellationObserved,
+    DecisionError,
     EventBase,
     EventSink,
     HarnessEvent,
@@ -53,7 +54,7 @@ from avatar.event_types import (
     parse_event,
 )
 from avatar.harness import Harness
-from avatar.journal import JsonlEventJournal
+from avatar.journal import JsonlEventJournal, resolve_log_path, update_latest_pointer
 from avatar.model_client import (
     AskUser,
     FinalAnswer,
@@ -66,7 +67,7 @@ from avatar.session import ApprovalGrant, Session
 from avatar.session_state import ReplSession, SessionState, Turn
 from avatar.state import PlannedCheck, TaskState
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
-from avatar.workspace import Workspace
+from avatar.workspace import DirtyWorkspaceError, Workspace
 
 __version__ = "1.2.0"  # x-release-please-version
 
@@ -77,6 +78,7 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "TaskState",
     "RunDeps",
     "Workspace",
+    "DirtyWorkspaceError",
     # --- verification-plan resolution (ADR-0007) ---
     "VerificationPlanner",
     "PlannedCheck",
@@ -94,6 +96,8 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "Session",
     "EventBus",
     "JsonlEventJournal",
+    "resolve_log_path",
+    "update_latest_pointer",
     "EventSink",
     "ApprovalController",
     "ApprovalGrant",
@@ -110,6 +114,7 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "TurnEnd",
     "PhaseChanged",
     "ModelDecisionEvent",
+    "DecisionError",
     "ModelUpdate",
     "ToolStart",
     "ToolEnd",

@@ -19,24 +19,24 @@ from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
 
-from avatar.event_types import (
+from avatar import (
     AgentEnd,
     AgentStart,
     ApprovalRequested,
     DecisionError,
+    DirtyWorkspaceError,
     HarnessEvent,
     ModelDecisionEvent,
     ModelUpdate,
     PhaseChanged,
+    ReplSession,
+    Session,
+    TaskState,
     ToolEnd,
     ToolStart,
     VerificationEnd,
 )
-from avatar.session import Session
-from avatar.session_state import ReplSession
-from avatar.state import TaskState
-from avatar.tui.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
-from avatar.workspace import DirtyWorkspaceError
+from jo.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
 
 
 class CockpitApp(App):

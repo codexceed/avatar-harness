@@ -421,7 +421,7 @@ verification to `success`. Real loop, real verifier, zero network.
   [SDK guide](/guides/sdk#multi-turn-conversations--replsession).
 - **Your own tools / model / verifier:** every collaborator is a `Harness`
   constructor kwarg.
-- **A real UI:** the bundled cockpit (`jo-cli`) is this same surface rendered
-  with Textual — `avatar-harness/avatar/tui/app.py` is the reference
-  implementation, and `tui/cli.py` shows how a consumer ships its own entry
+- **A real UI:** the cockpit (the separate `jo-cli` package, the `jo` command) is
+  this same surface rendered with Textual — `jo-cli/jo/app.py` is the reference
+  implementation, and `jo-cli/jo/cli.py` shows how a consumer ships its own entry
   point over the core.

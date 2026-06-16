@@ -3,7 +3,7 @@
 `main()` drives the real loop via `run_agent`. The CLI stays a thin shell over the
 loop — wiring components and event subscribers, nothing more. It is deliberately
 **TUI-free**: the harness is an independent core under many consumers, and the
-interactive cockpit ships its own `jo-cli` entry point (`avatar.tui.cli`)
+interactive cockpit ships as a separate `jo-cli` package (the `jo` command)
 so the import direction stays strictly consumer → core.
 """
 
@@ -137,7 +137,7 @@ def main(
 
     config = config or HarnessConfig()
     if args.task is None:
-        parser.error("a task is required (for the interactive cockpit, run `jo-cli`)")
+        parser.error("a task is required (for the interactive cockpit, install `jo-cli` and run `jo`)")
 
     session_id = uuid4().hex
     log_path = resolve_log_path(args.log, session_id)
