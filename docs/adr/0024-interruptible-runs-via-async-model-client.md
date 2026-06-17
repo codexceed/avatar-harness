@@ -21,6 +21,27 @@ Cancellation is therefore **cooperative and coarse**: `Session.cancel()` trips a
 1. **An in-flight model call cannot be interrupted.** Pressing Ctrl+C (or `Session.cancel()`) during a slow call does nothing until the call completes. With the OpenAI SDK's default timeout measured in minutes, and a slow model (e.g. `qwen/qwen3-coder` over OpenRouter), the agent feels unkillable while busy. The cockpit currently papers over this with a two-stage Ctrl+C (second press force-quits the *app*), but the *run* still can't be cancelled cleanly.
 2. **`asyncio.to_thread` cannot be force-cancelled.** Cancelling the awaiting task abandons the `await` but the worker thread keeps running the HTTP request until it returns or times out. So even a task-level race leaves a **lingering background request** (and its thread) on a *cancel-and-continue* — exactly the common case in a multi-turn REPL, where the user cancels one goal and types the next.
 
+Today — the loop is parked on the threaded call; a cancel can't land until that call returns:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User / Cockpit
+    participant S as Session
+    participant R as runner.arun (loop)
+    participant T as worker thread
+    participant API as Model endpoint
+    R->>T: await to_thread(decide)
+    T->>API: HTTP request (blocks — can be minutes)
+    U->>S: cancel() during the call
+    S->>S: token.cancelled = True
+    Note over R,T: cancel is NOT observed — the loop is parked on the await
+    API-->>T: response (only when it finally returns)
+    T-->>R: decision
+    R->>R: next turn: check token → stop (incomplete)
+    Note over T,API: on cancel-and-continue the thread + request lingered the whole time
+```
+
 The reference cancellation design we want to match — the adjacent `cli-chat` app (ADR-001 there) — works precisely because its LLM call is **natively async** (`httpx.AsyncClient`): `Task.cancel()` injects `CancelledError` straight into the in-flight request and aborts the socket, with no thread to abandon. Avatar's `§18` reuse note already anticipates lifting that async streaming/tool-call reassembly. The blocker to clean interruption is structural: the model-call seam is sync-over-a-thread, not async.
 
 ## Decision
@@ -38,6 +59,44 @@ Make the **model call asynchronous and cancellable**, so cancelling the run task
 5. **Bounded by an explicit client timeout.** Construct the async client with a configured `timeout` (a new `AVATAR_REQUEST_TIMEOUT` knob) so even a non-cancel path cannot hang for the SDK's multi-minute default.
 
 6. **Tool calls stay cooperative — for now.** `run_tests` / `run_linter` run a subprocess via `asyncio.to_thread` and remain interruptible only at the token checkpoint, bounded by their per-tool timeouts (and a subprocess is independently killable, unlike a thread). The model call is the dominant unbounded blocker; subprocess-level interruption is a separate, bounded follow-up.
+
+The seam (point 1–3): the runner awaits one async method; sync clients ride a `to_thread` default, only `OpenAIModelClient` is natively cancellable:
+
+```mermaid
+flowchart TD
+    RUN["runner.arun"] -->|await| ADE["ModelClient.adecide(context)"]
+    ADE --> Q{"which client?"}
+    Q -->|"sync client<br/>(ScriptedModel, customs)"| DEF["default adecide:<br/>await to_thread(self.decide)"]
+    DEF --> SYNC["decide() — sync, non-cancellable mid-call"]
+    Q -->|OpenAIModelClient| ASYNC["adecide override:<br/>await AsyncOpenAI…create()"]
+    ASYNC --> SOCK["cancellable at the socket"]
+
+    classDef core fill:#1b4332,stroke:#52b788,color:#d8f3dc;
+    classDef alt fill:#343a40,stroke:#868e96,color:#dee2e6;
+    class RUN,ADE,ASYNC,SOCK core;
+    class Q,DEF,SYNC alt;
+```
+
+Proposed — a cancel during the call injects `CancelledError` at the `await`, aborting the request at the socket; the loop unwinds at once with nothing left running:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User / Cockpit
+    participant S as Session
+    participant R as runner.arun (loop)
+    participant C as AsyncOpenAI
+    participant API as Model endpoint
+    R->>C: await adecide(context)
+    C->>API: async HTTP request (in-flight)
+    U->>S: cancel() during the call
+    S->>R: task.cancel()
+    R-->>C: CancelledError injected at the await
+    C->>API: abort socket (request cancelled)
+    C-->>R: CancelledError propagates
+    R->>S: unwind → terminal (incomplete, "cancelled")
+    Note over C,API: no lingering thread or request
+```
 
 This ADR is the **core enabler**. The cockpit-facing work it unlocks — racing `Session.run()` against a cancel event in `_observe` so Ctrl+C frees the UI instantly, plus `loop.add_signal_handler(SIGINT/SIGTERM)` for external kills with graceful shutdown — lands in a **separate `jo-cli` PR** on top of this one.
 
