@@ -53,7 +53,8 @@ jo --auto          # keep the strict verification gate (default: conversational)
   gated on it (you're the terminal authority); `--auto` keeps the strict gate.
 - **Prompt history** — `↑`/`↓` recall the prompts you submitted this sitting.
 - **`Ctrl+C`** copies the current selection if one is active, else cancels the in-flight run,
-  else quits. To copy with your OS shortcut (e.g. `Cmd+C`), use your terminal's native
+  else quits. Cancellation is cooperative, so if the agent is busy (e.g. a slow model call),
+  press `Ctrl+C` again to force-quit. To copy with your OS shortcut (e.g. `Cmd+C`), use your terminal's native
   selection — in **iTerm2** hold **Option** while drag-selecting, in **Terminal.app** /
   **GNOME Terminal** / **Windows Terminal** hold **Shift** — then copy as usual.
 

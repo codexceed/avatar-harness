@@ -271,6 +271,31 @@ async def test_ctrl_c_quits_after_goal_fails_mid_run(git_repo):
         assert exited  # ctrl+c quits instead of silently cancelling a dead run
 
 
+async def test_ctrl_c_twice_force_quits_a_busy_run(git_repo):
+    # Cancellation is cooperative — the loop only observes the token at a turn boundary, so a
+    # ctrl+c during a long model call (the client has no timeout) can't land immediately. A
+    # second ctrl+c while a cancel is still pending must force-quit so the user isn't stuck.
+    repl = _repl(git_repo, [FinalAnswer(answer="done")])
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        session = repl.start("explain things")  # a real, not-yet-run Session → non-terminal
+        app._session = session
+        assert not session.state.terminal  # i.e. "busy"
+        exited: list[bool] = []
+        app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
+        app.screen.get_selected_text = lambda: None  # type: ignore[method-assign]
+
+        app.action_cancel()  # first ctrl+c → request a graceful cancel, don't quit
+        await pilot.pause()
+        assert app._cancel_requested
+        assert not exited
+        assert any("force-quit" in line for line in app.rendered)  # the hint was shown
+
+        app.action_cancel()  # second ctrl+c while still busy → force quit
+        await pilot.pause()
+        assert exited
+
+
 def test_jo_cli_threads_allow_dirty(git_repo, monkeypatch):
     launched: dict = {}
 
