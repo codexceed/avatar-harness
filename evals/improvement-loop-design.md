@@ -255,9 +255,9 @@ TDD per the repo protocol: **propose the test list → maintainer approves → r
 - **Exit (met):** `python -m evals.triage "<C1 symptom>"` against the **real** catalog/ADR index → `C1 → ADR-0022` (the dedup signal); a novel symptom → novel; `make check` clean. *`validate` moved to Increment 3 (it is the eval-spender — it belongs with Workflow B, not the free foundation).*
 
 ### Increment 2 — Workflow A `evals-to-proposals` (the analysis MVP)
-- [ ] `evals/workflows/evals_to_proposals.*` (`meta` + phases): ingest→triage (Layer-1) → fan-out 1 subagent/novel cluster → reconcile barrier → write `evals/proposals/<stamp>/` + append `failure-modes.md`.
-- [ ] dry-run against `20260615T164950Z`: 0 novel (proves dedup); a synthetic novel cluster fixture exercises the fan-out.
-- **Exit:** read-only, zero eval spend; produces a reviewable proposals dir; safe to run today.
+- [x] **2a · deterministic spine (`evals/cluster.py`, TDD'd):** `cluster_failures` groups failed runs by `(task, outcome)` (models · runs · a token symptom · sample actions); `triage_report` runs the token-overlap **prefilter** per cluster; `python -m evals.cluster <results>` prints the report. The prefilter is coarse (trajectory tokens rarely match a catalogue *title*'s descriptive vocabulary), so it is a hint — the workflow's judge is authoritative.
+- [x] **2b · Workflow A script (`evals/workflows/evals_to_proposals.js`):** the Layer-2 `meta`+phases orchestration — `Triage` (shell out to `evals.cluster`) → `Analyze` (one judge subagent per cluster: confirm novel vs known, classify A/B/C/D) → `Propose` (one subagent per novel mode → `ChangeProposal`) → `Reconcile` (barrier: mutual + codebase compatibility, write `evals/proposals/<stamp>/` + append `failure-modes.md`).
+- **Exit (deterministic spine met):** `python -m evals.cluster` reports clusters + prefilter verdicts, read-only / zero spend. *Running the full workflow (the subagent fan-out) is an explicit opt-in step via the `Workflow` tool — it spends Claude tokens (no eval spend) and is not exercised by `make`/CI.*
 
 ### Increment 3 — Workflow B `proposal-to-pr` + `validate` (the spender) — **HITL-gated**
 - [ ] `evals/validate.py` — the **canary ladder** (unit/local → 1-seed canary on affected models → full matrix on survival) against **frozen `evals/` assets**, verdict via `evals.diff`; `test_validate_canary_ladder_runs_frozen_assets` (scripted/offline). *Moved from Increment 1: it is the only eval-spender, so it lands with Workflow B.*
