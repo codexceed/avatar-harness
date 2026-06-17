@@ -20,6 +20,7 @@ from avatar.harness import Harness
 from avatar.journal import JsonlEventJournal
 from avatar.model_client import ModelClient
 from evals.classify import failure_histogram
+from evals.journal_read import row_events
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, write_results
@@ -78,7 +79,11 @@ def _slug(model: str) -> str:
 
 
 def _journal_events(row: ResultRow) -> list[dict]:
-    """Load a row's journal events from its scratch repo, if still present.
+    """Materialize a row's journal events from its scratch repo, if still present.
+
+    Reads through the shared streaming reader (`journal_read.row_events`), then materializes to
+    a list because the classifier walks the events more than once. The distiller, which makes a
+    single pass, consumes `row_events` directly without materializing.
 
     Args:
         row: The result row (its ``workspace`` points at the scratch repo).
@@ -86,12 +91,7 @@ def _journal_events(row: ResultRow) -> list[dict]:
     Returns:
         The parsed journal events, or ``[]`` when the journal is gone (e.g. cleaned up).
     """
-    if not row.workspace:
-        return []
-    journal = Path(row.workspace) / "journal.jsonl"
-    if not journal.exists():
-        return []
-    return [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return list(row_events(row))
 
 
 def run_task(
