@@ -8,6 +8,7 @@ never imports the TUI. Tested headlessly with Textual's `Pilot` over a real `Rep
 (ScriptedModel + a tmp git repo).
 """
 
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -271,29 +272,66 @@ async def test_ctrl_c_quits_after_goal_fails_mid_run(git_repo):
         assert exited  # ctrl+c quits instead of silently cancelling a dead run
 
 
-async def test_ctrl_c_twice_force_quits_a_busy_run(git_repo):
-    # Cancellation is cooperative — the loop only observes the token at a turn boundary, so a
-    # ctrl+c during a long model call (the client has no timeout) can't land immediately. A
-    # second ctrl+c while a cancel is still pending must force-quit so the user isn't stuck.
-    repl = _repl(git_repo, [FinalAnswer(answer="done")])
-    app = CockpitApp(repl=repl)
+class _BlockingModel(ModelClient):
+    """A model whose async call blocks until cancelled — a busy, in-flight run (ADR-0024)."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+
+    def decide(self, context: object) -> ModelDecision:
+        raise AssertionError("the runner's call site is adecide")
+
+    async def adecide(self, context: object) -> ModelDecision:
+        self.entered.set()
+        await asyncio.sleep(60)  # block in-flight until the run task is cancelled
+        raise AssertionError("the call should have been cancelled")  # pragma: no cover
+
+
+def _blocking_app(git_repo, model: _BlockingModel) -> CockpitApp:
+    harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=model, tools=_read_registry())
+    return CockpitApp(repl=ReplSession(harness))
+
+
+async def test_ctrl_c_interrupts_a_busy_run_instantly(git_repo):
+    # ADR-0024 cockpit race: ctrl+c during an in-flight model call hard-cancels the run task
+    # (which aborts the async call at the socket), freeing the UI at once — no force-quit, no
+    # waiting on a busy agent. The cancelled run records cleanly and leaves no live run.
+    model = _BlockingModel()
+    app = _blocking_app(git_repo, model)
     async with app.run_test() as pilot:
-        session = repl.start("explain things")  # a real, not-yet-run Session → non-terminal
-        app._session = session
-        assert not session.state.terminal  # i.e. "busy"
+        await _type_and_send(pilot, app, "explain things")
+        await asyncio.wait_for(model.entered.wait(), timeout=5)  # the run is in the model call
+        await pilot.pause()
+        assert app.query_one("#prompt").disabled  # the UI is busy
+        assert app._run_task is not None
+
+        app.action_cancel()  # ctrl+c → instant interrupt
+        await _settle(app, pilot)
+
+        assert app._run_task is None  # the run is over...
+        assert not app.query_one("#prompt").disabled  # ...and the UI freed immediately
+        assert any("cancel" in line.lower() for line in app.rendered)  # surfaced as history
+
+
+async def test_terminate_signal_cancels_run_and_quits(git_repo):
+    # An external SIGINT/SIGTERM (kill) is turned into a graceful shutdown: cancel any
+    # in-flight run, then quit. (The handler is invoked directly — headless run_test never
+    # installs real process-wide signal handlers.)
+    model = _BlockingModel()
+    app = _blocking_app(git_repo, model)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain things")
+        await asyncio.wait_for(model.entered.wait(), timeout=5)
+        await pilot.pause()
+        run_task = app._run_task
         exited: list[bool] = []
         app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
-        app.screen.get_selected_text = lambda: None  # type: ignore[method-assign]
 
-        app.action_cancel()  # first ctrl+c → request a graceful cancel, don't quit
+        app._on_terminate_signal()
         await pilot.pause()
-        assert app._cancel_requested
-        assert not exited
-        assert any("force-quit" in line for line in app.rendered)  # the hint was shown
 
-        app.action_cancel()  # second ctrl+c while still busy → force quit
-        await pilot.pause()
-        assert exited
+        assert run_task is not None and run_task.cancelled()  # the in-flight run was cancelled
+        assert exited  # and the app quit
 
 
 def test_jo_cli_threads_allow_dirty(git_repo, monkeypatch):
