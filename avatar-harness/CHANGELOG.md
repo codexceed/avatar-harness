@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/codexceed/avatar-harness/compare/v2.0.0...v2.1.0) (2026-06-17)
+
+
+### Features
+
+* **model:** cancellable async model calls via adecide (ADR-0024) ([#80](https://github.com/codexceed/avatar-harness/issues/80)) ([843895f](https://github.com/codexceed/avatar-harness/commit/843895f1f70b02559ddd6203874211d74de5a0a5))
+
 ## [2.0.0](https://github.com/codexceed/avatar-harness/compare/v1.2.0...v2.0.0) (2026-06-16)
 
 
