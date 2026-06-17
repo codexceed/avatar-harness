@@ -29,6 +29,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0021](0021-case-insensitive-sensitive-path-denylist.md) | Case-insensitive sensitive-path denylist (close the case bypass) | Accepted — implemented 2026-06-15 |
 | [0022](0022-unobtainable-as-terminal-conclusion.md) | Legitimize "unobtainable" as a terminal conclusion (the won't-conclude fix) | Proposed |
 | [0023](0023-two-package-workspace-avatar-sdk-jo-cli.md) | Two-package uv workspace: the `avatar` SDK + the `jo` cockpit, flat layout | Accepted — implemented 2026-06-16 |
+| [0024](0024-interruptible-runs-via-async-model-client.md) | Interruptible runs via an async model client (cancellable in-flight model calls) | Proposed |
 
 ## Conventions
 
