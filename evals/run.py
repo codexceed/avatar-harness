@@ -121,7 +121,13 @@ def run_task(
     # Errors after provisioning still produce a row that carries the scratch path, so it maps to
     # its files and the cleanup contract holds (provision-stage failures propagate to the caller).
     try:
-        cfg = config.model_copy(update={"workspace_root": str(repo), **spec.budgets})
+        # Point `log_path` at the eval journal so the Workspace hides it from the agent's file
+        # tools (ADR-0018 / ADR-0023): otherwise `search_repo` recurses over `journal.jsonl` and
+        # balloons it (the 875 MB blowup, 2026-06-15). The journal is still written via the
+        # explicit `JsonlEventJournal` below; `log_path` only drives the search/list exclusion.
+        cfg = config.model_copy(
+            update={"workspace_root": str(repo), "log_path": str(repo / "journal.jsonl"), **spec.budgets}
+        )
         client = Harness(config=cfg, model=model_client) if model_client is not None else Harness(config=cfg)
         # Option A: a probe-bearing task is graded by the probe, so the agent runs *non-strict* —
         # it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh

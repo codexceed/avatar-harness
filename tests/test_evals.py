@@ -157,6 +157,30 @@ def test_eval_run_produces_result_row():
     assert isinstance(row.solved, bool)
 
 
+def test_eval_journal_excluded_from_search(tmp_path):
+    # Regression (the 875 MB blowup, 2026-06-15): the eval journal sits in the scratch-repo
+    # root, so unless the runner wires `config.log_path` to it, `search_repo` recurses over
+    # journal.jsonl — each result re-journaled as the next tool_end — ballooning the file.
+    # The goal text lands in the journal's agent_start event, so a search for it would match
+    # journal.jsonl *if* it weren't hidden from the file tools.
+    marker = "UNIQUEJOURNALMARKER42"
+    spec = TaskSpec(
+        id="probe-journal", goal=f"investigate the {marker} thing", task_kind="investigate", fixture="empty"
+    )
+    decisions = [
+        ModelDecision(action=ToolCall(name="search_repo", input={"query": marker})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    row = run_task(
+        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=tmp_path
+    )
+    tool_ends = [
+        e for e in _journal_events(row) if e.get("type") == "tool_end" and e.get("tool") == "search_repo"
+    ]
+    assert tool_ends, "search_repo did not run"
+    assert all("journal.jsonl" not in (e.get("content") or "") for e in tool_ends)
+
+
 def test_result_row_is_jsonl_roundtrippable():
     row = ResultRow(
         task="x",
