@@ -36,6 +36,7 @@ AVATAR_API_KEY=sk-or-...                       # required; falls back to OPENAI_
 AVATAR_MODEL=openai/gpt-4o-mini                # any model your endpoint serves
 AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); swap for OpenAI/local
 AVATAR_TEMPERATURE=0.0                          # sampling temperature (0 = as deterministic as the provider allows)
+AVATAR_REQUEST_TIMEOUT=                          # per-call model timeout (s); unset = SDK default (10 min)
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbatim in context
 ```

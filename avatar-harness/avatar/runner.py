@@ -248,7 +248,10 @@ class AgentRunner:
             self.emitter.emit("turn_start", task_id=state.task_id, iteration=state.iterations)
             self._publish(TurnStart(task_id=state.task_id, turn=state.iterations, iteration=state.iterations))
             try:
-                decision = await asyncio.to_thread(self.model_client.decide, context)
+                # adecide is cancellable: a cancel during the call raises CancelledError here
+                # (a BaseException, so the narrow except below never swallows it) and unwinds
+                # the loop at once, aborting the in-flight request at the socket (ADR-0024).
+                decision = await self.model_client.adecide(context)
             except DecisionParseError as exc:
                 # A malformed decision is model-correctable: feed it back, don't crash (§6).
                 # The lost turn still cost tokens — bill them (the client sums attempts).
