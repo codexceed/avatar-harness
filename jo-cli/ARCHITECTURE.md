@@ -73,7 +73,7 @@ flowchart TD
 | Component | Role |
 | --- | --- |
 | `cli.py` (`jo`) | The cockpit's own entry point: parse `--auto`/`--log`/`--allow-dirty`, build a journaled `ReplSession`, `load_cockpit()`, run the app. Consumer → core only. |
-| `app.py` (`CockpitApp`) | The shell: status bar + `RichLog` transcript + `Input`. Two modes — **observe** a fixed `session=` stream, or **drive** a live `repl=` `ReplSession`. Renders `events()`; acts via modals. |
+| `app.py` (`CockpitApp`) | The shell: status bar + `RichLog` transcript + a `HistoryInput` (an `Input` with ↑/↓ recall of the sitting's submitted prompts). Two modes — **observe** a fixed `session=` stream, or **drive** a live `repl=` `ReplSession`. Renders `events()`; acts via modals. `ctrl+c` copies an active text selection if there is one, else cancels the in-flight run, else quits (a finished/failed goal clears the per-goal session so it always falls through to quit). Cancellation is cooperative (observed at a turn boundary), so a second `ctrl+c` while a cancel is still pending force-quits — the user is never stuck on a busy agent. |
 | `modals.py` | The control surfaces: `ApprovalModal` → `ApprovalChoice`, `DiffModal` → `None`, `PlanModal` → `PlanChoice`. Each `dismiss`es a small typed result the app routes. |
 | `replay.py` (`ReplaySession`) | A session-shaped object that replays a fixed event list with no engine — the basis for headless tests and a future `--replay <journal>` viewer. No Textual import. |
 | `__init__.py` (`load_cockpit`) | The guarded (lazy) import of the Textual app; raises a clear hint if `textual` is somehow absent (it is a hard dependency of `jo-cli`). |

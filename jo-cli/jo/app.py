@@ -39,6 +39,76 @@ from avatar import (
 from jo.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
 
 
+class HistoryInput(Input):
+    """An `Input` that recalls previously submitted prompts with the ↑/↓ arrows.
+
+    The cockpit calls `remember` on every submit to append the line (de-duplicated
+    against the most recent entry). `↑` walks toward older entries, `↓` toward newer;
+    stepping past the newest restores the draft that was in progress before browsing
+    began. History is in-memory for the sitting — the journal stays the durable record.
+
+    Up/down are unbound on Textual's single-line `Input`, so binding them here is
+    additive (Textual merges `BINDINGS` across the MRO) and steals nothing.
+
+    Args:
+        placeholder: The greyed-out prompt shown while the field is empty.
+        id: The widget id (the cockpit queries `#prompt`).
+    """
+
+    BINDINGS = [  # noqa: RUF012 — Textual's binding-list contract
+        Binding("up", "history_prev", show=False),
+        Binding("down", "history_next", show=False),
+    ]
+
+    def __init__(self, *, placeholder: str = "", id: str | None = None) -> None:
+        super().__init__(placeholder=placeholder, id=id)
+        self._history: list[str] = []
+        self._cursor: int | None = None  # None ⇒ not browsing; else an index into _history
+        self._draft = ""  # the in-progress line, stashed when browsing starts
+
+    def remember(self, text: str) -> None:
+        """Append a submitted prompt to history and reset the browse cursor.
+
+        Args:
+            text: The submitted line (consecutive duplicates are not re-stored).
+        """
+        if text and (not self._history or self._history[-1] != text):
+            self._history.append(text)
+        self._cursor = None
+        self._draft = ""
+
+    def action_history_prev(self) -> None:
+        """↑ — recall the previous (older) submitted prompt, stashing the draft first."""
+        if not self._history:
+            return
+        if self._cursor is None:  # entering history: remember what was being typed
+            self._draft = self.value
+            self._cursor = len(self._history)
+        if self._cursor > 0:
+            self._cursor -= 1
+            self._recall(self._history[self._cursor])
+
+    def action_history_next(self) -> None:
+        """↓ — move toward newer prompts; past the newest restores the stashed draft."""
+        if self._cursor is None:
+            return
+        self._cursor += 1
+        if self._cursor >= len(self._history):
+            self._cursor = None
+            self._recall(self._draft)
+        else:
+            self._recall(self._history[self._cursor])
+
+    def _recall(self, text: str) -> None:
+        """Replace the field with `text` and park the cursor at its end.
+
+        Args:
+            text: The recalled line to show.
+        """
+        self.value = text
+        self.cursor_position = len(text)
+
+
 class CockpitApp(App):
     """The cockpit: status bar + transcript + input, over a session's event stream (§13, §23).
 
@@ -83,6 +153,7 @@ class CockpitApp(App):
         self.verdict: bool | None = None  # the verifier's real verdict (advisory in chat mode)
         self._on_submit = on_submit or (lambda _prompt: None)
         self.rendered: list[str] = []  # mirror of transcript lines, for headless assertions
+        self._cancel_requested = False  # a graceful cancel is in flight; a second ctrl+c force-quits
 
     def compose(self) -> Iterator[Widget]:
         """Lay out the three regions.
@@ -92,7 +163,7 @@ class CockpitApp(App):
         """
         yield Static(self._status_text(), id="status")
         yield RichLog(id="transcript", highlight=False, markup=False, wrap=True)
-        yield Input(placeholder="Ask, or describe a change…", id="prompt")
+        yield HistoryInput(placeholder="Ask, or describe a change…", id="prompt")
 
     def on_mount(self) -> None:
         """Observe mode: start the worker draining the fixed stream. Drive mode waits for input."""
@@ -267,9 +338,11 @@ class CockpitApp(App):
             event: The Textual `Input.Submitted` message carrying the prompt text.
         """
         text = event.value.strip()
-        self.query_one("#prompt", Input).value = ""
+        prompt = self.query_one("#prompt", HistoryInput)
+        prompt.value = ""
         if not text:
             return
+        prompt.remember(text)  # ↑/↓ recall — record the submitted line for this sitting
         if self.repl is not None:
             self._drive_input(text)
         else:
@@ -337,6 +410,7 @@ class CockpitApp(App):
         self.outcome = None
         self.verdict = None
         self.phase = "investigating"
+        self._cancel_requested = False  # fresh run — the two-stage ctrl+c starts over
         try:
             # Resolve off-loop (classification is a network call) and announce the
             # verdict + its source before running — visible, correctable routing (D3).
@@ -358,6 +432,12 @@ class CockpitApp(App):
         except Exception as exc:
             self._write(f"✗ goal failed — {type(exc).__name__}: {exc}")
         finally:
+            # The run is over — drop the per-goal session. A mid-run failure (e.g. a missing
+            # API key surfaced from the model client) leaves its Session non-terminal, and a
+            # lingering reference made ctrl+c keep trying to cancel a dead run instead of
+            # quitting; clearing it lets action_cancel fall through to exit.
+            self._session = None
+            self._cancel_requested = False  # no live run → next ctrl+c quits, not cancels
             self.query_one("#prompt", Input).disabled = False  # the REPL stays usable
             self.query_one("#status", Static).update(self._status_text())
 
@@ -403,9 +483,30 @@ class CockpitApp(App):
         return await run
 
     def action_cancel(self) -> None:
-        """Ctrl-C: cancel the in-flight run if one is active (it refeeds as history), else quit."""
+        """Ctrl-C: copy a selection, else cancel a live run (twice to force-quit), else quit.
+
+        Copy comes first: the priority binding (needed so ctrl+c reaches the app past the
+        focused input) otherwise shadows Textual's own `screen.copy_text`, so a
+        select-then-ctrl+c gesture would never copy.
+
+        With nothing selected, a *live* run is cancelled. Cancellation is cooperative — the
+        loop only observes the token at the next turn boundary, so a ctrl+c during a long
+        model call or tool run won't land until that call returns (the model client has no
+        timeout). A second ctrl+c while a cancel is still pending therefore force-quits the
+        app, so the user is never stuck waiting on a busy agent. With no live run, ctrl+c
+        quits directly.
+        """
+        selection = self.screen.get_selected_text()
+        if selection:
+            self.copy_to_clipboard(selection)
+            return
         session = self._session
         if self.repl is not None and isinstance(session, Session) and not session.state.terminal:
+            if self._cancel_requested:  # already cancelling and still busy → don't make them wait
+                self.exit()
+                return
+            self._cancel_requested = True
             self.run_worker(session.cancel("cancelled by user"))
+            self._write("⏸ cancelling… press Ctrl+C again to force-quit")
         else:
             self.exit()
