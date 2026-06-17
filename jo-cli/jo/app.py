@@ -11,6 +11,7 @@ The app tracks its rendered transcript lines and status fields as plain attribut
 """
 
 import asyncio
+import signal
 from collections.abc import Callable, Iterator
 
 from rich.text import Text
@@ -153,7 +154,7 @@ class CockpitApp(App):
         self.verdict: bool | None = None  # the verifier's real verdict (advisory in chat mode)
         self._on_submit = on_submit or (lambda _prompt: None)
         self.rendered: list[str] = []  # mirror of transcript lines, for headless assertions
-        self._cancel_requested = False  # a graceful cancel is in flight; a second ctrl+c force-quits
+        self._run_task: asyncio.Task[TaskState] | None = None  # the in-flight per-goal run, for ctrl+c
 
     def compose(self) -> Iterator[Widget]:
         """Lay out the three regions.
@@ -166,9 +167,48 @@ class CockpitApp(App):
         yield HistoryInput(placeholder="Ask, or describe a change…", id="prompt")
 
     def on_mount(self) -> None:
-        """Observe mode: start the worker draining the fixed stream. Drive mode waits for input."""
+        """Observe mode: drain the fixed stream; drive mode waits for input. Install signal handlers."""
         if self.repl is None and self._session is not None:
             self.run_worker(self._consume(self._session), exclusive=False)
+        self._set_signal_handlers(install=True)
+
+    def on_unmount(self) -> None:
+        """Remove the SIGINT/SIGTERM handlers installed in `on_mount` (restore prior disposition)."""
+        self._set_signal_handlers(install=False)
+
+    def _set_signal_handlers(self, *, install: bool) -> None:
+        """Install or remove graceful SIGINT/SIGTERM handlers (ADR-0024).
+
+        Textual's full-screen driver does not claim `SIGINT`/`SIGTERM`, and in the TUI a
+        ctrl+c arrives as a *key* (→ `action_cancel`), not a signal — so these handlers fire
+        only for an *external* terminate (`kill`, a parent/CI SIGTERM), turning it into a
+        graceful shutdown instead of a default-handler crash. Skipped under headless test
+        runs (drive via `Pilot`, never touch process-wide signal state) and on platforms /
+        loops without signal support (e.g. Windows).
+
+        Args:
+            install: Add the handlers when `True`, remove them when `False`.
+        """
+        if self.is_headless:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                if install:
+                    loop.add_signal_handler(sig, self._on_terminate_signal)
+                else:
+                    loop.remove_signal_handler(sig)
+            except (NotImplementedError, RuntimeError, ValueError):
+                pass  # unsupported platform/loop — Textual still tears the app down on exit
+
+    def _on_terminate_signal(self) -> None:
+        """An external SIGINT/SIGTERM: cancel any in-flight run, then quit gracefully (ADR-0024)."""
+        if self._run_task is not None and not self._run_task.done():
+            self._run_task.cancel()
+        self.exit()
 
     async def _consume(self, session: object) -> None:
         """Render each event from `session`'s stream (observation only; never blocks the run).
@@ -410,7 +450,6 @@ class CockpitApp(App):
         self.outcome = None
         self.verdict = None
         self.phase = "investigating"
-        self._cancel_requested = False  # fresh run — the two-stage ctrl+c starts over
         try:
             # Resolve off-loop (classification is a network call) and announce the
             # verdict + its source before running — visible, correctable routing (D3).
@@ -437,7 +476,6 @@ class CockpitApp(App):
             # lingering reference made ctrl+c keep trying to cancel a dead run instead of
             # quitting; clearing it lets action_cancel fall through to exit.
             self._session = None
-            self._cancel_requested = False  # no live run → next ctrl+c quits, not cancels
             self.query_one("#prompt", Input).disabled = False  # the REPL stays usable
             self.query_one("#status", Static).update(self._status_text())
 
@@ -469,44 +507,58 @@ class CockpitApp(App):
     async def _observe(self, session: Session) -> TaskState:
         """Run `session` while streaming its events into the transcript; return its terminal state.
 
-        Sets `session` as the current one so an approval modal routes its decision back to it.
+        Sets `session` as the current one so an approval modal routes its decision back to it,
+        and exposes the run task (`_run_task`) so `action_cancel` / a terminate signal can
+        hard-cancel it. A hard cancel injects `CancelledError` at the in-flight `await` —
+        which, with the async model client (ADR-0024), aborts the request at the socket — so
+        the cockpit frees immediately instead of waiting on a busy agent. The cancelled run's
+        state is marked `incomplete` so it records cleanly as history.
 
         Args:
             session: The per-goal `Session` to run and render.
 
         Returns:
-            The terminal `TaskState`.
+            The terminal `TaskState` (marked `incomplete` if we cancelled the run).
+
+        Raises:
+            asyncio.CancelledError: If this worker itself is cancelled (not the run task) —
+                re-raised untouched so cancellation is never swallowed.
         """
         self._session = session
         run = asyncio.create_task(session.run())
-        await self._consume(session)  # drains until the bus closes on agent_end
-        return await run
+        self._run_task = run
+        try:
+            await self._consume(session)  # drains until the bus closes (on agent_end or cancel)
+            return await run
+        except asyncio.CancelledError:
+            if not run.cancelled():
+                raise  # our own worker was cancelled — propagate; don't swallow it
+            if not session.state.terminal:  # we cancelled the run — give it a clean terminal record
+                session.state.add_feedback("cancelled by user", kind="cancelled")
+                session.state.outcome = "incomplete"
+            return session.state
+        finally:
+            self._run_task = None
 
     def action_cancel(self) -> None:
-        """Ctrl-C: copy a selection, else cancel a live run (twice to force-quit), else quit.
+        """Ctrl-C: copy a selection, else interrupt a live run, else quit.
 
         Copy comes first: the priority binding (needed so ctrl+c reaches the app past the
         focused input) otherwise shadows Textual's own `screen.copy_text`, so a
         select-then-ctrl+c gesture would never copy.
 
-        With nothing selected, a *live* run is cancelled. Cancellation is cooperative — the
-        loop only observes the token at the next turn boundary, so a ctrl+c during a long
-        model call or tool run won't land until that call returns (the model client has no
-        timeout). A second ctrl+c while a cancel is still pending therefore force-quits the
-        app, so the user is never stuck waiting on a busy agent. With no live run, ctrl+c
-        quits directly.
+        With nothing selected, a *live* run is **hard-cancelled** — `_run_task.cancel()`
+        injects `CancelledError` at the in-flight `await`, which (with the async model
+        client, ADR-0024) aborts the request at the socket, so the cockpit frees instantly
+        instead of waiting on a busy agent. The run records as cancelled history (`_observe`),
+        leaving no live run — so the next ctrl+c quits.
         """
         selection = self.screen.get_selected_text()
         if selection:
             self.copy_to_clipboard(selection)
             return
-        session = self._session
-        if self.repl is not None and isinstance(session, Session) and not session.state.terminal:
-            if self._cancel_requested:  # already cancelling and still busy → don't make them wait
-                self.exit()
-                return
-            self._cancel_requested = True
-            self.run_worker(session.cancel("cancelled by user"))
-            self._write("⏸ cancelling… press Ctrl+C again to force-quit")
+        if self._run_task is not None and not self._run_task.done():
+            self._run_task.cancel()  # instant interrupt; _observe marks it cancelled + frees the UI
+            self._write("⏸ cancelled")
         else:
             self.exit()
