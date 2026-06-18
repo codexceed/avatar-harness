@@ -11,7 +11,6 @@ import json
 import re
 import shlex
 import shutil
-from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from avatar.config import HarnessConfig
 from avatar.harness import Harness
 from avatar.journal import JsonlEventJournal
 from avatar.model_client import ModelClient
-from evals.classify import failure_histogram
+from evals.classify import classify, failure_histogram
 from evals.journal_read import row_events
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
@@ -149,7 +148,7 @@ def run_task(
         probe_exit = (
             run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
         )
-        return ResultRow(
+        row = ResultRow(
             task=spec.id,
             model=cfg.model,
             seed=seed,
@@ -163,7 +162,7 @@ def run_task(
             workspace=str(repo),
         )
     except Exception as exc:  # one bad run must not lose the matrix; keep the scratch path on the row
-        return ResultRow(
+        row = ResultRow(
             task=spec.id,
             model=config.model,
             seed=seed,
@@ -172,6 +171,15 @@ def run_task(
             iterations=0,
             workspace=str(repo),
         )
+    # Classify and persist the bucket NOW, while the scratch journal still exists (it is deleted by
+    # the caller's cleanup), so the `loop_oscillation` / `decision_error` refinements are captured
+    # and every downstream consumer reads one consistent value off the row (ADR-0025). A solved row
+    # short-circuits to "solved" before `classify` ever inspects events, so skip the journal read
+    # for it — otherwise every green run on a clean matrix materializes a (potentially huge) journal
+    # only to discard it.
+    events = None if row.solved else _journal_events(row)
+    row.failure_mode = classify(row, events)
+    return row
 
 
 def _load_specs() -> list[TaskSpec]:
@@ -250,21 +258,20 @@ def build_summary(
     seeds: int,
     temperature: float,
     stamp: str,
-    events_for: Callable[[ResultRow], Sequence[dict] | None] | None,
 ) -> dict:
     """Build the aggregate-metrics summary the runner persists alongside the per-run JSONL.
 
     Reuses the same metric/classifier functions ``main()`` prints, so the artifact and the
-    stdout summary can never drift. Floats are rounded to 4 decimals.
+    stdout summary can never drift. The failure histogram reads each row's persisted
+    ``failure_mode`` (set at scoring time, ADR-0025), so the refinements are already baked in —
+    no journal resolver is threaded here. Floats are rounded to 4 decimals.
 
     Args:
-        rows: The result rows from the run.
+        rows: The result rows from the run (each carrying its scoring-time ``failure_mode``).
         models: The model ids in matrix order (one ``per_model`` entry each).
         seeds: The seeds-per-task count for the run.
         temperature: The sampling temperature for the run.
         stamp: The shared timestamp (pairs the summary with ``<stamp>.jsonl``).
-        events_for: Resolver of a row's journal events, threaded into ``failure_histogram`` so
-            ``loop_oscillation`` / ``decision_error`` refinements are included.
 
     Returns:
         A JSON-serializable summary dict.
@@ -288,7 +295,7 @@ def build_summary(
         "models": models,
         "overall_pass_at_1": round(pass_at_1(rows), 4),
         "per_model": per_model,
-        "failure_histogram": failure_histogram(rows, events_for=events_for),
+        "failure_histogram": failure_histogram(rows),
     }
 
 
@@ -371,22 +378,20 @@ def main(argv: list[str] | None = None) -> int:
         mrows = [r for r in rows if r.model == model]
         print(f"  {model}: pass@1={pass_at_1(mrows):.2f}  pass^k={pass_caret_k(mrows):.2f}  (n={len(mrows)})")
     print(f"overall pass@1={pass_at_1(rows):.2f}  (n={len(rows)})")
-    # Classify with each row's journal events (read before cleanup) so loop_oscillation /
-    # decision_error are reachable, not just the row-only buckets.
-    hist = failure_histogram(rows, events_for=_journal_events)
+    # Each row already carries its journal-refined `failure_mode` (persisted at scoring time, while
+    # the journal was live), so loop_oscillation / decision_error are baked in — the histogram just
+    # tallies the stored buckets, no journal re-read and no ordering dependency on cleanup (ADR-0025).
+    hist = failure_histogram(rows)
     if hist:
         print("failure modes: " + ", ".join(f"{k}={v}" for k, v in sorted(hist.items())))
 
     # Persist the aggregate metrics + histogram as a sibling artifact, sharing the results stamp.
-    # MUST precede cleanup: the histogram reads journals that cleanup deletes (already read above,
-    # but build_summary re-derives it via the same resolver, so order matters either way).
     summary = build_summary(
         rows,
         models=models,
         seeds=args.seeds,
         temperature=args.temperature,
         stamp=stamp,
-        events_for=_journal_events,
     )
     summary_path = out.with_name(f"{stamp}.summary.json")
     write_summary(summary, summary_path)

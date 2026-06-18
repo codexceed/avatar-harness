@@ -33,10 +33,10 @@ const CLUSTER_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['task', 'outcome', 'runs', 'symptom', 'prefilter_novel'],
+        required: ['task', 'bucket', 'runs', 'symptom', 'prefilter_novel'],
         properties: {
           task: { type: 'string' },
-          outcome: { type: 'string' },
+          bucket: { type: 'string' }, // the grading-truth failure mode (evals.classify), not the harness outcome (B4)
           models: { type: 'array', items: { type: 'string' } },
           runs: { type: 'integer' },
           symptom: { type: 'string' },
@@ -87,7 +87,7 @@ phase('Triage')
 const triaged = await agent(
   `Run the deterministic Layer-1 prefilter and return its output verbatim as JSON.\n` +
     `Execute exactly: \`python -m evals.cluster ${results}\`\n` +
-    `That prints one JSON object per line (a ClusterVerdict: {cluster:{task,outcome,models,runs,symptom,` +
+    `That prints one JSON object per line (a ClusterVerdict: {cluster:{task,bucket,models,runs,symptom,` +
     `sample_actions}, triage:{novel,catalog_match,adr_match,score}}). Collect them and return a single object ` +
     `{clusters:[...]} where each item flattens the cluster fields plus prefilter_novel=triage.novel, ` +
     `prefilter_catalog_match=triage.catalog_match, prefilter_adr_match=triage.adr_match. Do not analyze — just run and report.`,
@@ -111,11 +111,11 @@ const proposals = (
           `The deterministic prefilter said novel=${c.prefilter_novel} (catalog=${c.prefilter_catalog_match}, adr=${c.prefilter_adr_match}) ` +
           `— treat that as a hint only; you make the call from the symptom + sample_actions + the catalog text. ` +
           `If it matches a catalogued mode or an open ADR, return novel=false with that id. Else novel=true and classify the A/B/C/D bucket.`,
-        { label: `analyze:${c.task}/${c.outcome}`, phase: 'Analyze', schema: VERDICT_SCHEMA },
+        { label: `analyze:${c.task}/${c.bucket}`, phase: 'Analyze', schema: VERDICT_SCHEMA },
       ),
     (verdict, c) => {
       if (!verdict || !verdict.novel) {
-        log(`known: ${c.task}/${c.outcome} → ${verdict?.mode ?? 'linked'} (no proposal)`)
+        log(`known: ${c.task}/${c.bucket} → ${verdict?.mode ?? 'linked'} (no proposal)`)
         return null // known mode: linked to the catalog/ADR, dropped from the fan-out
       }
       return agent(
