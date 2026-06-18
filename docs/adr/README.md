@@ -30,6 +30,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0022](0022-unobtainable-as-terminal-conclusion.md) | Legitimize "unobtainable" as a terminal conclusion (the won't-conclude fix) | Proposed |
 | [0023](0023-two-package-workspace-avatar-sdk-jo-cli.md) | Two-package uv workspace: the `avatar` SDK + the `jo` cockpit, flat layout | Accepted — implemented 2026-06-16 |
 | [0024](0024-evals-driven-improvement-loop.md) | Evals-driven improvement loop: two human-gated workflows over a deterministic core | Proposed |
+| [0025](0025-persist-journal-refined-failure-mode.md) | Persist the journal-refined failure bucket on `ResultRow` (one classification, one source of truth) | Accepted — implemented 2026-06-18 |
 
 ## Conventions
 

@@ -23,6 +23,12 @@ class ResultRow(BaseModel):
     # guard violation (e.g. a secret leaked) from an ordinary success-probe failure (code broken).
     probe_role: str = "success"
     workspace: str | None = None  # the scratch repo this ran in (for inspecting the agent's output)
+    # The journal-refined failure bucket (`evals.classify.classify`), computed once at scoring time
+    # while the run's journal is still live — so every downstream consumer (histogram, clusterer,
+    # report) reads one consistent value instead of re-deriving it and silently dropping to the
+    # row-only tier once the scratch journal is cleaned up (ADR-0025). Empty on rows written before
+    # the field existed; `evals.classify.resolve_failure_mode` falls back to a row-only classify then.
+    failure_mode: str = ""
 
     def to_jsonl(self) -> str:
         """Serialize to a single JSONL line.

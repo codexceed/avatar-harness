@@ -25,6 +25,11 @@ dev = [
     "openai>=1.40",  # the OpenAI extra, installed for dev/CI so the test suite can exercise it
     # textual/rich are runtime deps of the `jo-cli` member, so the workspace install already
     # provides them for the cockpit tests — no need to list them here.
+    "matplotlib>=3.11.0",
+    "seaborn>=0.13.2",
+    "pandas>=3.0.3",
+    "nbconvert>=7.17.1",
+    "ipykernel>=7.3.0",
 ]
 
 # --- Ruff: lint + format. Encodes readability (#1) and verbosity ceilings (#2). ---
@@ -33,7 +38,9 @@ line-length = 110
 target-version = "py312"
 # Eval fixtures are deliberately-imperfect sample repos the agent operates on (a buggy
 # function, a secret file) — input data, not code we maintain. Don't lint or format them.
-extend-exclude = ["evals/fixtures"]
+# `notebooks/` holds generated artifacts (regenerated from `scripts/build_eval_notebook.py`),
+# so their code cells track the generator, not ruff — excluded to avoid perpetual reformat drift.
+extend-exclude = ["evals/fixtures", "notebooks"]
 
 [tool.ruff.lint]
 select = [

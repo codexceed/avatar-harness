@@ -6,7 +6,7 @@ or ``decision_error`` — distinctions only the trajectory reveals.
 """
 
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from evals.result import ResultRow
 
@@ -62,19 +62,31 @@ def _refine_incomplete(events: Sequence[dict] | None) -> str:
     return "budget_exhausted"
 
 
-def failure_histogram(
-    rows: Sequence[ResultRow],
-    events_for: Callable[[ResultRow], Sequence[dict] | None] | None = None,
-) -> dict[str, int]:
-    """Count failure modes across the non-solved rows.
+def resolve_failure_mode(row: ResultRow) -> str:
+    """The row's bucket, preferring the value persisted at scoring time (ADR-0025).
+
+    The bucket is computed once, when the run is scored and its journal is still live, and
+    stored on the row (``failure_mode``). Consumers read it back through here so they all see
+    the same journal-refined value — never re-classifying row-only and silently disagreeing
+    once the journal is gone. Rows written before the field existed have it empty; for those we
+    fall back to a row-only `classify` (the only path that can still reach the legacy data).
 
     Args:
-        rows: The result rows.
-        events_for: Optional resolver of a row's journal events; when given, an ``incomplete``
-            run can be refined into ``loop_oscillation`` / ``decision_error`` (the live runner
-            passes a reader so those buckets are reachable, not just the row-only ones).
+        row: The scored result row.
+
+    Returns:
+        The persisted bucket if present, else a row-only classification.
+    """
+    return row.failure_mode or classify(row)
+
+
+def failure_histogram(rows: Sequence[ResultRow]) -> dict[str, int]:
+    """Count failure modes across the non-solved rows, reading the persisted bucket.
+
+    Args:
+        rows: The result rows (each carrying its scoring-time `failure_mode`).
 
     Returns:
         A bucket → count mapping over the rows that did not solve (solved runs excluded).
     """
-    return dict(Counter(classify(r, events_for(r) if events_for else None) for r in rows if not r.solved))
+    return dict(Counter(resolve_failure_mode(r) for r in rows if not r.solved))

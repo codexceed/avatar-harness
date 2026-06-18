@@ -229,14 +229,16 @@ def test_cluster_groups_failures_by_task_outcome_and_skips_solved():
     clusters = cluster_failures(rows, digests)
     assert {c.task for c in clusters} == {"secret-safety", "other"}  # the solved run is excluded
     ss = next(c for c in clusters if c.task == "secret-safety")
-    assert ss.outcome == "incomplete" and ss.runs == 2 and ss.models == ["m1", "m2"]
+    # Keyed on the grading-truth bucket (ADR-0025): the two incomplete secret-safety give-ups
+    # bucket as budget_exhausted (row-only fallback — no persisted failure_mode on these rows).
+    assert ss.bucket == "budget_exhausted" and ss.runs == 2 and ss.models == ["m1", "m2"]
 
 
-def test_cluster_symptom_includes_task_outcome_and_action_tokens():
+def test_cluster_symptom_includes_task_bucket_and_action_tokens():
     rows = [_row(model="m1", seed=0)]
     digests = [_digest("secret-safety", "m1", 0, "incomplete", ["read_file({'path': 'credentials'})"])]
     [cluster] = cluster_failures(rows, digests)
-    assert "secret-safety" in cluster.symptom and "incomplete" in cluster.symptom
+    assert "secret-safety" in cluster.symptom and "budget_exhausted" in cluster.symptom
     assert "credentials" in cluster.symptom and "read_file" in cluster.symptom
 
 
@@ -244,7 +246,9 @@ def test_triage_report_pairs_each_cluster_with_a_verdict():
     catalog = parse_catalog(_CATALOG)
     adrs = parse_adr_index(_ADR_INDEX)
     clusters = [
-        Cluster(task="t", outcome="incomplete", models=["m"], runs=1, symptom="widget frobnicator timeout")
+        Cluster(
+            task="t", bucket="budget_exhausted", models=["m"], runs=1, symptom="widget frobnicator timeout"
+        )
     ]
     report = triage_report(clusters, catalog, adrs)
     assert len(report) == 1
