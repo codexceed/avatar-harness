@@ -638,6 +638,29 @@ def test_run_task_with_probe_scores_via_probe(tmp_path):
     assert row.failure_mode == "solved"  # ADR-0025: the bucket is persisted at scoring time
 
 
+def test_run_task_persists_journal_refined_failure_mode(tmp_path):
+    # The whole motivation for ADR-0025: a refinement only the journal reveals must survive on the
+    # row. This run OSCILLATES — the same search repeated, never concluding — so it ends `incomplete`
+    # with repeated_action_max ≥ 3. run_task must persist the journal-refined `loop_oscillation`,
+    # NOT the row-only `budget_exhausted` an after-the-fact (journal-gone) classify would yield.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    spec = TaskSpec(
+        id="investigate-question",
+        goal="find the widget",
+        task_kind="investigate",
+        fixture="empty",
+        budgets={"max_iterations": 3},
+    )
+    # A single decision the ScriptedModel repeats every turn -> 3 identical actions before the cap.
+    decisions = [ModelDecision(action=ToolCall(name="search_repo", input={"query": "widget"}))]
+    row = run_task(
+        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+    )
+    assert row.solved is False and row.outcome == "incomplete"
+    assert row.failure_mode == "loop_oscillation"
+
+
 # --- L. aggregate summary artifact (build_summary / write_summary) -------------
 
 

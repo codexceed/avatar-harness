@@ -171,10 +171,14 @@ def run_task(
             iterations=0,
             workspace=str(repo),
         )
-    # Classify and persist the bucket NOW, while the scratch journal still exists, so the
-    # `loop_oscillation` / `decision_error` refinements are captured and every downstream
-    # consumer reads one consistent value off the row (ADR-0025). Solved rows carry "solved".
-    row.failure_mode = classify(row, _journal_events(row))
+    # Classify and persist the bucket NOW, while the scratch journal still exists (it is deleted by
+    # the caller's cleanup), so the `loop_oscillation` / `decision_error` refinements are captured
+    # and every downstream consumer reads one consistent value off the row (ADR-0025). A solved row
+    # short-circuits to "solved" before `classify` ever inspects events, so skip the journal read
+    # for it — otherwise every green run on a clean matrix materializes a (potentially huge) journal
+    # only to discard it.
+    events = None if row.solved else _journal_events(row)
+    row.failure_mode = classify(row, events)
     return row
 
 

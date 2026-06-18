@@ -20,7 +20,17 @@ from pathlib import Path
 import nbformat as nbf
 from nbformat.v4 import new_code_cell, new_markdown_cell, new_notebook
 
-DEFAULT_RESULTS = "evals/results/20260618T162508Z.jsonl"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _newest_results() -> Path | None:
+    """The most recent ``evals/results/*.jsonl``, or `None` when none exist.
+
+    Mirrors `scripts/eval_report.py` so the no-arg path degrades gracefully instead of baking a
+    hardcoded (gitignored, clean-checkout-absent) filename into the generated notebook.
+    """
+    results = sorted((_REPO_ROOT / "evals" / "results").glob("*.jsonl"))
+    return results[-1] if results else None
 
 
 def md(text: str) -> nbf.NotebookNode:
@@ -206,10 +216,18 @@ plt.show()
 
 
 def main(argv: list[str]) -> int:
-    """Write the notebook for the given (or default) results file."""
-    results = argv[1] if len(argv) > 1 else DEFAULT_RESULTS
+    """Write the notebook for the given (or newest) results file."""
+    path = Path(argv[1]) if len(argv) > 1 else _newest_results()
+    if path is None or not path.exists():
+        print("usage: build_eval_notebook.py RESULTS.jsonl  (no results file found)", file=sys.stderr)
+        return 2
+    # Embed a repo-relative path so the generated notebook resolves from the repo root.
+    try:
+        results = str(path.resolve().relative_to(_REPO_ROOT))
+    except ValueError:
+        results = str(path.resolve())
     nb = build(results)
-    out = Path(__file__).resolve().parent.parent / "notebooks" / "eval_report.ipynb"
+    out = _REPO_ROOT / "notebooks" / "eval_report.ipynb"
     out.parent.mkdir(parents=True, exist_ok=True)
     nbf.write(nb, out)
     print(f"wrote {out} (results = {results})")
