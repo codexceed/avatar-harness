@@ -38,7 +38,7 @@ make eval
 # A model matrix (the sonnet-class trio), 3 seeds each:
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 
-# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, NO_CLEANUP=1 (keep output)
+# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
 make eval MODELS="openai/gpt-5.1" SEEDS=1 NO_CLEANUP=1
 
 # Or invoke the module directly:
@@ -57,6 +57,7 @@ does **not** (it mocks the network — see *Probes*).
 | `--seeds N` | `3` | Repetitions per task (see *Seeds & temperature*). |
 | `--temperature T` | `0.7` | Sampling temperature; `>0` makes each seed an independent draw. Pass `0` for a deterministic run. |
 | `--workspace PATH` | `./eval_run_<timestamp>` | Where scratch repos are created. |
+| `--concurrency N` | `1` | Max matrix cells (`model × spec × seed`) run in parallel. Default `1` is strictly sequential; raise it to overlap I/O-bound runs, bounded by provider rate limits. Results stay in matrix order regardless. |
 | `--no-cleanup` | (cleanup on) | Keep the run workspace for inspection instead of deleting it. |
 
 ### Seeds & temperature

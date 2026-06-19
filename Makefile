@@ -25,9 +25,10 @@ run:
 #   make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 # Keep the scratch repos to inspect output:  make eval NO_CLEANUP=1
 # Choose where they go:                       make eval WORKSPACE=./myrun
+# Run cells in parallel (default 1):          make eval CONCURRENCY=4
 EVAL_ARGS = $(if $(MODELS),--models "$(MODELS)") $(if $(SEEDS),--seeds $(SEEDS)) \
 	$(if $(TEMPERATURE),--temperature $(TEMPERATURE)) $(if $(WORKSPACE),--workspace $(WORKSPACE)) \
-	$(if $(NO_CLEANUP),--no-cleanup)
+	$(if $(CONCURRENCY),--concurrency $(CONCURRENCY)) $(if $(NO_CLEANUP),--no-cleanup)
 eval:
 	uv run python -m evals.run $(EVAL_ARGS)
 
