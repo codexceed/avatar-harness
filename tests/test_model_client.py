@@ -11,11 +11,14 @@ from avatar.deps import CancellationToken, RunDeps
 from avatar.events import Emitter
 from avatar.model_client import (
     DecisionParseError,
+    EmptyResponseError,
     FinalAnswer,
     ModelClient,
     ModelDecision,
     OpenAIModelClient,
     ToolCall,
+    TransportError,
+    _is_empty_body,
     build_messages,
     parse_decision,
 )
@@ -208,6 +211,143 @@ def test_native_malformed_arguments_retry_pairs_tool_messages():
     tool_replies = [m for m in retry_messages if m.get("role") == "tool"]
     assert tool_replies and tool_replies[0]["tool_call_id"] == "c9"  # §18: every call answered
     assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in retry_messages)
+
+
+# --- transport-layer retry: NUL/hung provider replies (ADR-0028) --------------------------
+#
+# A provider hang returns a NUL / empty body (a 200 with no content). That is a TRANSPORT
+# failure, not a malformed *decision*: it must be re-ISSUED (same request, backoff), never
+# re-prompted through the model parse-retry, and on exhaustion surfaced as a system failure
+# (§16) — never a silent one-turn `incomplete`. Raw: eval_run_20260620T142752Z.
+
+
+def _nul_reply():
+    """A provider hang's signature: a NUL-byte body with no tool call."""
+    return _msg(content="\x00")
+
+
+def test_empty_nul_body_is_transport_retried_not_reprompted():
+    captured: list[dict] = []
+    good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"),
+        client=_fake_openai_messages([_nul_reply(), good], captured),
+        sleep=lambda _s: None,
+    )
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, ToolCall)  # recovered to the valid reply
+    assert decision.action.name == "read_file"
+    assert len(captured) == 2  # exactly one retry
+    # Re-ISSUE, not re-prompt: the retry's messages are identical to the first request — no
+    # appended assistant/user correction turn (that is the parse-retry's behavior, asserted below).
+    assert captured[0]["messages"] == captured[1]["messages"]
+    assert decision.retry_trace == []  # a transport retry leaves no parse trace
+
+
+def test_nonempty_malformed_still_uses_parse_retry_not_transport():
+    # The OTHER branch must stay intact: a non-empty but malformed body is model-correctable,
+    # so it RE-PROMPTS (appends a correction turn) — the opposite of a transport re-issue.
+    captured: list[dict] = []
+    bad = _msg(content="not a json decision")  # non-empty, malformed -> DecisionParseError path
+    good = _msg(content='{"thought_summary": "ok", "action": {"type": "final_answer", "answer": "done"}}')
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"),
+        client=_fake_openai_messages([bad, good], captured),
+        sleep=lambda _s: None,
+    )
+
+    decision = client.decide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert len(captured[1]["messages"]) > len(captured[0]["messages"])  # correction appended
+    assert len(decision.retry_trace) == 1  # the malformed attempt is traced as a parse error
+
+
+def test_transport_retries_exhausted_raise_transport_error():
+    calls: list[int] = []
+
+    def create(**kwargs):
+        calls.append(1)
+        return SimpleNamespace(choices=[SimpleNamespace(message=_nul_reply())])
+
+    client_obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=client_obj, transport_max_retries=2, sleep=lambda _s: None
+    )
+
+    with pytest.raises(TransportError):
+        client.decide(_packet())
+    assert len(calls) == 3  # initial attempt + 2 retries; NOT re-prompted into the model
+
+
+def test_request_call_failure_is_wrapped_as_transport_error():
+    # A timeout / connection reset surfaces from the SDK as an exception (SDK retries disabled);
+    # it must be retried at the transport layer and surface as TransportError, not crash raw.
+    calls: list[int] = []
+
+    def create(**kwargs):
+        calls.append(1)
+        raise RuntimeError("connection reset by peer")
+
+    client_obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=client_obj, transport_max_retries=1, sleep=lambda _s: None
+    )
+
+    with pytest.raises(TransportError):
+        client.decide(_packet())
+    assert len(calls) == 2  # initial + 1 retry
+
+
+def test_is_empty_body_classifies_nul_and_whitespace():
+    assert issubclass(EmptyResponseError, TransportError)  # NUL/empty is a transport failure
+    assert _is_empty_body("")
+    assert _is_empty_body("\x00")
+    assert _is_empty_body("  \n\x00\t ")
+    assert not _is_empty_body('{"action": ...}')
+
+
+def test_request_timeout_defaults_below_wall_clock():
+    cfg = HarnessConfig()
+    # The per-request bound MUST stay under the run budget, else one hung call eats the whole run.
+    assert cfg.request_timeout_seconds < cfg.max_wall_clock_seconds
+    assert cfg.transport_max_retries >= 0
+
+
+def test_runner_surfaces_transport_error_not_incomplete(tmp_path, read_registry):
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+    def create(**kwargs):
+        return SimpleNamespace(choices=[SimpleNamespace(message=_nul_reply())])
+
+    nul_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    config = HarnessConfig()
+    model_client = OpenAIModelClient(
+        config, client=nul_client, transport_max_retries=1, sleep=lambda _s: None
+    )
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    emitter = Emitter()
+    seen: list[str] = []
+    emitter.subscribe(lambda event: seen.append(str(event["type"])))
+    runner = AgentRunner(
+        model_client=model_client,
+        registry=read_registry,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=emitter,
+        config=config,
+    )
+    state = TaskState(goal="do it", task_kind="investigate")
+
+    with pytest.raises(TransportError):
+        runner.run(state)
+
+    assert "transport_error" in seen  # journaled distinctly...
+    assert "decision_error" not in seen  # ...NOT mislabeled as a model parse error
+    assert state.outcome != "incomplete"  # surfaced as a system failure, not a silent budget stop
 
 
 def test_native_plain_content_falls_back_to_json_decision():

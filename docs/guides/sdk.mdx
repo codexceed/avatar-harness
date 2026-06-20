@@ -188,6 +188,8 @@ local `.env`):
 | `AVATAR_LINT_COMMAND` | *(empty)* | Same, for the lint/type slot of the verification plan. |
 | `AVATAR_PLANNER_MODEL` | *(unset)* | Opt-in LLM fallback for verification-plan resolution: consulted only for slots detection left empty, may only *propose* a command citing the repo artifact that declares it (the harness validates the citation). Unset keeps resolution fully deterministic/offline. |
 | `AVATAR_COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout. |
+| `AVATAR_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for one model call (ADR-0028). Bounds a single `chat.completions.create` so a hung/stalled provider can't consume the whole run; must stay well under `AVATAR_MAX_WALL_CLOCK_SECONDS`. |
+| `AVATAR_TRANSPORT_MAX_RETRIES` | `3` | Transport-layer retries on a NUL/empty body or a request failure (ADR-0028): the same request is re-issued with exponential backoff + jitter — never re-prompted to the model. On exhaustion the run surfaces a system failure, never a silent `incomplete`. |
 | `AVATAR_COMMAND_OUTPUT_BUDGET` | `16000` | Char budget for the command-tool (`run_tests`/`run_linter`/`run_command`) output excerpt shown to the model: keeps the head **and** tail, elides the middle. Floored at 256 — the bound is unconditional, never disable-able. |
 | `AVATAR_APPROVAL_TIMEOUT_SECONDS` | *(unset)* | Backstop on a blocking (attended) approval: deny it after N seconds so a run can't hang inside the gate. Unset = wait indefinitely (a human at a REPL); an `unattended` run never blocks regardless. |
 | `AVATAR_SENSITIVE_PATH_GLOBS` | built-in set | Path denylist (`.env`, `*.pem`, `.ssh`, …) refused for read/patch/search. A JSON list; *replaces* the defaults. |

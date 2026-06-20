@@ -66,6 +66,18 @@ class HarnessConfig(BaseSettings):
     test_command: str = ""
     lint_command: str = ""
     command_timeout_seconds: int = 120
+    # Per-request timeout for a single model call (ADR-0028 R1). Bounds one
+    # `chat.completions.create` so a hung/stalled provider can't consume the whole run: it
+    # MUST stay well under `max_wall_clock_seconds` (a hung call near that bound truncates the
+    # run — the 2026-06-20 NUL/hang incident). The transport-retry loop re-issues on timeout,
+    # so several attempts fit inside one run's wall clock.
+    request_timeout_seconds: float = Field(90.0, gt=0)
+    # Transport-layer retries for a failed model call (ADR-0028 R3) — distinct from
+    # `max_parse_retries` (model-correctable, in `model_client`). A NUL/empty body, a request
+    # timeout, or a connection error is a *transport* failure: re-issue the SAME request with
+    # exponential backoff + jitter, never re-prompt the model. On exhaustion the client raises a
+    # `TransportError` the runner surfaces as a system failure (§16) — never an `incomplete`.
+    transport_max_retries: int = Field(3, ge=0)
     # Char budget for the stdout/stderr excerpt a command tool shows the model. Sized for a
     # medium web-app error log (a failing test run + a stack trace, ~150-300 lines). The excerpt
     # keeps the HEAD and TAIL and elides the middle (`commands._excerpt`), because a failure's
