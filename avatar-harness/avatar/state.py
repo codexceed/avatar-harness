@@ -172,7 +172,7 @@ class TaskState(BaseModel):
         """
         if self.verification_plan is not None:
             raise RuntimeError("verification plan is already frozen")
-        self.verification_plan = list(plan)
+        self.verification_plan = plan
 
     def set_smoke_floor(self, checks: list[PlannedCheck]) -> None:
         """Late-bind the greenfield smoke floor onto an otherwise-empty frozen plan (ADR-0014).
