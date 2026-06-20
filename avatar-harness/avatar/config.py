@@ -66,6 +66,12 @@ class HarnessConfig(BaseSettings):
     test_command: str = ""
     lint_command: str = ""
     command_timeout_seconds: int = 120
+    # Char budget for the stdout/stderr excerpt a command tool shows the model. Sized for a
+    # medium web-app error log (a failing test run + a stack trace, ~150-300 lines). The excerpt
+    # keeps the HEAD and TAIL and elides the middle (`commands._excerpt`), because a failure's
+    # densest signal — the exception / final assertion — trails at the end; tail-only truncation
+    # would drop exactly that. Lower it for cost-sensitive runs; raise it to retain more context.
+    command_output_budget: int = 16_000
 
     # LLM fallback for verification-plan resolution (ADR-0007 tier 3). Opt-in: unset
     # (the default) keeps resolution fully deterministic/offline. When set, the model

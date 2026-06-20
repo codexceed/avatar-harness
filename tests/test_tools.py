@@ -378,6 +378,37 @@ def test_run_linter_runs_configured_command(git_repo):
     assert "All checks passed" in result.content
 
 
+def test_command_output_keeps_head_and_tail_within_budget(git_repo):
+    # ADR-0027: an over-budget command output is bounded but keeps BOTH ends. The trailing
+    # error (the densest signal in a failure) must survive — the old tail-only truncation
+    # (`text[:budget]`) dropped exactly that. The middle is elided with a loud marker.
+    cmd = "python -c \"print('HEAD_SENTINEL'); print('x' * 50000); print('TAIL_ERROR_SENTINEL')\""
+    result = _edit_runtime(git_repo, test_command=cmd, command_output_budget=300).execute("run_tests", {})
+    assert "HEAD_SENTINEL" in result.content  # head retained
+    assert "TAIL_ERROR_SENTINEL" in result.content  # tail retained — what tail-only truncation drops
+    assert "elided" in result.content  # the middle was pruned, marked
+    assert "x" * 1000 not in result.content  # the bulk middle is gone
+    assert len(result.content) < 600  # bounded near the 300-char budget (+ marker overhead)
+
+
+def test_command_output_small_is_verbatim(git_repo):
+    # Within budget → returned as-is, no elision marker.
+    rt = _edit_runtime(git_repo, test_command="python -c \"print('5 passed')\"", command_output_budget=16_000)
+    result = rt.execute("run_tests", {})
+    assert result.content.strip() == "5 passed"
+    assert "elided" not in result.content
+
+
+def test_command_output_budget_is_configurable(git_repo):
+    # The budget is a config knob, not a hardcoded constant: the same 5k output elides under a
+    # tight budget and survives verbatim under a generous one.
+    cmd = "python -c \"print('A' * 5000)\""
+    tight = _edit_runtime(git_repo, test_command=cmd, command_output_budget=200).execute("run_tests", {})
+    loose = _edit_runtime(git_repo, test_command=cmd, command_output_budget=16_000).execute("run_tests", {})
+    assert "elided" in tight.content and len(tight.content) < 500
+    assert "elided" not in loose.content  # 5000 < 16000 → verbatim
+
+
 def _plan_runtime(root, plan, **config_kw) -> ToolRuntime:
     """An edit runtime whose RunDeps carry a frozen verification plan (ADR-0007)."""
     reg = ToolRegistry()

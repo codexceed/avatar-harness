@@ -17,7 +17,10 @@ from avatar.tools.base import ToolDefinition, ToolResult
 _VERIFY_PHASES = frozenset({"editing", "verifying"})
 
 _USAGE_ERROR_EXIT = 4  # pytest convention: usage error / target not found (model-correctable).
-_CONTENT_BUDGET = 2000
+
+# Tail share of the budget when eliding: a failed command's densest signal (the exception, the
+# final assertion) trails at the end, so keep more of the tail than the head.
+_TAIL_SHARE = 0.6
 
 # Programs whose CLI accepts positional file targets — only these get `target`
 # appended. A detected `make test` or `npm test` does not (PR-#40 review: appending
@@ -25,9 +28,30 @@ _CONTENT_BUDGET = 2000
 _TARGETABLE_PROGRAMS = frozenset({"pytest"})
 
 
-def _excerpt(out: object) -> str:
+def _excerpt(out: object, budget: int) -> str:
+    """Bound combined stdout/stderr to `budget` chars, keeping the HEAD and TAIL, eliding the middle.
+
+    Tail-only truncation (``text[:budget]``) drops the end — but a failed command's densest signal
+    (the exception, the final assertion, the error summary) is usually *last*, so dropping the tail
+    discards exactly what matters. When the output overruns the budget we keep both ends and prune
+    the middle, marking how much was dropped; the tail is weighted heavier (errors trail). The
+    budget bounds the retained content (`config.command_output_budget`); the elision marker is a
+    small fixed overhead on top.
+
+    Args:
+        out: The command result carrying ``stdout`` / ``stderr`` attributes.
+        budget: The char budget for the retained excerpt (non-positive disables the excerpt).
+
+    Returns:
+        The full text when within budget, else ``head … [N chars elided] … tail``.
+    """
     text = f"{getattr(out, 'stdout', '')}{getattr(out, 'stderr', '')}".strip()
-    return text[:_CONTENT_BUDGET]
+    if budget <= 0 or len(text) <= budget:
+        return text
+    tail = int(budget * _TAIL_SHARE)
+    head = budget - tail
+    dropped = len(text) - head - tail
+    return f"{text[:head]}\n… [{dropped} chars elided · head+tail of {len(text)} kept] …\n{text[-tail:]}"
 
 
 def _resolved_command(deps: RunDeps, kind: str) -> str:
@@ -90,7 +114,7 @@ def _run_tests(args: RunTestsInput, deps: RunDeps) -> ToolResult:
     return ToolResult(
         tool_name="run_tests",
         success=True,  # the command RAN; pass/fail is in the content, not the tool's success flag
-        content=_excerpt(out),
+        content=_excerpt(out, deps.config.command_output_budget),
         summary=f"tests exit={out.exit_code}",
     )
 
@@ -126,7 +150,7 @@ def _run_linter(args: RunLinterInput, deps: RunDeps) -> ToolResult:  # noqa: ARG
     return ToolResult(
         tool_name="run_linter",
         success=True,
-        content=_excerpt(out),
+        content=_excerpt(out, deps.config.command_output_budget),
         summary=f"lint exit={out.exit_code}",
     )
 
@@ -168,7 +192,7 @@ def _run_command(args: RunCommandInput, deps: RunDeps) -> ToolResult:
     return ToolResult(
         tool_name="run_command",
         success=True,  # the command RAN; pass/fail lives in content/exit, not the flag — evidence (§12)
-        content=_excerpt(out),
+        content=_excerpt(out, deps.config.command_output_budget),
         summary=f"`{args.command}` exit={out.exit_code}",
         files_changed=changed,  # flows into state.files_modified → diff → artifact → verifier
     )
