@@ -71,7 +71,9 @@ class HarnessConfig(BaseSettings):
     # keeps the HEAD and TAIL and elides the middle (`commands._excerpt`), because a failure's
     # densest signal — the exception / final assertion — trails at the end; tail-only truncation
     # would drop exactly that. Lower it for cost-sensitive runs; raise it to retain more context.
-    command_output_budget: int = 16_000
+    # Floored (`ge`) so the bound is unconditional — it can be tuned, never configured away (the
+    # journal-distillability guarantee R3 leans on; a `0`/`1` "disable" would defeat it).
+    command_output_budget: int = Field(16_000, ge=256)
 
     # LLM fallback for verification-plan resolution (ADR-0007 tier 3). Opt-in: unset
     # (the default) keeps resolution fully deterministic/offline. When set, the model

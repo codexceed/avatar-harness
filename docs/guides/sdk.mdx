@@ -188,6 +188,7 @@ local `.env`):
 | `AVATAR_LINT_COMMAND` | *(empty)* | Same, for the lint/type slot of the verification plan. |
 | `AVATAR_PLANNER_MODEL` | *(unset)* | Opt-in LLM fallback for verification-plan resolution: consulted only for slots detection left empty, may only *propose* a command citing the repo artifact that declares it (the harness validates the citation). Unset keeps resolution fully deterministic/offline. |
 | `AVATAR_COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout. |
+| `AVATAR_COMMAND_OUTPUT_BUDGET` | `16000` | Char budget for the command-tool (`run_tests`/`run_linter`/`run_command`) output excerpt shown to the model: keeps the head **and** tail, elides the middle. Floored at 256 — the bound is unconditional, never disable-able. |
 | `AVATAR_APPROVAL_TIMEOUT_SECONDS` | *(unset)* | Backstop on a blocking (attended) approval: deny it after N seconds so a run can't hang inside the gate. Unset = wait indefinitely (a human at a REPL); an `unattended` run never blocks regardless. |
 | `AVATAR_SENSITIVE_PATH_GLOBS` | built-in set | Path denylist (`.env`, `*.pem`, `.ssh`, …) refused for read/patch/search. A JSON list; *replaces* the defaults. |
 | `AVATAR_NATIVE_TOOL_CALLS` | `true` | Decisions ride provider function-calling; `false` forces the legacy JSON protocol. |

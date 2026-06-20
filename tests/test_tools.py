@@ -2,7 +2,8 @@ import os
 import subprocess
 import sys
 
-from pydantic import BaseModel
+import pytest
+from pydantic import BaseModel, ValidationError
 
 from avatar.config import HarnessConfig
 from avatar.deps import CancellationToken, RunDeps
@@ -16,7 +17,7 @@ from avatar.tools.base import (
     is_edit_intent,
     phase_admits_tool,
 )
-from avatar.tools.commands import run_linter, run_tests
+from avatar.tools.commands import _excerpt, run_linter, run_tests
 from avatar.tools.edit import (
     DeleteFileInput,
     StrReplaceInput,
@@ -403,10 +404,35 @@ def test_command_output_budget_is_configurable(git_repo):
     # The budget is a config knob, not a hardcoded constant: the same 5k output elides under a
     # tight budget and survives verbatim under a generous one.
     cmd = "python -c \"print('A' * 5000)\""
-    tight = _edit_runtime(git_repo, test_command=cmd, command_output_budget=200).execute("run_tests", {})
+    tight = _edit_runtime(git_repo, test_command=cmd, command_output_budget=256).execute("run_tests", {})
     loose = _edit_runtime(git_repo, test_command=cmd, command_output_budget=16_000).execute("run_tests", {})
     assert "elided" in tight.content and len(tight.content) < 500
     assert "elided" not in loose.content  # 5000 < 16000 → verbatim
+
+
+@pytest.mark.parametrize("budget", [0, 1, 2])
+def test_excerpt_tiny_budget_bounds_and_count_is_truthful(budget):
+    # Regression for the budget==1 footgun (ADR-0027 review P1): tail=int(1*0.6)=0 made
+    # `text[-tail:]` == `text[0:]`, returning the WHOLE string while the marker claimed an
+    # elision. The fix clamps to a real head+tail split, so the bound holds and the count is honest.
+    class _Out:
+        stdout = "HEAD" + "M" * 20_000 + "TAIL"
+        stderr = ""
+
+    full = _Out.stdout
+    out = _excerpt(_Out(), budget)
+    assert len(out) < len(full)  # genuinely bounded (the old bug returned all of it)
+    assert f"head+tail of {len(full)} kept" in out  # the reported total is the truth, not a lie
+    assert f"[{len(full) - 2} chars elided" in out  # head=tail=1 at the floor → dropped == len-2
+
+
+@pytest.mark.parametrize("bad_budget", [0, 1, 255])
+def test_command_output_budget_floor_rejects_disable(bad_budget: int):
+    # Option (b): the bound is unconditional. A sub-floor budget (a "disable" switch) is rejected
+    # at config time, so R3's journal-distillability guarantee can't be configured away. The param
+    # is typed `int` so the static checker doesn't pre-judge the runtime `ge=256` validator.
+    with pytest.raises(ValidationError):
+        HarnessConfig(command_output_budget=bad_budget)
 
 
 def _plan_runtime(root, plan, **config_kw) -> ToolRuntime:

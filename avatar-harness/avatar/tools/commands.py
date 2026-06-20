@@ -21,6 +21,7 @@ _USAGE_ERROR_EXIT = 4  # pytest convention: usage error / target not found (mode
 # Tail share of the budget when eliding: a failed command's densest signal (the exception, the
 # final assertion) trails at the end, so keep more of the tail than the head.
 _TAIL_SHARE = 0.6
+_MIN_BUDGET = 2  # floor for a meaningful head+tail split (config enforces ≥256; this guards direct callers)
 
 # Programs whose CLI accepts positional file targets — only these get `target`
 # appended. A detected `make test` or `npm test` does not (PR-#40 review: appending
@@ -28,6 +29,9 @@ _TAIL_SHARE = 0.6
 _TARGETABLE_PROGRAMS = frozenset({"pytest"})
 
 
+# NOTE: this is a HEAD+TAIL excerpt for command output (a failure's signal trails). The sibling
+# `model_client._excerpt` is a deliberately *different*, head-only truncation for malformed-decision
+# raw text (there the START of the bad payload is what matters) — the two markers differ on purpose.
 def _excerpt(out: object, budget: int) -> str:
     """Bound combined stdout/stderr to `budget` chars, keeping the HEAD and TAIL, eliding the middle.
 
@@ -40,18 +44,24 @@ def _excerpt(out: object, budget: int) -> str:
 
     Args:
         out: The command result carrying ``stdout`` / ``stderr`` attributes.
-        budget: The char budget for the retained excerpt (non-positive disables the excerpt).
+        budget: The char budget for the retained excerpt; clamped up to ``_MIN_BUDGET`` so the
+            bound always holds (the config field is floored at 256, so this only guards direct
+            callers — there is no "disable" path; R3's journal bound is unconditional).
 
     Returns:
         The full text when within budget, else ``head … [N chars elided] … tail``.
     """
     text = f"{getattr(out, 'stdout', '')}{getattr(out, 'stderr', '')}".strip()
-    if budget <= 0 or len(text) <= budget:
+    budget = max(budget, _MIN_BUDGET)
+    tail = max(1, int(budget * _TAIL_SHARE))
+    head = max(1, budget - tail)
+    if head + tail >= len(text):  # nothing meaningful left to elide → return verbatim
         return text
-    tail = int(budget * _TAIL_SHARE)
-    head = budget - tail
     dropped = len(text) - head - tail
-    return f"{text[:head]}\n… [{dropped} chars elided · head+tail of {len(text)} kept] …\n{text[-tail:]}"
+    marker = f"… [{dropped} chars elided · head+tail of {len(text)} kept] …"
+    # `text[len(text) - tail:]` — NOT `text[-tail:]`: with tail==0 the latter is `text[0:]` (the whole
+    # string), which would return everything while claiming an elision (the budget==1 footgun).
+    return f"{text[:head]}\n{marker}\n{text[len(text) - tail :]}"
 
 
 def _resolved_command(deps: RunDeps, kind: str) -> str:
