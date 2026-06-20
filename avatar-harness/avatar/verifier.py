@@ -259,12 +259,22 @@ class Verifier:
     # --- the gate (§12 pass criteria) ------------------------------------
 
     def _dispose(self, checks: list[CheckResult], *, positive: set[str]) -> VerifierResult:
-        # Skip-vs-positive semantics (§12, load-bearing for eval scoring): a check has
-        # exactly three statuses — pass / fail / skip. A `skip` is *neither* failure nor
-        # positive signal: an _ALLOWED_SKIPS skip (e.g. "no test target exists") is
-        # tolerated (it does not appear in `bad_skips`) but never counts toward
-        # `has_positive`; any other skip is a `bad_skip` and fails the gate. So a run whose
-        # only checks skipped cannot pass — it has no positive external evidence.
+        """Apply the §12 pass criteria to the executed checks and return the disposition.
+
+        The gate passes only when all three criteria hold: no required check fails,
+        no required check is skipped for a disallowed reason, and at least one
+        positive-signal check passes. A `skip` is neither failure nor positive
+        evidence, so a run whose only checks skipped cannot pass.
+
+        Args:
+            checks: Every check that was run (required and otherwise).
+            positive: Names of the checks that count as positive external signal;
+                at least one must have passed for the gate to pass.
+
+        Returns:
+            The `VerifierResult` carrying the pass/fail disposition, a legible
+            summary, the checks, and a repair hint when it failed.
+        """
         required = [c for c in checks if c.kind == "required"]
         failed = sorted(c.name for c in required if c.status == "fail")
         bad_skips = sorted(
