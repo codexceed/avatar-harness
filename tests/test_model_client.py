@@ -493,6 +493,38 @@ def test_runner_journals_recovered_transport_retry(tmp_path, read_registry):
     assert not any(ev.kind.startswith("transport") for ev in result.evidence)
 
 
+def test_runner_journals_streaming_fallback(tmp_path, read_registry):
+    # A provider that rejects stream=True flips the session to non-streaming; the runner journals a
+    # `streaming_fallback` event (R5 observability) so an eval can tell streaming was attempted.
+    final = _msg(tool_calls=[_tc("final_answer", '{"answer": "found it"}')])
+
+    async def create(**kwargs):
+        if kwargs.get("stream"):
+            raise _api_status_error(400, "streaming is not supported for this model")
+        return SimpleNamespace(choices=[SimpleNamespace(message=final)])
+
+    client_obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    config = HarnessConfig()  # stream_model_calls=True default → streaming attempted, then falls back
+    model_client = OpenAIModelClient(config, aclient=client_obj, transport_max_retries=2, asleep=_no_asleep)
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    emitter = Emitter()
+    seen: list[str] = []
+    emitter.subscribe(lambda event: seen.append(str(event["type"])))
+    runner = AgentRunner(
+        model_client=model_client,
+        registry=read_registry,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=emitter,
+        config=config,
+    )
+
+    runner.run(TaskState(goal="where is it?", task_kind="investigate"))
+
+    assert "streaming_fallback" in seen  # the capability fallback is visible in the journal
+
+
 def test_native_plain_content_falls_back_to_json_decision():
     # An "OpenAI-compatible" endpoint that ignores `tools=` and answers in prose still
     # works: valid legacy-JSON content parses through parse_decision unchanged.
@@ -896,7 +928,7 @@ async def test_streaming_reassembles_tool_call_matching_nonstream():
     assert isinstance(decision.action, ToolCall)
     assert decision.action.name == "read_file"
     assert decision.action.input == {"path": "app.py"}
-    assert decision.transport == "native"
+    assert decision.transport == "native_stream"  # streamed → tagged distinctly (R5 observability)
     assert decision.usage is not None
     assert decision.usage.prompt_tokens == 10  # usage read from the stream's final chunk
     assert decision.usage.completion_tokens == 5
@@ -932,11 +964,14 @@ async def test_streaming_unsupported_flips_flag_and_falls_back_session_scoped():
     assert isinstance(d1.action, FinalAnswer)  # recovered via the non-streaming fallback
     assert client._streaming_unsupported is True
     assert captured[0]["stream"] is True and "stream" not in captured[1]  # streamed once, then fell back
+    assert "streaming is not supported" in d1.streaming_fallback  # the flip reason is surfaced (R5 obs.)
+    assert d1.transport == "native"  # the fallback turn ran non-streamed
 
     captured.clear()
     d2 = await client.adecide(_packet())
     assert isinstance(d2.action, FinalAnswer)
     assert all(not c.get("stream") for c in captured)  # session-scoped: never streams again
+    assert d2.streaming_fallback == ""  # the signal fires only on the flip turn, not every later turn
 
 
 async def test_streaming_idle_stall_retries_as_transport_not_fallback():

@@ -76,11 +76,15 @@ class ModelDecision(BaseModel):
     # NOT fed back to the model (a dead/NUL provider reply isn't model-correctable, §16) — the
     # runner only journals them as `transport_retry` events so a flaky provider stays visible.
     transport_trace: list[str] = Field(default_factory=list)
+    # Set on the turn a session drops streaming→non-streaming (ADR-0029 R5): the capability reason.
+    # Harness-owned like `transport_trace`, NOT fed back to the model — the runner journals it as a
+    # `streaming_fallback` event so an eval can tell whether streaming was actually exercised.
+    streaming_fallback: str = ""
     usage: DecisionUsage | None = None  # harness-owned, like retry_trace; set by the client
-    # Which transport produced this decision: "native" (provider function-calling),
-    # "json_fallback" (native asked, endpoint ignored tools= → legacy parse), or "json"
-    # (native disabled). Harness-owned (like usage); journaled so a silent native↔JSON
-    # flip — a run-to-run consistency hazard with different prompts — stays visible.
+    # Which transport produced this decision: "native_stream" (streamed function-calling, R5),
+    # "native" (non-streamed function-calling), "json_fallback" (native asked, endpoint ignored
+    # tools= → legacy parse), or "json" (native disabled). Harness-owned; journaled so a silent
+    # native↔stream↔JSON flip — a run-to-run consistency hazard — stays visible.
     transport: str = ""
 
 
@@ -212,6 +216,7 @@ def parse_decision(raw: str) -> ModelDecision:
     # Harness-owned channels: a model emitting these must not plant fake history or usage.
     decision.retry_trace = []
     decision.transport_trace = []
+    decision.streaming_fallback = ""
     decision.usage = None
     decision.transport = ""
     return decision
@@ -772,16 +777,22 @@ class OpenAIModelClient(ModelClient):
         """
         client = self._aensure_client()
         stream = self.config.stream_model_calls and self.config.native_tool_calls
+        fallback_reason = ""
         if stream and not self._streaming_unsupported:
             try:
                 return await self._atransport_retry(lambda: self._adecide_native_stream(client, context))
-            except StreamingUnsupportedError:
+            except StreamingUnsupportedError as exc:
                 # Capability verdict, not a transient fault: flip the flag and fall through to the
-                # non-streaming path with the SAME request (never fed back to the model).
+                # non-streaming path with the SAME request (never fed back to the model). Record the
+                # reason so the runner journals a `streaming_fallback` event (R5 observability).
                 self._streaming_unsupported = True
+                fallback_reason = str(exc)
         if self.config.native_tool_calls:
-            return await self._atransport_retry(lambda: self._adecide_native_async(client, context))
-        return await self._atransport_retry(lambda: self._adecide_json_async(client, context))
+            decision = await self._atransport_retry(lambda: self._adecide_native_async(client, context))
+        else:
+            decision = await self._atransport_retry(lambda: self._adecide_json_async(client, context))
+        decision.streaming_fallback = fallback_reason
+        return decision
 
     async def _atransport_retry(self, attempt_once: Callable[[], Awaitable[ModelDecision]]) -> ModelDecision:
         """Async twin of `_transport_retry`: retry transport failures with backoff (ADR-0028 R3).
@@ -1192,13 +1203,18 @@ class OpenAIModelClient(ModelClient):
         Returns:
             The validated decision for the current turn.
         """
-        return await self._aparse_retry(
+        decision = await self._aparse_retry(
             list(build_messages(context, native_tools=True)),
             self._afetch_stream,
             self._native_decision_from_message,
             client,
             {"tools": build_tool_schemas(context)},
         )
+        # Distinguish a STREAMED native decision from a non-streamed one so the journal (which
+        # records `transport` per turn) shows whether streaming was actually exercised (R5).
+        if decision.transport == "native":
+            decision.transport = "native_stream"
+        return decision
 
     async def _adecide_native_async(self, client: Any, context: ContextPacket) -> ModelDecision:
         """One non-streaming native decision over the async client (the D4 streaming fallback).

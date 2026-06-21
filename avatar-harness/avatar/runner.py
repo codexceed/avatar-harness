@@ -217,7 +217,7 @@ class AgentRunner:
         """
         return asyncio.run(self.arun(state))
 
-    async def arun(self, state: TaskState) -> TaskState:  # noqa: PLR0915, C901 — deliberate near-verbatim §5 transcription (+ transport-error surface, ADR-0028)
+    async def arun(self, state: TaskState) -> TaskState:  # noqa: PLR0915, PLR0912, C901 — deliberate near-verbatim §5 transcription (+ transport/streaming-fallback surface, ADR-0028/0029)
         """Drive the loop to a terminal outcome asynchronously — the real loop (§5).
 
         A near-verbatim async transcription of the §5 pseudocode: blocking model/tool/
@@ -330,6 +330,11 @@ class AgentRunner:
             # reply is not model-correctable (§16), so it never enters the model's context.
             for err in decision.transport_trace:
                 self.emitter.emit("transport_retry", error=err, recovered=True)
+
+            # The session dropped streaming→non-streaming this turn (ADR-0029 R5): journal it so an
+            # eval can tell whether streaming was exercised. Like transport_retry, NOT fed to the model.
+            if decision.streaming_fallback:
+                self.emitter.emit("streaming_fallback", reason=decision.streaming_fallback)
 
             self._record_usage(state, decision.usage)
 
