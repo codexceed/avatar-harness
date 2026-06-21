@@ -355,6 +355,80 @@ def test_runner_surfaces_transport_error_not_incomplete(tmp_path, read_registry)
     assert state.outcome != "incomplete"  # surfaced as a system failure, not a silent budget stop
 
 
+def test_transport_retry_sums_usage_and_traces_recovery():
+    # Usage must accumulate across attempts (the failed-but-billed ones are not discarded), and
+    # the recovered transport failure is surfaced on the decision for the runner to journal.
+    nul = _msg_with_usage(content="\x00", prompt=100, completion=0)
+    good = _msg_with_usage(tool_calls=[_tc("read_file", '{"path": "a.py"}')], prompt=120, completion=20)
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), client=_fake_openai_usage([nul, good]), sleep=lambda _s: None
+    )
+
+    decision = client.decide(_packet())
+
+    assert decision.usage is not None
+    assert decision.usage.prompt_tokens == 220  # 100 (lost NUL attempt) + 120 (winning attempt)
+    assert decision.usage.completion_tokens == 20
+    assert len(decision.transport_trace) == 1  # one recovered transport failure
+
+
+def test_exhausted_transport_error_sums_usage_across_attempts():
+    nul = _msg_with_usage(content="\x00", prompt=100, completion=0)
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"),
+        client=_fake_openai_usage([nul, nul, nul]),
+        transport_max_retries=2,
+        sleep=lambda _s: None,
+    )
+
+    with pytest.raises(TransportError) as excinfo:
+        client.decide(_packet())
+    assert excinfo.value.usage is not None
+    assert excinfo.value.usage.prompt_tokens == 300  # 100 x 3 attempts, all billed
+
+
+def test_runner_journals_recovered_transport_retry(tmp_path, read_registry):
+    # Turn 1's first model call returns a NUL (transport failure); the transport retry re-issues
+    # and the model concludes. The fake settles on final_answer so verification/repair can't
+    # exhaust it (the run reaches a terminal outcome regardless of how many turns that takes).
+    nul = _msg(content="\x00")
+    final = _msg(tool_calls=[_tc("final_answer", '{"answer": "found it"}')])
+    replies = iter([nul])
+
+    def create(**kwargs):
+        try:
+            message = next(replies)
+        except StopIteration:
+            message = final
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    client_obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    config = HarnessConfig()
+    model_client = OpenAIModelClient(
+        config, client=client_obj, transport_max_retries=2, sleep=lambda _s: None
+    )
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    emitter = Emitter()
+    seen: list[str] = []
+    emitter.subscribe(lambda event: seen.append(str(event["type"])))
+    runner = AgentRunner(
+        model_client=model_client,
+        registry=read_registry,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=emitter,
+        config=config,
+    )
+
+    result = runner.run(TaskState(goal="where is it?", task_kind="investigate"))
+
+    assert "transport_retry" in seen  # the recovered NUL is journaled...
+    assert "decision_error" not in seen  # ...not mislabeled as a parse error
+    # ...and a transport failure NEVER enters the model's context (no feedback evidence for it).
+    assert not any(ev.kind.startswith("transport") for ev in result.evidence)
+
+
 def test_native_plain_content_falls_back_to_json_decision():
     # An "OpenAI-compatible" endpoint that ignores `tools=` and answers in prose still
     # works: valid legacy-JSON content parses through parse_decision unchanged.

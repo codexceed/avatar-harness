@@ -69,6 +69,11 @@ class ModelDecision(BaseModel):
     thought_summary: str = ""  # for logging/context only — never control flow
     action: ToolCall | FinalAnswer | AskUser = Field(discriminator="type")
     retry_trace: list[DecisionRetryNote] = Field(default_factory=list)
+    # Transport-layer failures recovered from before this decision succeeded (ADR-0028 R3/R4):
+    # one message per re-issued attempt. Harness-owned like `retry_trace`, but UNLIKE it these are
+    # NOT fed back to the model (a dead/NUL provider reply isn't model-correctable, §16) — the
+    # runner only journals them as `transport_retry` events so a flaky provider stays visible.
+    transport_trace: list[str] = Field(default_factory=list)
     usage: DecisionUsage | None = None  # harness-owned, like retry_trace; set by the client
     # Which transport produced this decision: "native" (provider function-calling),
     # "json_fallback" (native asked, endpoint ignored tools= → legacy parse), or "json"
@@ -193,9 +198,10 @@ def parse_decision(raw: str) -> ModelDecision:
         decision = ModelDecision.model_validate(data)
     except ValidationError as exc:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
-    # `retry_trace`/`usage`/`transport` are harness-owned channels: a model emitting the
-    # fields must not plant fake history, bill itself kindly, or impersonate a transport.
+    # `retry_trace`/`transport_trace`/`usage`/`transport` are harness-owned channels: a model
+    # emitting the fields must not plant fake history, bill itself kindly, or impersonate a transport.
     decision.retry_trace = []
+    decision.transport_trace = []
     decision.usage = None
     decision.transport = ""
     return decision
@@ -471,6 +477,19 @@ class _UsageTally:
         self._completion += int(getattr(usage, "completion_tokens", 0) or 0)
         self._seen = True
 
+    def add_usage(self, usage: "DecisionUsage | None") -> None:
+        """Fold an already-summarized `DecisionUsage` into the tally (for cross-attempt sums).
+
+        Args:
+            usage: A per-attempt usage total (e.g. from a recovered/exhausted transport attempt),
+                or `None` when the endpoint reported none.
+        """
+        if usage is None:
+            return
+        self._prompt += usage.prompt_tokens
+        self._completion += usage.completion_tokens
+        self._seen = True
+
     def total(self) -> DecisionUsage | None:
         """The summed usage, or `None` when the endpoint never reported any.
 
@@ -575,24 +594,39 @@ class OpenAIModelClient(ModelClient):
             attempt_once: A thunk that returns a validated decision or raises `TransportError`.
 
         Returns:
-            The validated decision from the first successful attempt.
+            The validated decision from the first successful attempt. Its `usage` is the sum
+            across every attempt (failed ones included), and `transport_trace` lists the
+            transport failures recovered from — so a lost-but-billed attempt is never undercounted.
 
         Raises:
-            TransportError: When every attempt fails at the transport layer.
+            TransportError: When every attempt fails at the transport layer; its `usage` carries
+                the summed cost of all attempts.
         """
+        usage = _UsageTally()  # every attempt costs tokens; sum them across the whole loop
+        recovered: list[str] = []
         last: TransportError | None = None
         for attempt in range(self.transport_max_retries + 1):
             try:
-                return attempt_once()
+                decision = attempt_once()
             except TransportError as exc:
                 last = exc
+                usage.add_usage(exc.usage)
+                recovered.append(str(exc))
                 if attempt < self.transport_max_retries:
                     self._sleep(self._backoff(attempt))
-        # Exhausted: surface the failure as a TransportError (§16). The loop only falls through
-        # via the except branch, which always sets `last`; the fallback message is defensive.
+                continue
+            # Success: fold this attempt's usage into the running total and surface the recovered
+            # transport failures so the runner can journal them (never fed back to the model).
+            usage.add_usage(decision.usage)
+            decision.usage = usage.total()
+            decision.transport_trace = recovered
+            return decision
+        # Exhausted: surface the failure as a TransportError (§16) carrying the summed usage. The
+        # loop only falls through via the except branch, which always sets `last` (the fallback
+        # message is defensive).
         raise TransportError(
             str(last) if last else "model transport failed with no recorded error",
-            usage=getattr(last, "usage", None),
+            usage=usage.total(),
         ) from last
 
     def decide(self, context: ContextPacket) -> ModelDecision:

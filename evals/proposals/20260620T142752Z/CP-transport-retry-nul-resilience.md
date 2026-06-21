@@ -13,6 +13,8 @@ evidence: ["eval_run_20260620T142752Z (concurrent, --concurrency>1): 4 minimax c
 status: "proposed"
 ---
 
+> **Update — as shipped (ADR-0028, PR #87).** This is the original (pre-implementation) proposal; the front-matter `tdd_plan` records what was *planned*. Two values changed during implementation and the **ADR is authoritative**: `request_timeout_seconds` shipped at **240** (not 90 — calibrated above the longest observed legit generation ~203s, below the hang→NUL ~297s; the 90s default would have killed real work) and `transport_max_retries` at **2** (not 3). Usage is summed across attempts and a recovered retry is journaled as a `transport_retry` event (exhaustion → `transport_error`); neither enters the model context.
+
 ## Mode (novel — bucket A, harness/scaffold; provider transport)
 
 **A NUL/hung provider reply truncates the run.** Under concurrent load (ADR-0026), `minimax/minimax-m3` via OpenRouter held connections ~5–6 min and returned a ` ` (NUL) body. The harness has **no request timeout** and **no transport-layer retry**, so the hang ate the wall-clock budget and the cell ended after a single turn as `outcome=incomplete`. The NUL — a successful HTTP 200 the SDK won't retry — was misrouted through the **model parse-retry** (`max_parse_retries`), which re-prompts the model: the wrong layer for a transport failure, and a §16 violation. This is the harness/scaffold defect that the run-C "regression" turned out to be (not a model or code-quality regression). Proposed as catalog **A9**.

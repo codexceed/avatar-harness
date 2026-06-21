@@ -304,6 +304,13 @@ class AgentRunner:
                     )
                 )
 
+            # Transport failures the client recovered from in-flight (NUL/timeout that re-issued
+            # and succeeded): journal each as `transport_retry` so a flaky provider is visible
+            # (ADR-0028 R4). UNLIKE parse retries these are NOT add_feedback'd — a dead provider
+            # reply is not model-correctable (§16), so it never enters the model's context.
+            for err in decision.transport_trace:
+                self.emitter.emit("transport_retry", error=err, recovered=True)
+
             self._record_usage(state, decision.usage)
 
             action = decision.action
