@@ -2,7 +2,7 @@
 
 First live multi-model Eval-0 baseline. The data behind blog posts **#5** (the verifier is
 the scorer), **T2** (your benchmark measures your scaffold), and **T3** (what pass@1 hides) —
-see `docs/blog-candidates.md`.
+see `docs/blogging/blog-candidates.md`.
 
 ## Run metadata
 
