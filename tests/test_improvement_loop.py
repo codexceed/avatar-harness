@@ -4,6 +4,8 @@ Deterministic and offline: digests/triage/proposals are pure functions over resu
 journal events, and parsed markdown — no model, no network.
 """
 
+import json
+
 from evals.cluster import Cluster, cluster_failures, triage_report
 from evals.distill import TrajectoryDigest, distill, distill_results
 from evals.journal_read import row_events
@@ -192,9 +194,18 @@ def test_changeproposal_markdown_has_front_matter_and_body(tmp_path):
     p = _proposal(body="The model burns its budget hunting for a leaked copy.")
     md = p.to_markdown()
     assert md.startswith("---")  # YAML front-matter fence
-    assert "id: c1-conclude" in md
-    assert "remediation_type: prompt_instruction" in md
+    assert 'id: "c1-conclude"' in md  # scalars are JSON-quoted (valid YAML)
+    assert 'remediation_type: "prompt_instruction"' in md
     assert "The model burns its budget" in md
+
+
+def test_changeproposal_markdown_quotes_colon_bearing_title():
+    # Regression: a ": " inside an unquoted title makes a YAML parser read a nested mapping and
+    # the front-matter fails to render. to_markdown JSON-encodes every scalar, so it stays valid.
+    title = "Edit mission: run the artifact before declaring done"
+    md = _proposal(title=title).to_markdown()
+    line = next(ln for ln in md.splitlines() if ln.startswith("title: "))
+    assert json.loads(line.removeprefix("title: ")) == title  # quoted + JSON-valid (JSON ⊂ YAML)
 
 
 def test_proposals_roundtrip_to_disk(tmp_path):

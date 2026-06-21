@@ -42,6 +42,7 @@ from avatar.model_client import (
     FinalAnswer,
     ModelClient,
     ToolCall,
+    TransportError,
 )
 from avatar.permission import PermissionPolicy
 from avatar.planner import VerificationPlanner
@@ -215,7 +216,7 @@ class AgentRunner:
         """
         return asyncio.run(self.arun(state))
 
-    async def arun(self, state: TaskState) -> TaskState:  # noqa: PLR0915 — deliberate near-verbatim §5 transcription
+    async def arun(self, state: TaskState) -> TaskState:  # noqa: PLR0915, C901 — deliberate near-verbatim §5 transcription (+ transport-error surface, ADR-0028)
         """Drive the loop to a terminal outcome asynchronously — the real loop (§5).
 
         A near-verbatim async transcription of the §5 pseudocode: blocking model/tool/
@@ -228,6 +229,11 @@ class AgentRunner:
 
         Returns:
             The final `TaskState` with a terminal `outcome`.
+
+        Raises:
+            TransportError: When a model call fails at the transport layer (timeout / NUL body)
+                past the client's retries — a system failure surfaced to the caller, never fed
+                back to the model or masked as a soft `incomplete` (§16, ADR-0028 R4).
         """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
@@ -249,6 +255,18 @@ class AgentRunner:
             self._publish(TurnStart(task_id=state.task_id, turn=state.iterations, iteration=state.iterations))
             try:
                 decision = await asyncio.to_thread(self.model_client.decide, context)
+            except TransportError as exc:
+                # A transport failure (timeout / NUL body) that survived the client's retries is a
+                # SYSTEM failure, not model-correctable (§16, ADR-0028 R4): never feed it back to the
+                # model. Bill the lost attempts, journal it distinctly (not as `decision_error`), and
+                # surface it to the caller — the eval runner records a distinct error row, never a
+                # silent one-turn `incomplete`.
+                self._record_usage(state, getattr(exc, "usage", None))
+                state.latest_error = str(exc)
+                self.emitter.emit("transport_error", error=str(exc))
+                self.emitter.emit("turn_end", task_id=state.task_id)
+                self._publish(TurnEnd(task_id=state.task_id, turn=state.iterations))
+                raise
             except DecisionParseError as exc:
                 # A malformed decision is model-correctable: feed it back, don't crash (§6).
                 # The lost turn still cost tokens — bill them (the client sums attempts).
@@ -285,6 +303,13 @@ class AgentRunner:
                         recovered=True,
                     )
                 )
+
+            # Transport failures the client recovered from in-flight (NUL/timeout that re-issued
+            # and succeeded): journal each as `transport_retry` so a flaky provider is visible
+            # (ADR-0028 R4). UNLIKE parse retries these are NOT add_feedback'd — a dead provider
+            # reply is not model-correctable (§16), so it never enters the model's context.
+            for err in decision.transport_trace:
+                self.emitter.emit("transport_retry", error=err, recovered=True)
 
             self._record_usage(state, decision.usage)
 
