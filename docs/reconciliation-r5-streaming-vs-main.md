@@ -243,3 +243,36 @@ branch's client is the more advanced implementation. Update `docs/adr/README.md`
   `config.py` (field rename + default flip is a migration: silent `AVATAR_REQUEST_TIMEOUT`
   drop, 240s ceiling vs. observed 358s legit call).
 - **Mechanical:** ADR renumber + README + comment updates.
+
+## Execution outcome (2026-06-21, commit `6e33d3b`)
+
+Merge completed; **`make check` green (571 passed)**. What actually happened vs. the plan:
+
+- **`model_client.py`:** resolved `--ours` wholesale (7 conflict regions). Confirmed the
+  dropped main-side defs were exactly its async stack (`_timeout_kwargs`,
+  `_ensure_async_client`, `_native_request`, `_step_native`, `_adecide_native`,
+  `_json_request`, `_step_json`, `_decide_json`, `_adecide_json`) — all subsumed.
+- **`config.py`:** auto-merge had **blended both** (kept the branch's `request_timeout_seconds`
+  *and* main's orphan `request_timeout`). Deleted the orphan; verified zero code consumers.
+- **`runner.py`:** kept the branch cancel-race **and hardened it** — wrapped the
+  `asyncio.wait` in `try/except asyncio.CancelledError` that cancels the in-flight model task
+  before re-raising. This is the key call: rather than *re-routing the cockpit* to the token
+  (the original step-3 idea), I made the **runner** safe under *both* cancellation routes, so
+  main's `app.py` (which fires `_run_task.cancel()`) no longer orphans the model task. One
+  choke point, both paths covered.
+- **`jo-cli/app.py`:** taken from main unchanged (branch never touched it → no conflict).
+  Works against the branch runtime — all cockpit tests pass. The branch's token path stays
+  available (and test-covered via `test_arun.py`) but is **not** wired into the cockpit; the
+  cockpit cancels via `Task.cancel()` + the hardened runner.
+- **ADR-0024 → 0030:** `git mv` + internal header/number + supersession note + README row.
+- **tests:** reworked main's adecide tests to the branch API (`aclient=`,
+  `stream_model_calls=False`) so they exercise the non-streaming async fallback; deleted the
+  tests for deleted helpers + the redundant bridge test.
+
+### Optional follow-up (not done — deliberate)
+
+Wire the cockpit cancel actions to *also* trip `deps.cancellation` so the runner's clean
+`_stop_incomplete(kind="cancelled")` + `CancellationObserved` journal event fire on an in-app
+cancel (today only the token-path consumers / tests exercise that). Functionally cancellation
+is already correct via `Task.cancel()`; this is an **observability** nicety matching the R5
+design intent, not a correctness fix.
