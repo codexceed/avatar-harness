@@ -66,6 +66,22 @@ class HarnessConfig(BaseSettings):
     test_command: str = ""
     lint_command: str = ""
     command_timeout_seconds: int = 120
+    # Per-request timeout for a single model call (ADR-0028 R1). Bounds one
+    # `chat.completions.create` so a hung/stalled provider can't consume the whole run.
+    # Calibrated from the 2026-06-20 data: it MUST stay *above* the longest legitimate generation
+    # (observed ~203s — a model emitting 8-15k tokens on `secret-safety`) so real work is never
+    # killed, yet *below* the incident's hang→NUL latency (~297-364s) so a stalled call is caught.
+    # A flat timeout can only sit in that window because it cannot tell "slow but generating" from
+    # "stalled" — R5 (streaming idle-timeout) would; until then 240s is the calibrated middle.
+    request_timeout_seconds: float = Field(240.0, gt=0)
+    # Transport-layer retries for a failed model call (ADR-0028 R3) — distinct from
+    # `max_parse_retries` (model-correctable, in `model_client`). A NUL/empty body, a request
+    # timeout, or a connection error is a *transport* failure: re-issue the SAME request with
+    # exponential backoff + jitter, never re-prompt the model. On exhaustion the client raises a
+    # `TransportError` the runner surfaces as a system failure (§16) — never an `incomplete`.
+    # Kept low (2) so the worst case (`request_timeout * (retries+1)` = 720s on a fully-dead
+    # endpoint) stays a bounded, surfaced overrun rather than many multiples of the wall clock.
+    transport_max_retries: int = Field(2, ge=0)
     # Char budget for the stdout/stderr excerpt a command tool shows the model. Sized for a
     # medium web-app error log (a failing test run + a stack trace, ~150-300 lines). The excerpt
     # keeps the HEAD and TAIL and elides the middle (`commands._excerpt`), because a failure's

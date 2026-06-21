@@ -9,7 +9,10 @@ fakes that stand in for a real client in tests — are trivially testable.
 """
 
 import json
+import random
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -66,6 +69,11 @@ class ModelDecision(BaseModel):
     thought_summary: str = ""  # for logging/context only — never control flow
     action: ToolCall | FinalAnswer | AskUser = Field(discriminator="type")
     retry_trace: list[DecisionRetryNote] = Field(default_factory=list)
+    # Transport-layer failures recovered from before this decision succeeded (ADR-0028 R3/R4):
+    # one message per re-issued attempt. Harness-owned like `retry_trace`, but UNLIKE it these are
+    # NOT fed back to the model (a dead/NUL provider reply isn't model-correctable, §16) — the
+    # runner only journals them as `transport_retry` events so a flaky provider stays visible.
+    transport_trace: list[str] = Field(default_factory=list)
     usage: DecisionUsage | None = None  # harness-owned, like retry_trace; set by the client
     # Which transport produced this decision: "native" (provider function-calling),
     # "json_fallback" (native asked, endpoint ignored tools= → legacy parse), or "json"
@@ -129,6 +137,47 @@ class DecisionParseError(Exception):
         self.usage = usage
 
 
+class TransportError(Exception):
+    """A model call failed at the *transport* layer — NOT model-correctable (§16, ADR-0028).
+
+    A request timeout, connection reset, or an empty/NUL body (`EmptyResponseError`) means the
+    provider returned nothing usable. Unlike `DecisionParseError`, this is **never** fed back to
+    the model: it is retried in-client at the transport layer (re-issue the same request with
+    backoff), and on exhaustion surfaced to the runner as a system failure. Carries `usage` so
+    the billed-but-lost attempts are not undercounted.
+
+    Args:
+        message: A short description of the transport failure.
+        usage: Tokens spent across the failed attempts, or `None` if unreported.
+    """
+
+    def __init__(self, message: str = "", usage: "DecisionUsage | None" = None) -> None:
+        super().__init__(message)
+        self.usage = usage
+
+
+class EmptyResponseError(TransportError):
+    """The provider returned an empty / whitespace-only / all-NUL body (a 200 with no content).
+
+    The OpenAI SDK does not retry this (it is a *successful* HTTP response), so it must be caught
+    explicitly and treated as a transport failure — not routed into the model parse-retry, which
+    would re-prompt the model for what is really a dead/stalled provider reply (ADR-0028 R2).
+    """
+
+
+def _is_empty_body(raw: str) -> bool:
+    """Whether a content body is effectively empty: blank, whitespace-only, or all-NUL.
+
+    Args:
+        raw: The model reply's content string.
+
+    Returns:
+        ``True`` when nothing remains after stripping NUL bytes and whitespace — the signature of
+        the 2026-06-20 provider hang (a NUL-byte body), distinct from a non-empty malformed reply.
+    """
+    return not raw.replace("\x00", "").strip()
+
+
 def parse_decision(raw: str) -> ModelDecision:
     """Validate raw model output into a `ModelDecision`, or raise a recoverable error.
 
@@ -149,9 +198,10 @@ def parse_decision(raw: str) -> ModelDecision:
         decision = ModelDecision.model_validate(data)
     except ValidationError as exc:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
-    # `retry_trace`/`usage`/`transport` are harness-owned channels: a model emitting the
-    # fields must not plant fake history, bill itself kindly, or impersonate a transport.
+    # `retry_trace`/`transport_trace`/`usage`/`transport` are harness-owned channels: a model
+    # emitting the fields must not plant fake history, bill itself kindly, or impersonate a transport.
     decision.retry_trace = []
+    decision.transport_trace = []
     decision.usage = None
     decision.transport = ""
     return decision
@@ -427,6 +477,19 @@ class _UsageTally:
         self._completion += int(getattr(usage, "completion_tokens", 0) or 0)
         self._seen = True
 
+    def add_usage(self, usage: "DecisionUsage | None") -> None:
+        """Fold an already-summarized `DecisionUsage` into the tally (for cross-attempt sums).
+
+        Args:
+            usage: A per-attempt usage total (e.g. from a recovered/exhausted transport attempt),
+                or `None` when the endpoint reported none.
+        """
+        if usage is None:
+            return
+        self._prompt += usage.prompt_tokens
+        self._completion += usage.completion_tokens
+        self._seen = True
+
     def total(self) -> DecisionUsage | None:
         """The summed usage, or `None` when the endpoint never reported any.
 
@@ -451,11 +514,28 @@ class OpenAIModelClient(ModelClient):
             first use — so construction needs no credentials; the optional `openai`
             extra and an API key are required only when `decide()` is first called.
         max_parse_retries: Number of retries on malformed model output.
+        transport_max_retries: Transport-layer retries on a NUL/empty body or a request
+            failure (ADR-0028 R3); `None` takes `config.transport_max_retries`.
+        sleep: Backoff sleeper, injectable so tests exercise retries without real delay.
     """
 
-    def __init__(self, config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None:
+    def __init__(
+        self,
+        config: HarnessConfig,
+        client: Any = None,
+        max_parse_retries: int = 2,
+        *,
+        transport_max_retries: int | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.config = config
         self.max_parse_retries = max_parse_retries
+        # Transport-retry budget (ADR-0028 R3); falls back to config. `sleep` is injectable so
+        # tests exercise the backoff path without real delay.
+        self.transport_max_retries = (
+            transport_max_retries if transport_max_retries is not None else config.transport_max_retries
+        )
+        self._sleep = sleep
         # Built lazily on first decide() (see _ensure_client): credentials are an
         # inference-time concern, so a Harness with the default model is constructible
         # without an API key (and without the `openai` extra installed).
@@ -480,8 +560,74 @@ class OpenAIModelClient(ModelClient):
                     "or inject a `client` / use a custom ModelClient instead."
                 ) from exc
             # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
-            self._client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+            # `timeout` (ADR-0028 R1) bounds a single call well under the wall clock so a hung
+            # provider can't eat the whole run; `max_retries=0` because the transport-retry loop
+            # owns retries (it also covers the SDK-invisible 200-with-empty-body case).
+            self._client = OpenAI(
+                api_key=self.config.api_key,
+                base_url=self.config.base_url,
+                timeout=self.config.request_timeout_seconds,
+                max_retries=0,
+            )
         return self._client
+
+    def _backoff(self, attempt: int) -> float:
+        """Exponential backoff with jitter for transport retry `attempt` (0-based).
+
+        Args:
+            attempt: The zero-based retry index.
+
+        Returns:
+            Seconds to sleep before the next attempt: ``2^attempt`` capped at 20s, plus up to
+            1s of jitter to decorrelate a synchronized herd off one provider (ADR-0028 R3).
+        """
+        return min(2.0**attempt, 20.0) + random.uniform(0.0, 1.0)  # noqa: S311 — jitter, not crypto
+
+    def _transport_retry(self, attempt_once: Callable[[], ModelDecision]) -> ModelDecision:
+        """Run one decision attempt, retrying *transport* failures with backoff (ADR-0028 R3).
+
+        `attempt_once` performs a full create+validate over a fresh copy of the messages, so a
+        retry re-issues the SAME request — it never re-prompts the model (that is the parse-retry's
+        job, and it stays inside `attempt_once`). `DecisionParseError` propagates unretried here.
+
+        Args:
+            attempt_once: A thunk that returns a validated decision or raises `TransportError`.
+
+        Returns:
+            The validated decision from the first successful attempt. Its `usage` is the sum
+            across every attempt (failed ones included), and `transport_trace` lists the
+            transport failures recovered from — so a lost-but-billed attempt is never undercounted.
+
+        Raises:
+            TransportError: When every attempt fails at the transport layer; its `usage` carries
+                the summed cost of all attempts.
+        """
+        usage = _UsageTally()  # every attempt costs tokens; sum them across the whole loop
+        recovered: list[str] = []
+        last: TransportError | None = None
+        for attempt in range(self.transport_max_retries + 1):
+            try:
+                decision = attempt_once()
+            except TransportError as exc:
+                last = exc
+                usage.add_usage(exc.usage)
+                recovered.append(str(exc))
+                if attempt < self.transport_max_retries:
+                    self._sleep(self._backoff(attempt))
+                continue
+            # Success: fold this attempt's usage into the running total and surface the recovered
+            # transport failures so the runner can journal them (never fed back to the model).
+            usage.add_usage(decision.usage)
+            decision.usage = usage.total()
+            decision.transport_trace = recovered
+            return decision
+        # Exhausted: surface the failure as a TransportError (§16) carrying the summed usage. The
+        # loop only falls through via the except branch, which always sets `last` (the fallback
+        # message is defensive).
+        raise TransportError(
+            str(last) if last else "model transport failed with no recorded error",
+            usage=usage.total(),
+        ) from last
 
     def decide(self, context: ContextPacket) -> ModelDecision:
         """Call the endpoint and validate the reply, retrying on malformed output (§6).
@@ -498,9 +644,36 @@ class OpenAIModelClient(ModelClient):
             The validated decision for the current turn.
         """
         client = self._ensure_client()
+        # Wrap the per-transport attempt in the transport-retry loop (ADR-0028 R3): each attempt
+        # rebuilds its messages from `context`, so a retry re-issues the SAME request. The inner
+        # parse-retry (re-prompting on malformed-but-non-empty output) stays inside the attempt.
         if self.config.native_tool_calls:
-            return self._decide_native(client, context)
-        return self._decide_json(client, context)
+            return self._transport_retry(lambda: self._decide_native(client, context))
+        return self._transport_retry(lambda: self._decide_json(client, context))
+
+    def _create(self, client: Any, **kwargs: Any) -> Any:
+        """Issue one `chat.completions.create`, mapping a call failure to `TransportError`.
+
+        A timeout, connection reset, or 5xx surfaces from the SDK as an exception (its own retries
+        are disabled — `_ensure_client` sets `max_retries=0`); we re-raise it as a `TransportError`
+        so the transport-retry loop handles it uniformly with the empty-body case (ADR-0028 R3).
+
+        Args:
+            client: The OpenAI-compatible client.
+            **kwargs: Call arguments (`messages`, `tools`/`response_format`).
+
+        Returns:
+            The raw provider response.
+
+        Raises:
+            TransportError: When the underlying call raises (network/timeout/5xx).
+        """
+        try:
+            return client.chat.completions.create(
+                model=self.config.model, temperature=self.config.temperature, **kwargs
+            )
+        except Exception as exc:  # any create() failure is a transport failure (§16)
+            raise TransportError(f"model request failed: {type(exc).__name__}: {exc}") from exc
 
     def _decide_native(self, client: Any, context: ContextPacket) -> ModelDecision:
         """One decision over the native tool-calling transport (ADR-0003 A).
@@ -521,6 +694,7 @@ class OpenAIModelClient(ModelClient):
 
         Raises:
             DecisionParseError: If every attempt yields malformed output.
+            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
         """
         messages: list[dict] = list(build_messages(context, native_tools=True))
         tools = build_tool_schemas(context)
@@ -528,15 +702,16 @@ class OpenAIModelClient(ModelClient):
         trace: list[DecisionRetryNote] = []
         tally = _UsageTally()  # every attempt costs tokens; the decision reports the sum
         for _ in range(self.max_parse_retries + 1):
-            response = client.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                tools=tools,
-                temperature=self.config.temperature,
-            )
+            response = self._create(client, messages=messages, tools=tools)
             tally.add(response)
             message = response.choices[0].message
             calls = getattr(message, "tool_calls", None)
+            raw_content = message.content or ""
+            # An empty / whitespace / all-NUL body with no tool call is a *transport* failure, not
+            # a parse error (ADR-0028 R2): raise so the transport-retry re-issues the request,
+            # rather than re-prompting the model for a dead reply. Tool calls take precedence.
+            if not calls and _is_empty_body(raw_content):
+                raise EmptyResponseError(f"empty model reply ({len(raw_content)} chars)", usage=tally.total())
             if calls:
                 call = calls[0]  # the protocol is exactly one action per turn (§6)
                 try:
@@ -598,20 +773,19 @@ class OpenAIModelClient(ModelClient):
 
         Raises:
             DecisionParseError: If every attempt yields malformed output.
+            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
         """
         messages = build_messages(context)
         last_error: DecisionParseError | None = None
         trace: list[DecisionRetryNote] = []
         tally = _UsageTally()
         for _ in range(self.max_parse_retries + 1):
-            response = client.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=self.config.temperature,
-            )
+            response = self._create(client, messages=messages, response_format={"type": "json_object"})
             tally.add(response)
             raw = response.choices[0].message.content or ""
+            # Empty / NUL body → transport failure, not a parse retry (ADR-0028 R2).
+            if _is_empty_body(raw):
+                raise EmptyResponseError(f"empty model reply ({len(raw)} chars)", usage=tally.total())
             try:
                 decision = parse_decision(raw)
             except DecisionParseError as exc:
