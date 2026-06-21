@@ -229,6 +229,57 @@ async def test_mid_call_cancellation_aborts_in_flight_stream(tmp_path):
     assert any(e.type == "cancellation_observed" for e in bus.history)
 
 
+async def test_arun_wall_clock_deadline_aborts_in_flight_stream(tmp_path):
+    # ADR-0029 follow-up: the streaming idle timeout bounds only the gap between chunks, so a
+    # live-but-runaway stream is capped by the REMAINING wall-clock budget *within* the turn. When
+    # the deadline elapses mid-call the runner aborts the stream and ends `incomplete` (budget),
+    # rather than letting one turn overrun max_wall_clock_seconds unchecked.
+    class _HangingStream:
+        def __init__(self) -> None:
+            self.entered = False
+            self.closed = False
+
+        def __aiter__(self):
+            return self._gen()
+
+        async def _gen(self):
+            self.entered = True
+            await asyncio.Event().wait()  # slow-but-live: never yields a chunk, never stalls (idle)
+            yield  # pragma: no cover — unreachable
+
+        async def close(self) -> None:
+            self.closed = True
+
+    hanging = _HangingStream()
+
+    async def create(**kwargs):
+        return hanging
+
+    async def _no_asleep(_s: float) -> None:
+        return None
+
+    aclient = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    config = HarnessConfig(max_wall_clock_seconds=1)  # tight budget so the deadline lands mid-call
+    bus = EventBus(session_id="sess")
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    runner = AgentRunner(
+        model_client=OpenAIModelClient(config, aclient=aclient, asleep=_no_asleep),
+        registry=_read_registry(tmp_path),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+        event_sink=bus,
+    )
+
+    state = await runner.arun(TaskState(goal="x", task_kind="investigate"))
+
+    assert state.outcome == "incomplete"
+    assert state.latest_error == "wall-clock budget exceeded"
+    assert hanging.closed is True  # the runaway stream was aborted and closed (best-effort)
+
+
 async def test_recovered_parse_retries_recorded_and_published(tmp_path):
     # A decision that needed in-client retries arrives annotated (`retry_trace`); the
     # runner must surface each failed attempt as state evidence (so the model remembers

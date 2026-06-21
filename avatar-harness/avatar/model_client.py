@@ -9,6 +9,7 @@ fakes that stand in for a real client in tests — are trivially testable.
 """
 
 import asyncio
+import contextlib
 import json
 import random
 import time
@@ -531,19 +532,17 @@ class _UsageTally:
         return DecisionUsage(prompt_tokens=self._prompt, completion_tokens=self._completion)
 
 
-def _fold_stream_chunk(
-    chunk: Any, content_parts: list[str], frags: dict[int, dict[str, Any]], order: list[int]
-) -> Any:
+def _fold_stream_chunk(chunk: Any, content_parts: list[str], frags: dict[int, dict[str, Any]]) -> Any:
     """Fold one streamed completion chunk into the running reassembly state (ADR-0029 D1).
 
     Concatenates content deltas and accumulates tool-call deltas by `.index` (id/name captured once,
-    arguments string-joined in arrival order). Mutates `content_parts`/`frags`/`order` in place.
+    arguments string-joined in arrival order). Mutates `content_parts`/`frags` in place; `frags`
+    preserves first-seen index order (dict insertion order) for diagnostics on broken framing.
 
     Args:
         chunk: One streamed completion chunk.
         content_parts: The growing list of content delta pieces.
         frags: Tool-call fragments keyed by `.index` (`id`/`name`/`args`).
-        order: Tool-call indices in first-seen order (for diagnostics on broken framing).
 
     Returns:
         The chunk's `usage` object if it carried one (the usage-only final chunk), else `None`.
@@ -557,7 +556,6 @@ def _fold_stream_chunk(
             for tc in delta.tool_calls or []:
                 if tc.index not in frags:
                     frags[tc.index] = {"id": None, "name": None, "args": []}
-                    order.append(tc.index)
                 slot = frags[tc.index]  # dict[str, Any] from frags's annotation
                 if tc.id:
                     slot["id"] = tc.id
@@ -883,9 +881,9 @@ class OpenAIModelClient(ModelClient):
                 **kwargs,
             )
         except Exception as exc:
-            self._raise_stream_fault(exc, exc)
+            self._raise_stream_fault(exc)
 
-    def _raise_stream_fault(self, exc: Exception, cause: BaseException) -> NoReturn:
+    def _raise_stream_fault(self, exc: Exception) -> NoReturn:
         """Raise a streaming failure as a capability verdict vs a transient fault (ADR-0029 D).
 
         Capability → `StreamingUnsupportedError` (flip the flag, fall back): a streaming-rejection
@@ -893,10 +891,10 @@ class OpenAIModelClient(ModelClient):
         `ReadTimeout`, connection error, 429, 5xx, generic 4xx) → `TransportError` — default to
         transient when in doubt, so a flaky provider is retried rather than wrongly downgraded.
         Callers filter already-classified errors before delegating here, so there is no passthrough.
+        `exc` is chained as the raised error's ``__cause__``.
 
         Args:
             exc: The exception raised while opening or consuming the stream.
-            cause: The exception to chain as ``__cause__`` (usually `exc` itself).
 
         Raises:
             StreamingUnsupportedError: When the provider rejects streaming as unsupported (D4).
@@ -910,8 +908,8 @@ class OpenAIModelClient(ModelClient):
             text = str(getattr(exc, "message", "") or exc).lower()
             markers = ("not supported", "unsupported", "not allowed", "does not support")
             if "stream" in text and any(m in text for m in markers):
-                raise StreamingUnsupportedError(f"provider rejected streaming: {exc}") from cause
-        raise TransportError(f"model request failed: {type(exc).__name__}: {exc}") from cause
+                raise StreamingUnsupportedError(f"provider rejected streaming: {exc}") from exc
+        raise TransportError(f"model request failed: {type(exc).__name__}: {exc}") from exc
 
     async def _areassemble(self, client: Any, **create_kwargs: Any) -> tuple[Any, Any]:
         """Consume a streamed completion into a non-streaming-shaped message + usage (ADR-0029 D1).
@@ -938,22 +936,26 @@ class OpenAIModelClient(ModelClient):
         stream = await self._acreate_stream(client, **create_kwargs)
         content_parts: list[str] = []
         frags: dict[int, dict[str, Any]] = {}
-        order: list[int] = []
         usage_obj: Any = None
         try:
             async for chunk in stream:
-                usage_obj = _fold_stream_chunk(chunk, content_parts, frags, order) or usage_obj
+                usage_obj = _fold_stream_chunk(chunk, content_parts, frags) or usage_obj
         except (TransportError, StreamingUnsupportedError):
             raise
         except Exception as exc:  # a mid-stream fault (idle ReadTimeout, reset) is transport-shaped
-            self._raise_stream_fault(exc, exc)
+            self._raise_stream_fault(exc)
         finally:
-            await stream.close()
+            # Close best-effort: a close() that raises must NOT mask a propagating CancelledError
+            # (BaseException, so suppress(Exception) lets it through) or the real stream fault above.
+            with contextlib.suppress(Exception):
+                await stream.close()
         content = "".join(content_parts)
         if not frags:
             return SimpleNamespace(content=content, tool_calls=None), usage_obj
         if 0 not in frags:  # broken framing — a capability problem, not a parse one
-            raise StreamingUnsupportedError(f"streamed tool-call framing missing index 0 (indices={order})")
+            raise StreamingUnsupportedError(
+                f"streamed tool-call framing missing index 0 (indices={list(frags)})"
+            )
         slot = frags[0]
         if not slot["name"] or not slot["id"]:
             raise StreamingUnsupportedError(

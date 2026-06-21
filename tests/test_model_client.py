@@ -1028,6 +1028,52 @@ async def test_streaming_reassembles_tool_call_matching_nonstream():
     assert nd.action == decision.action
 
 
+async def test_streaming_idle_timeout_reaches_sdk_as_per_call_timeout():
+    # The core R5 mechanism end-to-end: request_idle_timeout_seconds is handed to the SDK as the
+    # per-call httpx read timeout (the idle watchdog). Asserted on the captured create() kwargs, so
+    # the *wiring* is covered, not just the behaviour-on-injected-ReadTimeout the other tests use.
+    captured: list[dict] = []
+    stream = _AsyncStream(
+        [
+            _chunk(tool_calls=[_tc_delta(0, call_id="c", name="read_file", arguments='{"path": "a.py"}')]),
+            _chunk(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1)),
+        ]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", request_idle_timeout_seconds=12.5),
+        aclient=_afake_openai_streams([stream], captured),
+        asleep=_no_asleep,
+    )
+
+    await client.adecide(_packet())
+
+    assert captured[0]["stream"] is True
+    assert captured[0]["timeout"] == 12.5  # the idle bound reaches the SDK as the per-call timeout
+
+
+async def test_streaming_multi_tool_call_reassembles_index_zero():
+    # _areassemble accumulates every index but uses only index 0 (one action per turn, §6). A
+    # provider that streams two parallel tool calls must still yield the index-0 action cleanly,
+    # with its arguments joined across fragments and the index-1 call ignored.
+    stream = _AsyncStream(
+        [
+            _chunk(tool_calls=[_tc_delta(0, call_id="c0", name="read_file", arguments='{"path": ')]),
+            _chunk(tool_calls=[_tc_delta(1, call_id="c1", name="search_repo", arguments='{"query": "x"}')]),
+            _chunk(tool_calls=[_tc_delta(0, arguments='"app.py"}')]),
+            _chunk(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1)),
+        ]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), aclient=_afake_openai_streams([stream]), asleep=_no_asleep
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert decision.action.name == "read_file"  # index 0, not the index-1 search_repo
+    assert decision.action.input == {"path": "app.py"}  # index-0 args joined across fragments
+
+
 async def test_streaming_unsupported_flips_flag_and_falls_back_session_scoped():
     # MANDATED: a streaming-rejection 4xx flips the per-instance flag once; the SAME request then
     # succeeds non-streaming, and every later call skips streaming entirely (no `stream=True`).

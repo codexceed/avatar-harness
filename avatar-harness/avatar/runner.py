@@ -7,7 +7,6 @@ deliberately a near-verbatim transcription of the §5 pseudocode.
 """
 
 import asyncio
-import contextlib
 import json
 import time
 from typing import Literal
@@ -265,7 +264,15 @@ class AgentRunner:
                 task = asyncio.ensure_future(self.model_client.adecide(context))
                 cancel_wait = asyncio.ensure_future(self.deps.cancellation.event().wait())
                 try:
-                    done, _ = await asyncio.wait({task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
+                    # Bound the race by the REMAINING wall-clock budget (ADR-0029): the streaming idle
+                    # timeout only bounds the gap between chunks, so a live-but-runaway stream could
+                    # otherwise blow past max_wall_clock_seconds within one turn (checked only between
+                    # turns). An empty `done` means the deadline elapsed mid-call.
+                    done, _ = await asyncio.wait(
+                        {task, cancel_wait},
+                        timeout=max(0.0, deadline - time.monotonic()),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
                 except asyncio.CancelledError:
                     # arun itself was cancelled (the signal/Task.cancel() path, ADR-0030 #80/#81):
                     # asyncio.wait does NOT cancel its children, so abort the in-flight model call
@@ -273,18 +280,27 @@ class AgentRunner:
                     task.cancel()
                     cancel_wait.cancel()
                     raise
-                if cancel_wait in done:
-                    # Cancelling the task aborts the underlying httpx request; the streaming path's
-                    # `finally: await stream.close()` releases the connection.
+                if not done or cancel_wait in done:
+                    # Either the wall-clock deadline hit (empty `done`) or a user cancel fired: both
+                    # abort the in-flight call (cancelling `task` aborts httpx; the streaming path's
+                    # `finally: await stream.close()` releases the connection). Drain BOTH children via
+                    # gather(return_exceptions) so neither leaks a "future exception never retrieved".
+                    timed_out = not done
                     task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-                    self._stop_incomplete(state, "run cancelled", kind="cancelled")
-                    self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
+                    cancel_wait.cancel()
+                    await asyncio.gather(task, cancel_wait, return_exceptions=True)
+                    if timed_out:
+                        self._stop_incomplete(state, "wall-clock budget exceeded", kind="budget")
+                    else:
+                        # If a cancel and the model's completion land in the same tick, cancel wins and
+                        # the finished decision's usage is forfeited (unbilled) — an accepted, rare loss.
+                        self._stop_incomplete(state, "run cancelled", kind="cancelled")
+                        self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
                     self.emitter.emit("turn_end", task_id=state.task_id)
                     self._publish(TurnEnd(task_id=state.task_id, turn=state.iterations))
                     break
                 cancel_wait.cancel()
+                await asyncio.gather(cancel_wait, return_exceptions=True)  # drain the loser symmetrically
                 decision = task.result()  # re-raises TransportError / DecisionParseError as today
             except TransportError as exc:
                 # A transport failure (timeout / NUL body) that survived the client's retries is a
