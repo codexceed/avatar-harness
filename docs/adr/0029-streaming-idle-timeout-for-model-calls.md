@@ -1,9 +1,11 @@
 # ADR 0029 — Streaming idle-timeout for model calls (ADR-0028 R5)
 
-- **Status:** Proposed — **awaiting approval before implementation**
+- **Status:** Accepted
 - **Date:** 2026-06-21
 - **Deciders:** Sarthak Joshi
 - **Related:** ADR-0028 (transport retry + request timeout — this is its deferred **R5**), ADR-0003 (native tool-calling transport), §6 (decide / parse), §16 (retry semantics). Evidence: catalog **A9** + the 2026-06-20 calibration data in ADR-0028.
+
+> **Resolution note.** Implemented as an **async** streaming path with a per-call httpx **read** timeout as the idle watchdog, true **mid-call cancellation**, and a **session-scoped non-streaming fallback**. This supersedes the "mechanism question" below (which recommended option A, a sync per-chunk read timeout): async was chosen for cancellation, not for the idle bound. The original proposal text is kept for context; the resolved design is in the two sections that follow it.
 
 ## Context — a flat timeout cannot tell "slow" from "stalled"
 
@@ -56,13 +58,25 @@ The harness loop offloads `decide()` via `asyncio.to_thread`; the per-chunk idle
 
 **Recommendation: A** (per-chunk read timeout) — it's the smallest change and maps a "silent socket" directly onto a timeout. B is the fallback if the SDK won't expose a per-read bound. This choice is the main thing to settle before implementation.
 
-### Config (proposed)
+## Resolved design (implemented)
+
+The idle bound landed as a hybrid of A and B: **async client** (B's mechanism) for the cancellation it unlocks, but the idle watchdog itself is **A** — the httpx per-**read** timeout — passed *per streaming call* (no `asyncio.wait_for`, no per-chunk sampling). A plain float `timeout=` on the SDK's `create()` becomes exactly that per-read bound, so no `httpx` import is needed (it stays an indirect, openai-provided dep).
+
+- **A correction to ADR-0028's framing.** R1's `request_timeout_seconds` was described as a per-*request* deadline, but httpx has only per-*operation* timeouts (connect/read/write/pool) and **no total**. So R1's "240s" was really a per-read bound the whole time — which is why a single 358s generation that kept emitting bytes slipped past it. R5 makes that per-read bound explicit and small (`request_idle_timeout_seconds`) and stops pretending a flat total exists.
+
+- **`adecide()` (async) beside `decide()` (sync).** `ModelClient` gains a concrete `adecide` that defaults to `await asyncio.to_thread(self.decide, …)`, so the scripted fakes are untouched; `OpenAIModelClient` overrides it with the streaming path. The runner calls `adecide`. The sync `decide()` (and its 25 unit tests) stay as a real SDK entry point; the two share the pure helpers (`_decision_from_tool_call`, `parse_decision`, `_is_empty_body`, `_UsageTally`, `_backoff`).
+
+- **True mid-call cancellation.** `to_thread(decide)` could not be cancelled, so ESC/wall-clock only took effect *between* turns. The runner now races the model call against the cancellation token (exposed as a lazily-created `asyncio.Event`); on cancel it cancels the task — aborting the in-flight httpx request — and the streaming consumer's `finally: await stream.close()` releases the connection. Reuses the existing `_stop_incomplete(kind="cancelled")` bookkeeping.
+
+- **Discrimination is the heart of the fallback (D4).** A streamed failure is sorted three ways: **capability** → `StreamingUnsupportedError` (a streaming-rejection 4xx whose message names streaming as unsupported, or unusable tool-call framing) flips a runtime per-instance `_streaming_unsupported` flag and re-issues the *same* request non-streaming for the rest of the session; **model-correctable** → `DecisionParseError` (well-framed call, bad-JSON args) surfaces to the runner's existing parse handler; **transient** → `TransportError` (idle `ReadTimeout`, connection error, 429, 5xx, generic 4xx) flows through the R3 transport-retry. *Default to `TransportError` when in doubt* — a flaky provider is retried, not wrongly downgraded.
+
+### Config (implemented)
 
 | field | default | role |
 | --- | --- | --- |
-| `stream_model_calls` | `true` | master switch; `false` = exact R1 behavior |
-| `request_idle_timeout_seconds` | `30` | abort if no delta for this long (the fast stall-detector) |
-| `request_timeout_seconds` | `240` → raise to `600` | hard ceiling on the whole call (rarely hit once idle-timeout exists) |
+| `stream_model_calls` | `true` | master switch; `false` = exact non-streaming async behavior |
+| `request_idle_timeout_seconds` | `30` | the per-read idle bound: abort if no delta for this long (the fast stall-detector) |
+| `request_timeout_seconds` | `240` | loose ceiling on a non-streaming call (rarely hit once the idle-timeout exists) |
 
 ## Consequences
 

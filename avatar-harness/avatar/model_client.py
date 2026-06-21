@@ -8,12 +8,14 @@ error fed back to the model, never executed and never fatal.
 fakes that stand in for a real client in tests — are trivially testable.
 """
 
+import asyncio
 import json
 import random
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from typing import Any, Literal
+from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
+from typing import Any, Literal, NoReturn
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -165,6 +167,17 @@ class EmptyResponseError(TransportError):
     """
 
 
+class StreamingUnsupportedError(Exception):
+    """The provider can't stream tool-calls — trip the per-instance flag and fall back (ADR-0029 D4).
+
+    Deliberately NOT a `TransportError`: re-issuing the same streaming request would fail
+    identically, so it must not flow into the transport-retry. The client catches it once, flips
+    `_streaming_unsupported`, and re-issues the SAME request non-streaming for the rest of the
+    session. A capability verdict (a streaming-rejection 4xx, or unusable tool-call framing), never
+    a transient fault — when in doubt the discrimination defaults to `TransportError` (ADR-0029 D).
+    """
+
+
 def _is_empty_body(raw: str) -> bool:
     """Whether a content body is effectively empty: blank, whitespace-only, or all-NUL.
 
@@ -225,6 +238,21 @@ class ModelClient(ABC):
             The validated decision for the current turn.
         """
         ...
+
+    async def adecide(self, context: ContextPacket) -> ModelDecision:
+        """Async entry point for one decision (ADR-0029 R5); defaults to offloading sync `decide`.
+
+        `OpenAIModelClient` overrides this with a cancellable streaming path; every fake inherits
+        this bridge unchanged — its sync `decide` runs in a worker thread (uncancellable mid-call,
+        but fast and deterministic, so the runner's cancel-race still resolves promptly).
+
+        Args:
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        return await asyncio.to_thread(self.decide, context)
 
 
 # Kind-AWARE framing: one mission line per `task_kind`, injected into the template.
@@ -501,6 +529,45 @@ class _UsageTally:
         return DecisionUsage(prompt_tokens=self._prompt, completion_tokens=self._completion)
 
 
+def _fold_stream_chunk(
+    chunk: Any, content_parts: list[str], frags: dict[int, dict[str, Any]], order: list[int]
+) -> Any:
+    """Fold one streamed completion chunk into the running reassembly state (ADR-0029 D1).
+
+    Concatenates content deltas and accumulates tool-call deltas by `.index` (id/name captured once,
+    arguments string-joined in arrival order). Mutates `content_parts`/`frags`/`order` in place.
+
+    Args:
+        chunk: One streamed completion chunk.
+        content_parts: The growing list of content delta pieces.
+        frags: Tool-call fragments keyed by `.index` (`id`/`name`/`args`).
+        order: Tool-call indices in first-seen order (for diagnostics on broken framing).
+
+    Returns:
+        The chunk's `usage` object if it carried one (the usage-only final chunk), else `None`.
+    """
+    choices = getattr(chunk, "choices", None) or []
+    if choices:
+        delta = getattr(choices[0], "delta", None)
+        if delta is not None:
+            if delta.content:
+                content_parts.append(delta.content)
+            for tc in delta.tool_calls or []:
+                if tc.index not in frags:
+                    frags[tc.index] = {"id": None, "name": None, "args": []}
+                    order.append(tc.index)
+                slot = frags[tc.index]  # dict[str, Any] from frags's annotation
+                if tc.id:
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if fn.name:
+                        slot["name"] = fn.name
+                    if fn.arguments:
+                        slot["args"].append(fn.arguments)
+    return getattr(chunk, "usage", None)
+
+
 class OpenAIModelClient(ModelClient):
     """Calls an OpenAI-compatible endpoint and validates the reply (§6, §18).
 
@@ -517,9 +584,12 @@ class OpenAIModelClient(ModelClient):
         transport_max_retries: Transport-layer retries on a NUL/empty body or a request
             failure (ADR-0028 R3); `None` takes `config.transport_max_retries`.
         sleep: Backoff sleeper, injectable so tests exercise retries without real delay.
+        aclient: An injected async OpenAI-compatible client (the ADR-0029 R5 streaming path),
+            or `None` to build an `AsyncOpenAI` lazily on first `adecide()`.
+        asleep: Async backoff sleeper, injectable so async tests skip real delay.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — parallel sync + async injection slots (client/sleep) plus budgets
         self,
         config: HarnessConfig,
         client: Any = None,
@@ -527,19 +597,27 @@ class OpenAIModelClient(ModelClient):
         *,
         transport_max_retries: int | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        aclient: Any = None,
+        asleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.config = config
         self.max_parse_retries = max_parse_retries
-        # Transport-retry budget (ADR-0028 R3); falls back to config. `sleep` is injectable so
-        # tests exercise the backoff path without real delay.
+        # Transport-retry budget (ADR-0028 R3); falls back to config. `sleep`/`asleep` are
+        # injectable so tests exercise the backoff path without real delay.
         self.transport_max_retries = (
             transport_max_retries if transport_max_retries is not None else config.transport_max_retries
         )
         self._sleep = sleep
-        # Built lazily on first decide() (see _ensure_client): credentials are an
-        # inference-time concern, so a Harness with the default model is constructible
-        # without an API key (and without the `openai` extra installed).
+        self._asleep = asleep
+        # Built lazily on first decide()/adecide() (see _ensure_client / _aensure_client):
+        # credentials are an inference-time concern, so a Harness with the default model is
+        # constructible without an API key (and without the `openai` extra installed). The sync and
+        # async SDK clients are separate stacks (`OpenAI` vs `AsyncOpenAI`) with independent slots.
         self._client = client
+        self._aclient = aclient
+        # Runtime, per-instance (NOT config): set once a provider proves it can't stream tool-calls,
+        # so the rest of this client's session skips straight to the non-streaming path (ADR-0029 D4).
+        self._streaming_unsupported = False
 
     def _ensure_client(self) -> Any:
         """Return the OpenAI-compatible client, constructing it on first use.
@@ -650,6 +728,416 @@ class OpenAIModelClient(ModelClient):
         if self.config.native_tool_calls:
             return self._transport_retry(lambda: self._decide_native(client, context))
         return self._transport_retry(lambda: self._decide_json(client, context))
+
+    # ---- Async path (ADR-0029 R5): streaming + idle-timeout + mid-call cancellation ----
+
+    def _aensure_client(self) -> Any:
+        """Return the async OpenAI-compatible client, constructing it on first use.
+
+        Returns:
+            The injected `aclient`, or an `AsyncOpenAI` built from `config` on first call. The
+            `timeout` is the non-streaming ceiling (`request_timeout_seconds`); the per-streaming-call
+            idle bound is passed per call in `_acreate_stream`, so this one client serves both.
+
+        Raises:
+            ImportError: If no client was injected and the optional `openai` extra is not installed.
+        """
+        if self._aclient is None:
+            try:
+                from openai import AsyncOpenAI  # noqa: PLC0415 — lazy: `openai` is an optional extra
+            except ImportError as exc:  # openai not installed — it is an optional extra
+                raise ImportError(
+                    "OpenAIModelClient requires the optional 'openai' extra. "
+                    "Install it with `pip install avatar-harness[openai]` (or `uv sync --extra openai`), "
+                    "or inject an `aclient` / use a custom ModelClient instead."
+                ) from exc
+            self._aclient = AsyncOpenAI(
+                api_key=self.config.api_key,
+                base_url=self.config.base_url,
+                timeout=self.config.request_timeout_seconds,
+                max_retries=0,
+            )
+        return self._aclient
+
+    async def adecide(self, context: ContextPacket) -> ModelDecision:
+        """Call the endpoint asynchronously, streaming by default for idle-timeout + cancellation.
+
+        Streams native tool-calls when enabled (ADR-0029 R5) so a stall is caught at the idle
+        timeout regardless of generation length; a provider that can't stream trips
+        `_streaming_unsupported` and the SAME request is re-issued non-streaming for the rest of the
+        session (D4). Either path is cancellable mid-call (the runner races a cancel against it) and
+        raises `TransportError`/`DecisionParseError` exactly like the sync `decide`.
+
+        Args:
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        client = self._aensure_client()
+        stream = self.config.stream_model_calls and self.config.native_tool_calls
+        if stream and not self._streaming_unsupported:
+            try:
+                return await self._atransport_retry(lambda: self._adecide_native_stream(client, context))
+            except StreamingUnsupportedError:
+                # Capability verdict, not a transient fault: flip the flag and fall through to the
+                # non-streaming path with the SAME request (never fed back to the model).
+                self._streaming_unsupported = True
+        if self.config.native_tool_calls:
+            return await self._atransport_retry(lambda: self._adecide_native_async(client, context))
+        return await self._atransport_retry(lambda: self._adecide_json_async(client, context))
+
+    async def _atransport_retry(self, attempt_once: Callable[[], Awaitable[ModelDecision]]) -> ModelDecision:
+        """Async twin of `_transport_retry`: retry transport failures with backoff (ADR-0028 R3).
+
+        Identical backoff/usage-summing/`transport_trace` semantics to the sync loop; only the sleep
+        is awaited. Catches `TransportError` ONLY — `StreamingUnsupportedError` (a capability verdict,
+        handled in `adecide`), `DecisionParseError`, and `CancelledError` all propagate.
+
+        Args:
+            attempt_once: A coroutine factory returning a validated decision or raising `TransportError`.
+
+        Returns:
+            The decision from the first successful attempt, its `usage` summed across attempts and
+            `transport_trace` listing the transport failures recovered from.
+
+        Raises:
+            TransportError: When every attempt fails at the transport layer; carries the summed usage.
+        """
+        usage = _UsageTally()
+        recovered: list[str] = []
+        last: TransportError | None = None
+        for attempt in range(self.transport_max_retries + 1):
+            try:
+                decision = await attempt_once()
+            except TransportError as exc:
+                last = exc
+                usage.add_usage(exc.usage)
+                recovered.append(str(exc))
+                if attempt < self.transport_max_retries:
+                    await self._asleep(self._backoff(attempt))
+                continue
+            usage.add_usage(decision.usage)
+            decision.usage = usage.total()
+            decision.transport_trace = recovered
+            return decision
+        raise TransportError(
+            str(last) if last else "model transport failed with no recorded error",
+            usage=usage.total(),
+        ) from last
+
+    async def _acreate(self, client: Any, **kwargs: Any) -> Any:
+        """Async twin of `_create`: one `chat.completions.create`, failures → `TransportError`.
+
+        Args:
+            client: The async OpenAI-compatible client.
+            **kwargs: Call arguments (`messages`, `tools`/`response_format`).
+
+        Returns:
+            The raw provider response.
+
+        Raises:
+            TransportError: When the underlying call raises (network/timeout/5xx).
+        """
+        try:
+            return await client.chat.completions.create(
+                model=self.config.model, temperature=self.config.temperature, **kwargs
+            )
+        except Exception as exc:  # any create() failure is a transport failure (§16)
+            raise TransportError(f"model request failed: {type(exc).__name__}: {exc}") from exc
+
+    async def _acreate_stream(self, client: Any, **kwargs: Any) -> Any:
+        """Open a streaming completion with the idle bound as the per-call httpx `read` timeout.
+
+        The idle timeout is passed PER CALL (not on the client), so the same async client serves the
+        non-streaming fallback at the looser `request_timeout_seconds` ceiling. A silent socket then
+        raises mid-stream (`ReadTimeout`) after `request_idle_timeout_seconds` — the fast stall signal.
+        A call failure is classified by `_raise_stream_fault` into `StreamingUnsupportedError`
+        (provider rejected streaming) or `TransportError` (any other, transient fault).
+
+        Args:
+            client: The async OpenAI-compatible client.
+            **kwargs: Call arguments (`messages`, `tools`).
+
+        Returns:
+            The async stream of completion chunks.
+        """
+        # A plain float `timeout` is applied by the SDK as the httpx per-operation timeout — crucially
+        # the per-READ timeout, which bounds the gap between streamed chunks (the idle watchdog). Passed
+        # per call so the shared client's looser non-streaming ceiling is untouched. No httpx import:
+        # keeping httpx an indirect (openai-provided) dep, and a float says exactly "idle bound".
+        try:
+            return await client.chat.completions.create(
+                model=self.config.model,
+                temperature=self.config.temperature,
+                stream=True,
+                stream_options={"include_usage": True},
+                timeout=self.config.request_idle_timeout_seconds,
+                **kwargs,
+            )
+        except Exception as exc:
+            self._raise_stream_fault(exc, exc)
+
+    def _raise_stream_fault(self, exc: Exception, cause: BaseException) -> NoReturn:
+        """Raise a streaming failure as a capability verdict vs a transient fault (ADR-0029 D).
+
+        Capability → `StreamingUnsupportedError` (flip the flag, fall back): a streaming-rejection
+        4xx (400/404/422) whose message names streaming as unsupported. Everything else (idle
+        `ReadTimeout`, connection error, 429, 5xx, generic 4xx) → `TransportError` — default to
+        transient when in doubt, so a flaky provider is retried rather than wrongly downgraded.
+        Callers filter already-classified errors before delegating here, so there is no passthrough.
+
+        Args:
+            exc: The exception raised while opening or consuming the stream.
+            cause: The exception to chain as ``__cause__`` (usually `exc` itself).
+
+        Raises:
+            StreamingUnsupportedError: When the provider rejects streaming as unsupported (D4).
+            TransportError: For any other (transient) stream fault.
+        """
+        try:
+            from openai import APIStatusError  # noqa: PLC0415 — lazy: `openai` is an optional extra
+        except ImportError:
+            APIStatusError = ()  # type: ignore[assignment,misc] # noqa: N806 — it is a class
+        if isinstance(exc, APIStatusError) and getattr(exc, "status_code", None) in (400, 404, 422):
+            text = str(getattr(exc, "message", "") or exc).lower()
+            markers = ("not supported", "unsupported", "not allowed", "does not support")
+            if "stream" in text and any(m in text for m in markers):
+                raise StreamingUnsupportedError(f"provider rejected streaming: {exc}") from cause
+        raise TransportError(f"model request failed: {type(exc).__name__}: {exc}") from cause
+
+    async def _areassemble(self, client: Any, **create_kwargs: Any) -> tuple[Any, Any]:
+        """Consume a streamed completion into a non-streaming-shaped message + usage (ADR-0029 D1).
+
+        Reassembles per the OpenAI streaming format: concatenate `content` deltas; key tool-call
+        deltas strictly on `.index`, capturing `.id`/`.function.name` on the first fragment and
+        string-joining `.function.arguments` fragments in arrival order; the usage-only final chunk
+        has `choices == []`. Only index 0 is used (one action per turn, §6). The stream is always
+        closed in `finally` — load-bearing on cancel, to release the aborted connection.
+
+        Args:
+            client: The async OpenAI-compatible client.
+            **create_kwargs: `messages`/`tools` for the streaming call.
+
+        Returns:
+            A `(message, usage)` pair: `message` has `.content`/`.tool_calls` shaped like a
+            non-streaming reply; `usage` is the final chunk's usage object or `None`.
+
+        Raises:
+            StreamingUnsupportedError: On unusable framing (no index-0 fragment, or a missing
+                name/id) — a capability verdict that triggers the non-streaming fallback (D4).
+            TransportError: On an idle `ReadTimeout` or other transient stream fault.
+        """
+        stream = await self._acreate_stream(client, **create_kwargs)
+        content_parts: list[str] = []
+        frags: dict[int, dict[str, Any]] = {}
+        order: list[int] = []
+        usage_obj: Any = None
+        try:
+            async for chunk in stream:
+                usage_obj = _fold_stream_chunk(chunk, content_parts, frags, order) or usage_obj
+        except (TransportError, StreamingUnsupportedError):
+            raise
+        except Exception as exc:  # a mid-stream fault (idle ReadTimeout, reset) is transport-shaped
+            self._raise_stream_fault(exc, exc)
+        finally:
+            await stream.close()
+        content = "".join(content_parts)
+        if not frags:
+            return SimpleNamespace(content=content, tool_calls=None), usage_obj
+        if 0 not in frags:  # broken framing — a capability problem, not a parse one
+            raise StreamingUnsupportedError(f"streamed tool-call framing missing index 0 (indices={order})")
+        slot = frags[0]
+        if not slot["name"] or not slot["id"]:
+            raise StreamingUnsupportedError(
+                f"streamed tool-call missing name/id (name={slot['name']!r} id={slot['id']!r})"
+            )
+        call = SimpleNamespace(
+            id=slot["id"],
+            function=SimpleNamespace(name=slot["name"], arguments="".join(slot["args"]) or "{}"),
+        )
+        return SimpleNamespace(content=content, tool_calls=[call]), usage_obj
+
+    def _native_decision_from_message(
+        self, message: Any, messages: list[dict], trace: list[DecisionRetryNote]
+    ) -> tuple[ModelDecision | None, list[dict], DecisionParseError | None]:
+        """Map one native reply message to a decision, or extend `messages` to re-prompt (§6, §18).
+
+        Shared by the async streaming and async non-streaming native paths (the reassembled and the
+        real message are the same shape). Mirrors the sync `_decide_native` per-reply logic. Does
+        NOT set `usage`/`retry_trace`/`transport`-usage — the caller owns the tally and trace.
+
+        Args:
+            message: The reply message (real or reassembled): `.content`, `.tool_calls`.
+            messages: The conversation so far.
+            trace: The in-client retry trace; a malformed attempt is appended here.
+
+        Returns:
+            `(decision, messages, None)` on success (with `.transport` set), or
+            `(None, extended_messages, error)` when the attempt was malformed and the conversation
+            was extended to re-prompt the SAME action.
+        """
+        calls = getattr(message, "tool_calls", None)
+        raw_content = message.content or ""
+        if calls:
+            call = calls[0]  # one action per turn (§6)
+            try:
+                decision = _decision_from_tool_call(call, thought=raw_content)
+            except DecisionParseError as exc:
+                raw = f"{call.function.name}({call.function.arguments or ''})"
+                is_patch = call.function.name in ("str_replace", "write_file")
+                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=is_patch)))
+                extended = [
+                    *messages,
+                    _assistant_call_message(message, call),
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": (
+                            f"Invalid arguments ({exc}). Re-send the SAME intended "
+                            "action with valid arguments."
+                        ),
+                    },
+                ]
+                return None, extended, exc
+            decision.transport = "native"
+            return decision, messages, None
+        try:
+            decision = parse_decision(raw_content)  # endpoint ignored tools= — legacy fallback
+        except DecisionParseError as exc:
+            excerpt = _excerpt(raw_content, patch=_carries_patch(raw_content))
+            trace.append(DecisionRetryNote(error=str(exc), raw=excerpt))
+            retry = (
+                f"That was not a valid decision ({exc}). Call one of the provided tools "
+                "— re-send the SAME intended action, do not switch to a different one."
+            )
+            extended = [
+                *messages,
+                {"role": "assistant", "content": raw_content},
+                {"role": "user", "content": retry},
+            ]
+            return None, extended, exc
+        decision.transport = "json_fallback"  # native asked, endpoint answered in prose
+        return decision, messages, None
+
+    async def _adecide_native_stream(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One streamed native decision (ADR-0029 R5): reassemble, then reuse the §6 parse path.
+
+        Args:
+            client: The async OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+
+        Raises:
+            DecisionParseError: If every attempt yields malformed output (valid envelope, bad args).
+            EmptyResponseError: If the reassembled reply is an empty/NUL body (a transport failure).
+        """
+        # `_areassemble` may also raise `StreamingUnsupportedError` (unusable framing) — it propagates
+        # to `adecide`, which flips the per-instance flag and falls back to the non-streaming path.
+        messages: list[dict] = list(build_messages(context, native_tools=True))
+        tools = build_tool_schemas(context)
+        last_error: DecisionParseError | None = None
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        for _ in range(self.max_parse_retries + 1):
+            message, usage_obj = await self._areassemble(client, messages=messages, tools=tools)
+            tally.add(SimpleNamespace(usage=usage_obj))
+            if not message.tool_calls and _is_empty_body(message.content or ""):
+                raise EmptyResponseError(
+                    f"empty model reply ({len(message.content or '')} chars)", usage=tally.total()
+                )
+            decision, messages, last_error = self._native_decision_from_message(message, messages, trace)
+            if decision is not None:
+                decision.retry_trace = trace
+                decision.usage = tally.total()
+                return decision
+        raise DecisionParseError(
+            str(last_error) if last_error else "model returned no valid decision", usage=tally.total()
+        ) from last_error
+
+    async def _adecide_native_async(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One non-streaming native decision over the async client (the D4 fallback path).
+
+        Args:
+            client: The async OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+
+        Raises:
+            DecisionParseError: If every attempt yields malformed output.
+            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
+        """
+        messages: list[dict] = list(build_messages(context, native_tools=True))
+        tools = build_tool_schemas(context)
+        last_error: DecisionParseError | None = None
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        for _ in range(self.max_parse_retries + 1):
+            response = await self._acreate(client, messages=messages, tools=tools)
+            tally.add(response)
+            message = response.choices[0].message
+            if not getattr(message, "tool_calls", None) and _is_empty_body(message.content or ""):
+                raise EmptyResponseError(
+                    f"empty model reply ({len(message.content or '')} chars)", usage=tally.total()
+                )
+            decision, messages, last_error = self._native_decision_from_message(message, messages, trace)
+            if decision is not None:
+                decision.retry_trace = trace
+                decision.usage = tally.total()
+                return decision
+        raise DecisionParseError(
+            str(last_error) if last_error else "model returned no valid decision", usage=tally.total()
+        ) from last_error
+
+    async def _adecide_json_async(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One non-streaming legacy-JSON decision over the async client (native disabled).
+
+        Args:
+            client: The async OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+
+        Raises:
+            DecisionParseError: If every attempt yields malformed output.
+            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
+        """
+        messages = build_messages(context)
+        last_error: DecisionParseError | None = None
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        for _ in range(self.max_parse_retries + 1):
+            response = await self._acreate(client, messages=messages, response_format={"type": "json_object"})
+            tally.add(response)
+            raw = response.choices[0].message.content or ""
+            if _is_empty_body(raw):
+                raise EmptyResponseError(f"empty model reply ({len(raw)} chars)", usage=tally.total())
+            try:
+                decision = parse_decision(raw)
+            except DecisionParseError as exc:
+                last_error = exc
+                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
+                retry = (
+                    f"That was not a valid decision ({exc}). Re-send the SAME intended "
+                    "action as one valid JSON decision — do not switch to a different action."
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": retry},
+                ]
+            else:
+                decision.retry_trace = trace
+                decision.usage = tally.total()
+                decision.transport = "json"
+                return decision
+        message = str(last_error) if last_error else "model returned no valid decision"
+        raise DecisionParseError(message, usage=tally.total()) from last_error
 
     def _create(self, client: Any, **kwargs: Any) -> Any:
         """Issue one `chat.completions.create`, mapping a call failure to `TransportError`.

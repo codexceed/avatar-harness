@@ -66,10 +66,17 @@ class HarnessConfig(BaseSettings):
     test_command: str = ""
     lint_command: str = ""
     command_timeout_seconds: int = 120
-    # Per-request timeout for one model call (ADR-0028 R1). Calibrated above the longest legit
-    # generation (~203s) so real work survives, below a hung call's latency (~297s) so a stall is
-    # caught, and under the wall clock. The flat window is fragile — R5 is the durable fix.
+    # Per-request timeout for one model call (ADR-0028 R1). The non-streaming ceiling; with R5
+    # streaming on, the idle timeout does the fast stall-detection so this is a loose backstop.
     request_timeout_seconds: float = Field(240.0, gt=0)
+    # Stream completions and bound the gap *between* chunks instead of total time (ADR-0029 R5):
+    # a stall is caught in ~idle-timeout regardless of how long a legit generation runs. Passed as
+    # the httpx `read` timeout per streaming call. Distinct from `request_timeout_seconds`.
+    request_idle_timeout_seconds: float = Field(30.0, gt=0)
+    # Master switch for R5 streaming (ADR-0029). `False` = exact non-streaming async behavior.
+    # Distinct from the runtime per-instance `_streaming_unsupported` flag (a provider that rejects
+    # streaming trips that flag for the rest of its session; this config is the global default).
+    stream_model_calls: bool = True
     # Transport-layer retries (ADR-0028 R3), distinct from `max_parse_retries`: a NUL/empty body or
     # request failure is re-issued (backoff + jitter), never re-prompted; on exhaustion the client
     # raises `TransportError`, surfaced as a system failure (§16). Low so the worst case stays bounded.

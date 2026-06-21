@@ -7,6 +7,7 @@ the event loop stays responsive, and publish typed events in order through a sin
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 from conftest import ScriptedModel
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ from avatar.model_client import (
     FinalAnswer,
     ModelClient,
     ModelDecision,
+    OpenAIModelClient,
     ToolCall,
 )
 from avatar.runner import AgentRunner
@@ -130,6 +132,66 @@ async def test_cancellation_observed_during_arun(tmp_path):
     state = await runner.arun(TaskState(goal="x", task_kind="investigate"))
     assert state.outcome == "incomplete"
     assert state.iterations == 0  # observed before any turn ran
+
+
+async def test_mid_call_cancellation_aborts_in_flight_stream(tmp_path):
+    # ADR-0029 R5: a cancel observed WHILE a streaming model call is in flight aborts it mid-call
+    # (not just between turns). The runner races the cancel token against the call; on cancel it
+    # closes the stream (releasing the connection), ends `incomplete`, and publishes the observation.
+    class _HangingStream:
+        def __init__(self) -> None:
+            self.entered = False
+            self.closed = False
+
+        def __aiter__(self):
+            return self._gen()
+
+        async def _gen(self):
+            self.entered = True
+            await asyncio.Event().wait()  # block forever until cancelled mid-stream
+            yield  # pragma: no cover — unreachable
+
+        async def close(self) -> None:
+            self.closed = True
+
+    hanging = _HangingStream()
+
+    async def create(**kwargs):
+        return hanging
+
+    async def _no_asleep(_s: float) -> None:
+        return None
+
+    aclient = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    config = HarnessConfig()
+    token = CancellationToken()
+    bus = EventBus(session_id="sess")
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=token)
+    runner = AgentRunner(
+        model_client=OpenAIModelClient(config, aclient=aclient, asleep=_no_asleep),
+        registry=_read_registry(tmp_path),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+        event_sink=bus,
+    )
+
+    task = asyncio.create_task(runner.arun(TaskState(goal="x", task_kind="investigate")))
+    for _ in range(1000):
+        if hanging.entered:
+            break
+        await asyncio.sleep(0)
+    assert hanging.entered  # the streaming model call is genuinely in flight
+    token.cancel()
+    state = await task
+
+    assert state.outcome == "incomplete"
+    assert state.latest_error == "run cancelled"
+    assert state.iterations == 1  # cancelled DURING turn 1, not before it (unlike the turn-top path)
+    assert hanging.closed is True  # the aborted stream was closed
+    assert any(e.type == "cancellation_observed" for e in bus.history)
 
 
 async def test_recovered_parse_retries_recorded_and_published(tmp_path):

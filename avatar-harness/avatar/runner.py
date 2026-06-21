@@ -7,6 +7,7 @@ deliberately a near-verbatim transcription of the §5 pseudocode.
 """
 
 import asyncio
+import contextlib
 import json
 import time
 from typing import Literal
@@ -254,7 +255,26 @@ class AgentRunner:
             self.emitter.emit("turn_start", task_id=state.task_id, iteration=state.iterations)
             self._publish(TurnStart(task_id=state.task_id, turn=state.iterations, iteration=state.iterations))
             try:
-                decision = await asyncio.to_thread(self.model_client.decide, context)
+                # Race the model call against a cancel (ADR-0029 R5): ESC/wall-clock can abort an
+                # in-flight call mid-stream, not just between turns. The async call replaces the old
+                # `to_thread(decide)` (which was uncancellable); kept inside this try: so the
+                # transport/parse error arms still apply to `task.result()`.
+                task = asyncio.ensure_future(self.model_client.adecide(context))
+                cancel_wait = asyncio.ensure_future(self.deps.cancellation.event().wait())
+                done, _ = await asyncio.wait({task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
+                if cancel_wait in done:
+                    # Cancelling the task aborts the underlying httpx request; the streaming path's
+                    # `finally: await stream.close()` releases the connection.
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                    self._stop_incomplete(state, "run cancelled", kind="cancelled")
+                    self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
+                    self.emitter.emit("turn_end", task_id=state.task_id)
+                    self._publish(TurnEnd(task_id=state.task_id, turn=state.iterations))
+                    break
+                cancel_wait.cancel()
+                decision = task.result()  # re-raises TransportError / DecisionParseError as today
             except TransportError as exc:
                 # A transport failure (timeout / NUL body) that survived the client's retries is a
                 # SYSTEM failure, not model-correctable (§16, ADR-0028 R4): never feed it back to the
