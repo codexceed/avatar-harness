@@ -11,6 +11,7 @@ import json
 import re
 import shlex
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -191,6 +192,87 @@ def _load_specs() -> list[TaskSpec]:
     return [load_task_spec(p) for p in sorted((_EVALS_ROOT / "tasks").glob("*.toml"))]
 
 
+def _run_one(model: str, cfg: HarnessConfig, spec: TaskSpec, seed: int, run_workspace: Path) -> ResultRow:
+    """Run and score one ``(model, spec, seed)`` cell, catching provision-stage failures.
+
+    `run_task` already turns *run* errors into an error row that carries the scratch path; this
+    wrapper additionally catches a *provision*-stage failure (which propagates out of `run_task`)
+    so one bad cell never sinks the matrix. It is the unit dispatched to a worker thread.
+
+    Args:
+        model: The model id (used to label an error row when provisioning fails).
+        cfg: The per-model harness config (temperature + model already applied).
+        spec: The task spec for this cell.
+        seed: The seed index for this cell.
+        run_workspace: The run workspace to provision the scratch repo under.
+
+    Returns:
+        The scored `ResultRow`, or an error row if provisioning raised.
+    """
+    try:
+        return run_task(spec, config=cfg, seed=seed, workspace_root=run_workspace)
+    except Exception as exc:  # provision-stage failure (run_task handles run errors itself)
+        return ResultRow(
+            task=spec.id,
+            model=model,
+            seed=seed,
+            solved=False,
+            outcome=f"error: {type(exc).__name__}: {exc}"[:200],
+            iterations=0,
+        )
+
+
+def _run_matrix(
+    models: list[str],
+    base: HarnessConfig,
+    specs: list[TaskSpec],
+    *,
+    seeds: int,
+    run_workspace: Path,
+    concurrency: int,
+) -> list[ResultRow]:
+    """Run the full ``model * spec * seed`` matrix under a bounded thread pool.
+
+    The cells are hermetic — `run_task` provisions a uniquely-labelled scratch repo per cell and
+    drives its own `asyncio.run`, so a worker thread runs an entire trajectory in its own event
+    loop with no shared mutable state. Concurrency is I/O-bound (model API + subprocess probes),
+    so the GIL is released where it matters. Rows are reassembled in matrix order (model-major,
+    then spec, then seed) regardless of completion order, so the results artifact is deterministic;
+    only the live progress lines arrive as cells finish. ``concurrency=1`` reproduces the old
+    strictly-sequential behaviour exactly.
+
+    Args:
+        models: The model ids, in matrix order.
+        base: The base harness config (temperature already applied); per-model config is derived.
+        specs: The task specs, in matrix order.
+        seeds: The number of seeds per ``(model, spec)`` pair.
+        run_workspace: The run workspace to provision scratch repos under.
+        concurrency: The max number of cells run in parallel (clamped to ``>= 1``).
+
+    Returns:
+        The scored rows in matrix order.
+    """
+    cfg_by_model = {model: base.model_copy(update={"model": model}) for model in models}
+    cells = [
+        (model, cfg_by_model[model], spec, seed)
+        for model in models
+        for spec in specs
+        for seed in range(seeds)
+    ]
+    rows: list[ResultRow | None] = [None] * len(cells)
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        futures = {
+            pool.submit(_run_one, model, cfg, spec, seed, run_workspace): i
+            for i, (model, cfg, spec, seed) in enumerate(cells)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            row = future.result()
+            rows[index] = row
+            print(f"{row.model}  {row.task}  seed={row.seed}  -> {'PASS' if row.solved else row.outcome}")
+    return [row for row in rows if row is not None]
+
+
 def _resolve_run_workspace(workspace: str | None, stamp: str) -> tuple[Path, bool]:
     """Resolve the run workspace: an explicit path, else an auto ``eval_run_<stamp>`` in cwd.
 
@@ -339,6 +421,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="keep the run workspace (scratch repos) for inspection; default removes it",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="max cells run in parallel across the model x spec x seed matrix; default 1 (sequential)",
+    )
     args = parser.parse_args(argv)
 
     base = HarnessConfig().model_copy(update={"temperature": args.temperature})
@@ -351,24 +439,14 @@ def main(argv: list[str] | None = None) -> int:
     stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     run_workspace, preexisting = _resolve_run_workspace(args.workspace, stamp)
 
-    rows: list[ResultRow] = []
-    for model in models:
-        cfg = base.model_copy(update={"model": model})
-        for spec in specs:
-            for seed in range(args.seeds):
-                try:
-                    row = run_task(spec, config=cfg, seed=seed, workspace_root=run_workspace)
-                except Exception as exc:  # provision-stage failure (run_task handles run errors itself)
-                    row = ResultRow(
-                        task=spec.id,
-                        model=model,
-                        seed=seed,
-                        solved=False,
-                        outcome=f"error: {type(exc).__name__}: {exc}"[:200],
-                        iterations=0,
-                    )
-                rows.append(row)
-                print(f"{model}  {spec.id}  seed={seed}  -> {'PASS' if row.solved else row.outcome}")
+    rows = _run_matrix(
+        models,
+        base,
+        specs,
+        seeds=args.seeds,
+        run_workspace=run_workspace,
+        concurrency=args.concurrency,
+    )
 
     out = _write_results(rows, stamp)
     print(f"\nwrote {len(rows)} rows -> {out}")

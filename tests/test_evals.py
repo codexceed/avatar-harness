@@ -9,6 +9,7 @@ import json
 import math
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from evals.run import (
     _cleanup_workspaces,
     _journal_events,
     _resolve_run_workspace,
+    _run_matrix,
     build_summary,
     run_task,
     write_summary,
@@ -157,6 +159,74 @@ def test_eval_run_produces_result_row():
     assert row.outcome is not None
     assert row.iterations >= 1
     assert isinstance(row.solved, bool)
+
+
+# --- C2. matrix driver: bounded concurrency + deterministic ordering ----------
+
+
+def _matrix_specs(n: int) -> list[TaskSpec]:
+    """`n` trivial specs, ids ``t0..t{n-1}``, for driving `_run_matrix` offline."""
+    return [TaskSpec(id=f"t{i}", goal="g", task_kind="investigate", fixture="empty") for i in range(n)]
+
+
+def test_run_matrix_preserves_matrix_order(monkeypatch, tmp_path):
+    # Rows must come back in model-major → spec → seed order regardless of completion order, so
+    # the results artifact is deterministic even though cells finish out of order under a pool.
+    def fake(spec, *, config, seed, workspace_root):
+        # Sleep longer for earlier cells so completion order is the reverse of submission order.
+        time.sleep(0.02 * (5 - int(spec.id[1:])))
+        return ResultRow(
+            task=spec.id, model=config.model, seed=seed, solved=True, outcome="success", iterations=1
+        )
+
+    monkeypatch.setattr("evals.run.run_task", fake)
+    rows = _run_matrix(
+        ["m1", "m2"], HarnessConfig(), _matrix_specs(3), seeds=2, run_workspace=tmp_path, concurrency=4
+    )
+    got = [(r.model, r.task, r.seed) for r in rows]
+    expected = [(model, f"t{s}", seed) for model in ("m1", "m2") for s in range(3) for seed in range(2)]
+    assert got == expected
+
+
+@pytest.mark.parametrize("concurrency", [1, 4])
+def test_run_matrix_honours_concurrency_cap(monkeypatch, tmp_path, concurrency):
+    # The pool must run at most `concurrency` cells at once — and exactly that many when the
+    # matrix is large enough. concurrency=1 reproduces the old strictly-sequential behaviour.
+    lock = threading.Lock()
+    state = {"current": 0, "peak": 0}
+
+    def fake(spec, *, config, seed, workspace_root):
+        with lock:
+            state["current"] += 1
+            state["peak"] = max(state["peak"], state["current"])
+        time.sleep(0.05)
+        with lock:
+            state["current"] -= 1
+        return ResultRow(
+            task=spec.id, model=config.model, seed=seed, solved=True, outcome="success", iterations=1
+        )
+
+    monkeypatch.setattr("evals.run.run_task", fake)
+    rows = _run_matrix(
+        ["m"], HarnessConfig(), _matrix_specs(4), seeds=1, run_workspace=tmp_path, concurrency=concurrency
+    )
+    assert len(rows) == 4
+    assert state["peak"] == concurrency
+
+
+def test_run_matrix_catches_provision_failure(monkeypatch, tmp_path):
+    # A provision-stage failure propagates out of run_task; the driver must turn it into an error
+    # row so one bad cell never sinks the matrix.
+    def boom(spec, *, config, seed, workspace_root):
+        raise RuntimeError("provision exploded")
+
+    monkeypatch.setattr("evals.run.run_task", boom)
+    rows = _run_matrix(
+        ["m"], HarnessConfig(), _matrix_specs(2), seeds=1, run_workspace=tmp_path, concurrency=2
+    )
+    assert len(rows) == 2
+    assert all((r.outcome or "").startswith("error: RuntimeError: provision exploded") for r in rows)
+    assert all(not r.solved for r in rows)
 
 
 def test_eval_journal_excluded_from_search(tmp_path):

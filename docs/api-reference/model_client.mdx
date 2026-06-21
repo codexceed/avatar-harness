@@ -69,6 +69,17 @@ DecisionUsage(*, prompt_tokens: int = 0, completion_tokens: int = 0) -> None
 | --- | --- | --- |
 | `prompt_tokens` | `int` | no |
 | `completion_tokens` | `int` | no |
+### `EmptyResponseError`
+
+The provider returned an empty / whitespace-only / all-NUL body (a 200 with no content).
+
+The OpenAI SDK does not retry this (it is a *successful* HTTP response), so it must be caught
+explicitly and treated as a transport failure — not routed into the model parse-retry, which
+would re-prompt the model for what is really a dead/stalled provider reply (ADR-0028 R2).
+
+```python
+EmptyResponseError(message: str = '', usage: 'DecisionUsage | None' = None) -> None
+```
 ### `FinalAnswer`
 
 Decision claiming the task is complete — a proposal for the verifier (§6, §12).
@@ -113,7 +124,7 @@ can record them as evidence and journal them (invariant #5). It is never accepte
 from raw model output — `parse_decision` clears it.
 
 ```python
-ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, usage: DecisionUsage | None = None, transport: str = '') -> None
+ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, transport_trace: list[str] = <factory>, usage: DecisionUsage | None = None, transport: str = '') -> None
 ```
 
 **Fields**
@@ -123,6 +134,7 @@ ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | Ask
 | `thought_summary` | `str` | no |
 | `action` | `ToolCall | FinalAnswer | AskUser` | yes |
 | `retry_trace` | `list[DecisionRetryNote]` | no |
+| `transport_trace` | `list[str]` | no |
 | `usage` | `DecisionUsage | None` | no |
 | `transport` | `str` | no |
 ### `OpenAIModelClient`
@@ -139,9 +151,12 @@ Args:
         first use — so construction needs no credentials; the optional `openai`
         extra and an API key are required only when `decide()` is first called.
     max_parse_retries: Number of retries on malformed model output.
+    transport_max_retries: Transport-layer retries on a NUL/empty body or a request
+        failure (ADR-0028 R3); `None` takes `config.transport_max_retries`.
+    sleep: Backoff sleeper, injectable so tests exercise retries without real delay.
 
 ```python
-OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None
+OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: int = 2, *, transport_max_retries: int | None = None, sleep: Callable[[float], None] = <built-in function sleep>) -> None
 ```
 
 #### `OpenAIModelClient.decide(self, context: ContextPacket) -> ModelDecision`
@@ -173,6 +188,23 @@ ToolCall(*, type: Literal['tool_call'] = 'tool_call', name: str, input: dict = <
 | `type` | `Literal['tool_call']` | no |
 | `name` | `str` | yes |
 | `input` | `dict` | no |
+### `TransportError`
+
+A model call failed at the *transport* layer — NOT model-correctable (§16, ADR-0028).
+
+A request timeout, connection reset, or an empty/NUL body (`EmptyResponseError`) means the
+provider returned nothing usable. Unlike `DecisionParseError`, this is **never** fed back to
+the model: it is retried in-client at the transport layer (re-issue the same request with
+backoff), and on exhaustion surfaced to the runner as a system failure. Carries `usage` so
+the billed-but-lost attempts are not undercounted.
+
+Args:
+    message: A short description of the transport failure.
+    usage: Tokens spent across the failed attempts, or `None` if unreported.
+
+```python
+TransportError(message: str = '', usage: 'DecisionUsage | None' = None) -> None
+```
 
 ## Functions
 ### `build_messages(context: ContextPacket, *, native_tools: bool = False) -> list[dict[str, str]]`

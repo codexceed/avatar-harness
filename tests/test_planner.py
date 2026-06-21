@@ -22,7 +22,10 @@ from avatar.workspace import Workspace
 def _config(**kw) -> HarnessConfig:
     kw.setdefault("test_command", "")
     kw.setdefault("lint_command", "")
-    return HarnessConfig(**kw)
+    # Hermetic: ignore the developer's `.env`. Otherwise `AVATAR_PLANNER_MODEL` / `AVATAR_API_KEY`
+    # leak in and opt these deterministic-tier tests into the live LLM fallback — a real network
+    # call that proposes a command and flips `_resolve(...) == []` assertions (and is slow/flaky).
+    return HarnessConfig(_env_file=None, **kw)
 
 
 def _resolve(tmp_path, config: HarnessConfig | None = None, client=None) -> list[PlannedCheck]:
