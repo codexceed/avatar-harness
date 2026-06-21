@@ -38,7 +38,9 @@ The harness conflates two different failures: **the model emitted bad reasoning*
                                                   └─ exhausted ─► system failure (§16), NOT model loop
 ```
 
-**R1 · Bound every request.** New config `request_timeout_seconds` (default **90**, must be ≪ `max_wall_clock_seconds`). Pass `timeout=` to the client so a hang fails in ~90s instead of eating the 600s budget. Set the SDK's own `max_retries` explicitly (it handles HTTP-level errors with exponential backoff).
+**R1 · Bound every request.** New config `request_timeout_seconds` (default **240**, must stay under `max_wall_clock_seconds`). Pass `timeout=` to the client so a hang fails fast instead of eating the 600s budget; build the client with `max_retries=0` (the transport-retry loop owns retries, and the SDK won't retry a 200-with-empty-body anyway).
+
+> **Calibration (load-bearing).** A *flat* per-request timeout is squeezed between two walls. The 2026-06-20 journals show **legitimate** model calls of **160–203s** (a model emitting 8–15k tokens on `secret-safety` — the gap sits between `turn_start` and `model_usage`, i.e. one generation), while the **hung** calls returned their NUL after **297–364s**. So the timeout must be **above** ~203s (or it kills real work — the first cut at `90` would have) and **below** ~297s (or it never catches the hang). `240` is that window. It is fragile — a harder task with a >240s legit call, or a provider that NULs faster, breaks it — which is precisely the tension **R5** dissolves (an *idle* timeout fires on no-bytes-flowing, decoupled from total generation length).
 
 **R2 · Classify NUL/empty as a transport error.** In `_decide_native` / `_decide_json`, when there are **no `tool_calls` AND** the body is empty / whitespace-only / all-`\x00`, raise a new **`EmptyResponseError`** (a transport error), *not* `DecisionParseError`. A *non-empty but malformed* body stays a parse error (genuinely model-correctable).
 
@@ -56,8 +58,8 @@ The harness conflates two different failures: **the model emitted bad reasoning*
 
 | field | default | rationale |
 | --- | --- | --- |
-| `request_timeout_seconds` | `90` | ≪ 600s wall clock → ~3–6 attempts fit inside one run's budget |
-| `transport_max_retries` | `3` | bounded; with backoff ≤ ~7s added latency on the happy-failure path |
+| `request_timeout_seconds` | `240` | above the longest legit generation (~203s) so real work survives; below the hang→NUL latency (~297s) so a stall is caught; under the 600s wall clock |
+| `transport_max_retries` | `2` | low so the worst case (`timeout × (retries+1)` = 720s on a fully-dead endpoint) is a bounded, surfaced overrun — not many wall clocks |
 | backoff | `1s·2^n` + jitter, cap 20s | decorrelate retries so the herd doesn't re-synchronize on the provider |
 
 ## Consequences
@@ -68,7 +70,8 @@ The harness conflates two different failures: **the model emitted bad reasoning*
 | ✅ | `failure_mode` histogram stops mislabeling provider NULs as `decision_error`; transport noise is distinguishable from model defects |
 | ✅ | Restores the §16 contract: transport failures surface as system errors, never re-prompt the model |
 | ✅ | Validated **offline** (a scripted client that returns NUL-then-valid) → near-zero eval spend; a real provider NUL can't be summoned on demand |
-| ⚠️ | A genuinely-down endpoint now costs `request_timeout × transport_max_retries` before the cell errors — bounded, and far cheaper than a 600s hang |
+| ⚠️ | A genuinely-down endpoint costs up to `request_timeout × (transport_max_retries + 1)` ≈ 720s before the cell errors — a bounded, surfaced overrun (the wall clock isn't checked mid-`decide`), and still far better than a silent 600s truncation |
+| ⚠️ | The flat 240s timeout is a *calibrated window*, not a robust bound: a legit call >240s would be killed and a faster NUL missed. R5 (streaming idle-timeout) is the durable fix; revisit when task generations grow (Eval-2) |
 | ⚠️ | Eval-runner concurrency + jitter (separate change) is the complementary fix: it prevents the synchronized thundering-herd that triggered the NULs in the first place |
 
 ## Alternatives rejected

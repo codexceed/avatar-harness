@@ -309,11 +309,16 @@ def test_is_empty_body_classifies_nul_and_whitespace():
     assert not _is_empty_body('{"action": ...}')
 
 
-def test_request_timeout_defaults_below_wall_clock():
+def test_request_timeout_default_is_calibrated():
     cfg = HarnessConfig()
-    # The per-request bound MUST stay under the run budget, else one hung call eats the whole run.
+    # Under the run budget (one call can't eat the whole run)...
     assert cfg.request_timeout_seconds < cfg.max_wall_clock_seconds
+    # ...but comfortably ABOVE the longest legitimate generation observed in the 2026-06-20 data
+    # (~203s on secret-safety) so a flat timeout never kills real work (the 90s default did).
+    assert cfg.request_timeout_seconds >= 210
     assert cfg.transport_max_retries >= 0
+    # Worst-case dead-endpoint cost stays a bounded overrun, not many wall clocks.
+    assert cfg.request_timeout_seconds * (cfg.transport_max_retries + 1) <= 2 * cfg.max_wall_clock_seconds
 
 
 def test_runner_surfaces_transport_error_not_incomplete(tmp_path, read_registry):
