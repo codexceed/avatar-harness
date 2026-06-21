@@ -66,29 +66,24 @@ class HarnessConfig(BaseSettings):
     test_command: str = ""
     lint_command: str = ""
     command_timeout_seconds: int = 120
-    # Per-request timeout for a single model call (ADR-0028 R1). Bounds one
-    # `chat.completions.create` so a hung/stalled provider can't consume the whole run.
-    # Calibrated from the 2026-06-20 data: it MUST stay *above* the longest legitimate generation
-    # (observed ~203s — a model emitting 8-15k tokens on `secret-safety`) so real work is never
-    # killed, yet *below* the incident's hang→NUL latency (~297-364s) so a stalled call is caught.
-    # A flat timeout can only sit in that window because it cannot tell "slow but generating" from
-    # "stalled" — R5 (streaming idle-timeout) would; until then 240s is the calibrated middle.
+    # Per-request timeout for one model call (ADR-0028 R1). The non-streaming ceiling; with R5
+    # streaming on, the idle timeout does the fast stall-detection so this is a loose backstop.
     request_timeout_seconds: float = Field(240.0, gt=0)
-    # Transport-layer retries for a failed model call (ADR-0028 R3) — distinct from
-    # `max_parse_retries` (model-correctable, in `model_client`). A NUL/empty body, a request
-    # timeout, or a connection error is a *transport* failure: re-issue the SAME request with
-    # exponential backoff + jitter, never re-prompt the model. On exhaustion the client raises a
-    # `TransportError` the runner surfaces as a system failure (§16) — never an `incomplete`.
-    # Kept low (2) so the worst case (`request_timeout * (retries+1)` = 720s on a fully-dead
-    # endpoint) stays a bounded, surfaced overrun rather than many multiples of the wall clock.
+    # Stream completions and bound the gap *between* chunks instead of total time (ADR-0029 R5):
+    # a stall is caught in ~idle-timeout regardless of how long a legit generation runs. Passed as
+    # the httpx `read` timeout per streaming call. Distinct from `request_timeout_seconds`.
+    request_idle_timeout_seconds: float = Field(30.0, gt=0)
+    # Master switch for R5 streaming (ADR-0029). `False` = exact non-streaming async behavior.
+    # Distinct from the runtime per-instance `_streaming_unsupported` flag (a provider that rejects
+    # streaming trips that flag for the rest of its session; this config is the global default).
+    stream_model_calls: bool = True
+    # Transport-layer retries (ADR-0028 R3), distinct from `max_parse_retries`: a NUL/empty body or
+    # request failure is re-issued (backoff + jitter), never re-prompted; on exhaustion the client
+    # raises `TransportError`, surfaced as a system failure (§16). Low so the worst case stays bounded.
     transport_max_retries: int = Field(2, ge=0)
-    # Char budget for the stdout/stderr excerpt a command tool shows the model. Sized for a
-    # medium web-app error log (a failing test run + a stack trace, ~150-300 lines). The excerpt
-    # keeps the HEAD and TAIL and elides the middle (`commands._excerpt`), because a failure's
-    # densest signal — the exception / final assertion — trails at the end; tail-only truncation
-    # would drop exactly that. Lower it for cost-sensitive runs; raise it to retain more context.
-    # Floored (`ge`) so the bound is unconditional — it can be tuned, never configured away (the
-    # journal-distillability guarantee R3 leans on; a `0`/`1` "disable" would defeat it).
+    # Char budget for the command-tool stdout/stderr excerpt shown to the model: keeps the head AND
+    # tail, elides the middle (`commands._excerpt`) since a failure's signal trails. Floored (`ge`)
+    # so the bound is unconditional — tunable, never disable-able (R3's journal-distillability).
     command_output_budget: int = Field(16_000, ge=256)
 
     # LLM fallback for verification-plan resolution (ADR-0007 tier 3). Opt-in: unset

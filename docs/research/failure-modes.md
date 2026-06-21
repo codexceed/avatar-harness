@@ -3,7 +3,7 @@
 A running catalog of the agent / harness / eval failure modes discovered while building and
 dogfooding avatar-harness. Each entry records the **mechanism**, the **evidence** (trajectory,
 PR, or ADR), its **status**, and the **article** it feeds. This is the connective tissue for the
-blog series (`docs/blog-candidates.md`) and a research artifact in its own right.
+blog series (`docs/blogging/blog-candidates.md`) and a research artifact in its own right.
 
 **The meta-pattern this catalog exists to make legible:** a large fraction of "agent failures"
 are *not the model* — they are the **scaffold** (the harness) or the **metric** (the eval).

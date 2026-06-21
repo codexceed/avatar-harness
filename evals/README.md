@@ -38,12 +38,23 @@ make eval
 # A model matrix (the sonnet-class trio), 3 seeds each:
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 
+# The standing reliability matrix — a named shortcut for the recurring regression run:
+#   the four tracked models × 5 seeds, 8-way concurrent, output kept (--no-cleanup).
+make eval-matrix
+make eval-matrix SEEDS=3 CONCURRENCY=4                       # any knob is overridable
+make eval-matrix MATRIX_MODELS="minimax/minimax-m3,z-ai/glm-5.2"  # swap the model set
+
 # make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
 make eval MODELS="openai/gpt-5.1" SEEDS=1 NO_CLEANUP=1
 
 # Or invoke the module directly:
 uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
+
+> **`make eval-matrix`** pins the four models we track for regressions
+> (`minimax/minimax-m3,z-ai/glm-5.1,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
+> `CONCURRENCY=8`, `NO_CLEANUP=1`. It delegates to `eval` via target-specific variables, so a
+> command-line `SEEDS=`/`CONCURRENCY=`/`MODELS=` (or `MATRIX_MODELS=` for the model set) still wins.
 
 **Requirements:** `AVATAR_API_KEY` (+ `AVATAR_BASE_URL`, default OpenRouter) in `.env` — the same
 credentials the agent harness uses. Runs cost real API spend (the agent's model calls); the probe

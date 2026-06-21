@@ -324,6 +324,12 @@ establishes the signal can't be gamed.
 3. **"Native tool calls fixed one class of patch failures, not all editing failures."**
    - Evidence: malformed JSON decision trace before; successful `write_file`/tool-call trace after.
    - Purpose: pragmatic agent-tooling lesson.
+4. **"Errors disguised as success: making a harness resilient to a flaky provider."** ⭐ *strong standalone empirical post*
+   - Story: bounded concurrency (ADR-0026) made `minimax/minimax-m3` (OpenRouter) **hang ~5 min then return a `\x00` NUL body as HTTP 200** — a provider error disguised as success. It dropped pass@1 0.90→0.85 and *looked like a code regression*; a serial control run (20/20, 0 NULs) proved it was transport, not capability. Fixed in two layers — **request-level** (bound the call, classify NUL as transport, backoff+jitter retry, surface as system failure: ADR-0028 R1–R4, PR #87) then **streamed-chunk-level** (idle timeout via httpx `read` + async true-mid-call cancellation + session-scoped streaming fallback: ADR-0029 R5, PR #89). Side-quests: the SDK "timeout" is per-read, not total (a 358 s call passed a 240 s bound); a 647 s/22k-token streamed call survived a 30 s idle bound (slow ≠ stalled); the fallback was un-observable until we added a `streaming_fallback` event + `native_stream` tag (then proved streaming live on 491/491 turns).
+   - Evidence: six eval runs (`evals/results/2026062*Z.jsonl` + journals), ADR-0026/0028/0029, failure-mode **A9**, PRs #84/#87/#89, a `wait_for` micro-benchmark (~1.4 µs/chunk).
+   - Reusable principle: **classify provider failures by layer** — dead/empty reply = *transport* (re-issue), malformed-but-present = *model* (re-prompt), slow-but-streaming = *neither* (leave it). Conflating them pollutes context or murders legit work.
+   - **Full writing kit:** [`blog_kits/provider-reliability-retries.md`](blog_kits/provider-reliability-retries.md) (narrative, code, eval tables, decisions, the 4-question scaffold).
+   - Caveat to write honestly: the *recovery* half is unexercised by a real hang (needs fault injection); pass@1 deltas aren't significant — it's a failure-mode/resilience case study, not a leaderboard.
 
 ### Path D — Product/kernel boundary
 

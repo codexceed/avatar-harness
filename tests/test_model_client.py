@@ -1,9 +1,12 @@
+import asyncio
 import importlib
 import importlib.util
 import sys
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import APIStatusError
 
 from avatar.config import HarnessConfig
 from avatar.context import ContextBuilder, ContextPacket, ToolSummary
@@ -16,6 +19,7 @@ from avatar.model_client import (
     ModelClient,
     ModelDecision,
     OpenAIModelClient,
+    StreamingUnsupportedError,
     ToolCall,
     TransportError,
     _is_empty_body,
@@ -96,6 +100,69 @@ def _fake_openai_messages(messages: list, captured: list[dict] | None = None):
         if captured is not None:
             captured.append(kwargs)
         return SimpleNamespace(choices=[SimpleNamespace(message=next(replies))])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+async def _no_asleep(_seconds: float) -> None:
+    """An async no-op sleeper so transport-retry backoff doesn't actually wait in tests."""
+
+
+def _afake_openai_messages(messages: list, captured: list[dict] | None = None):
+    """Async non-streaming transport: returns each prebuilt reply *message* in turn (ADR-0029)."""
+    replies = iter(messages)
+
+    async def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=next(replies))])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+class _AsyncStream:
+    """A minimal async stand-in for the OpenAI `AsyncStream`: `async for` chunks + `aclose`/`close`."""
+
+    def __init__(self, chunks: list, *, fail=None) -> None:
+        self._chunks = chunks
+        self._fail = fail  # an exception instance to raise mid-iteration (an idle stall, say)
+        self.closed = False
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for chunk in self._chunks:
+            yield chunk
+        if self._fail is not None:
+            raise self._fail
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _chunk(*, content: str | None = None, tool_calls: list | None = None, usage=None):
+    """One streamed completion chunk (a `choices[0].delta` + optional usage-only tail)."""
+    if content is None and tool_calls is None:
+        return SimpleNamespace(choices=[], usage=usage)  # usage-only final chunk
+    delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=usage)
+
+
+def _tc_delta(index: int, *, call_id=None, name=None, arguments=None):
+    """One streamed tool-call delta fragment (id/name once, arguments in pieces)."""
+    fn = SimpleNamespace(name=name, arguments=arguments)
+    return SimpleNamespace(index=index, id=call_id, function=fn)
+
+
+def _afake_openai_streams(streams: list, captured: list[dict] | None = None):
+    """Async streaming transport: returns each `_AsyncStream` in turn from a `stream=True` create."""
+    it = iter(streams)
+
+    async def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        return next(it)
 
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
@@ -324,14 +391,14 @@ def test_request_timeout_default_is_calibrated():
 def test_runner_surfaces_transport_error_not_incomplete(tmp_path, read_registry):
     (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-    def create(**kwargs):
+    async def create(**kwargs):
         return SimpleNamespace(choices=[SimpleNamespace(message=_nul_reply())])
 
     nul_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    config = HarnessConfig()
-    model_client = OpenAIModelClient(
-        config, client=nul_client, transport_max_retries=1, sleep=lambda _s: None
-    )
+    # The runner now drives the async path (ADR-0029 R5); non-streaming keeps this transport test
+    # focused on the retry/surface semantics (which streaming and non-streaming share).
+    config = HarnessConfig(stream_model_calls=False)
+    model_client = OpenAIModelClient(config, aclient=nul_client, transport_max_retries=1, asleep=_no_asleep)
     deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
     emitter = Emitter()
     seen: list[str] = []
@@ -395,7 +462,7 @@ def test_runner_journals_recovered_transport_retry(tmp_path, read_registry):
     final = _msg(tool_calls=[_tc("final_answer", '{"answer": "found it"}')])
     replies = iter([nul])
 
-    def create(**kwargs):
+    async def create(**kwargs):
         try:
             message = next(replies)
         except StopIteration:
@@ -403,10 +470,8 @@ def test_runner_journals_recovered_transport_retry(tmp_path, read_registry):
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     client_obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    config = HarnessConfig()
-    model_client = OpenAIModelClient(
-        config, client=client_obj, transport_max_retries=2, sleep=lambda _s: None
-    )
+    config = HarnessConfig(stream_model_calls=False)
+    model_client = OpenAIModelClient(config, aclient=client_obj, transport_max_retries=2, asleep=_no_asleep)
     deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
     emitter = Emitter()
     seen: list[str] = []
@@ -427,6 +492,38 @@ def test_runner_journals_recovered_transport_retry(tmp_path, read_registry):
     assert "decision_error" not in seen  # ...not mislabeled as a parse error
     # ...and a transport failure NEVER enters the model's context (no feedback evidence for it).
     assert not any(ev.kind.startswith("transport") for ev in result.evidence)
+
+
+def test_runner_journals_streaming_fallback(tmp_path, read_registry):
+    # A provider that rejects stream=True flips the session to non-streaming; the runner journals a
+    # `streaming_fallback` event (R5 observability) so an eval can tell streaming was attempted.
+    final = _msg(tool_calls=[_tc("final_answer", '{"answer": "found it"}')])
+
+    async def create(**kwargs):
+        if kwargs.get("stream"):
+            raise _api_status_error(400, "streaming is not supported for this model")
+        return SimpleNamespace(choices=[SimpleNamespace(message=final)])
+
+    client_obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    config = HarnessConfig()  # stream_model_calls=True default → streaming attempted, then falls back
+    model_client = OpenAIModelClient(config, aclient=client_obj, transport_max_retries=2, asleep=_no_asleep)
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    emitter = Emitter()
+    seen: list[str] = []
+    emitter.subscribe(lambda event: seen.append(str(event["type"])))
+    runner = AgentRunner(
+        model_client=model_client,
+        registry=read_registry,
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=emitter,
+        config=config,
+    )
+
+    runner.run(TaskState(goal="where is it?", task_kind="investigate"))
+
+    assert "streaming_fallback" in seen  # the capability fallback is visible in the journal
 
 
 def test_native_plain_content_falls_back_to_json_decision():
@@ -791,6 +888,89 @@ def test_truncated_retry_excerpt_is_marked():
     assert "[truncated" in raw  # but loudly
 
 
+def _fake_async_openai_messages(messages: list, captured: list[dict] | None = None):
+    """An async transport returning each prebuilt reply *message* in turn (non-streaming path)."""
+    replies = iter(messages)
+
+    async def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=next(replies))])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+async def test_adecide_parses_native_decision():
+    # The non-streaming async path (`stream_model_calls=False` → `_adecide_native_async`).
+    reply = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", stream_model_calls=False), aclient=_fake_async_openai_messages([reply])
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert decision.action.name == "read_file"
+    assert decision.transport == "native"
+
+
+async def test_adecide_retries_then_succeeds():
+    # Same malformed-then-valid retry path as the sync driver, sharing the parse-retry loop.
+    bad = _msg(tool_calls=[_tc("read_file", "{not json")])
+    good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    captured: list[dict] = []
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", stream_model_calls=False),
+        aclient=_fake_async_openai_messages([bad, good], captured),
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert len(decision.retry_trace) == 1  # the malformed attempt is recorded, not swallowed
+    assert len(captured) == 2  # it retried in-conversation
+
+
+async def test_adecide_json_transport():
+    content = '{"thought_summary": "done", "action": {"type": "final_answer", "answer": "x"}}'
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", native_tool_calls=False, stream_model_calls=False),
+        aclient=_fake_async_openai_messages([_msg(content=content)]),
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert decision.transport == "json"
+
+
+async def test_adecide_cancellation_aborts_in_flight_call():
+    # Cancelling the awaiting task raises CancelledError *at the in-flight call* (httpx aborts
+    # the socket there) and propagates out of adecide — it is never swallowed (ADR-0030, the
+    # guarantee the runner's cancel-race relies on). Simulated with a create() that blocks.
+    started = asyncio.Event()
+    saw_cancel: dict = {}
+
+    async def create(**kwargs):
+        started.set()
+        try:
+            await asyncio.sleep(30)  # a slow in-flight request
+        except asyncio.CancelledError:
+            saw_cancel["v"] = True  # httpx would abort the socket at this point
+            raise
+        return SimpleNamespace(choices=[SimpleNamespace(message=_msg(content="never"))])  # pragma: no cover
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    mc = OpenAIModelClient(HarnessConfig(model="m", stream_model_calls=False), aclient=client)
+
+    task = asyncio.create_task(mc.adecide(_packet()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert saw_cancel.get("v")  # the cancel reached the in-flight call, not just the wrapper
+
+
 def test_request_uses_config_temperature():
     # Eval reliability (pass^k) needs temperature>0 so each seed is an independent sample;
     # the request temperature must come from config (default 0.0 keeps the loop deterministic).
@@ -802,3 +982,235 @@ def test_request_uses_config_temperature():
     )
     client.decide(_packet())
     assert captured[0]["temperature"] == 0.5
+
+
+# --- ADR-0029 R5: async streaming, idle timeout, session-scoped fallback ---
+
+
+def _api_status_error(status: int, message: str):
+    """A real `openai.APIStatusError` carrying `status_code`/`message` for the discrimination rule."""
+    response = httpx.Response(status, request=httpx.Request("POST", "https://x"))
+    return APIStatusError(message, response=response, body=None)
+
+
+async def test_streaming_reassembles_tool_call_matching_nonstream():
+    # The reassembly anchor: id+name arrive once, arguments stream in fragments, usage in the tail.
+    # The reassembled decision must equal the one the non-streaming path produces for the same call.
+    stream = _AsyncStream(
+        [
+            _chunk(tool_calls=[_tc_delta(0, call_id="call_1", name="read_file", arguments='{"pa')]),
+            _chunk(tool_calls=[_tc_delta(0, arguments='th": "app.py"}')]),
+            _chunk(usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5)),
+        ]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), aclient=_afake_openai_streams([stream]), asleep=_no_asleep
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert decision.action.name == "read_file"
+    assert decision.action.input == {"path": "app.py"}
+    assert decision.transport == "native_stream"  # streamed → tagged distinctly (R5 observability)
+    assert decision.usage is not None
+    assert decision.usage.prompt_tokens == 10  # usage read from the stream's final chunk
+    assert decision.usage.completion_tokens == 5
+    assert stream.closed is True  # the stream is always closed
+
+    # Equivalence anchor: the same call over the non-streaming async path yields the same action.
+    nonstream = OpenAIModelClient(
+        HarnessConfig(model="m", stream_model_calls=False),
+        aclient=_afake_openai_messages([_msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])]),
+        asleep=_no_asleep,
+    )
+    nd = await nonstream.adecide(_packet())
+    assert nd.action == decision.action
+
+
+async def test_streaming_idle_timeout_reaches_sdk_as_per_call_timeout():
+    # The core R5 mechanism end-to-end: request_idle_timeout_seconds is handed to the SDK as the
+    # per-call httpx read timeout (the idle watchdog). Asserted on the captured create() kwargs, so
+    # the *wiring* is covered, not just the behaviour-on-injected-ReadTimeout the other tests use.
+    captured: list[dict] = []
+    stream = _AsyncStream(
+        [
+            _chunk(tool_calls=[_tc_delta(0, call_id="c", name="read_file", arguments='{"path": "a.py"}')]),
+            _chunk(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1)),
+        ]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", request_idle_timeout_seconds=12.5),
+        aclient=_afake_openai_streams([stream], captured),
+        asleep=_no_asleep,
+    )
+
+    await client.adecide(_packet())
+
+    assert captured[0]["stream"] is True
+    assert captured[0]["timeout"] == 12.5  # the idle bound reaches the SDK as the per-call timeout
+
+
+async def test_streaming_multi_tool_call_reassembles_index_zero():
+    # _areassemble accumulates every index but uses only index 0 (one action per turn, §6). A
+    # provider that streams two parallel tool calls must still yield the index-0 action cleanly,
+    # with its arguments joined across fragments and the index-1 call ignored.
+    stream = _AsyncStream(
+        [
+            _chunk(tool_calls=[_tc_delta(0, call_id="c0", name="read_file", arguments='{"path": ')]),
+            _chunk(tool_calls=[_tc_delta(1, call_id="c1", name="search_repo", arguments='{"query": "x"}')]),
+            _chunk(tool_calls=[_tc_delta(0, arguments='"app.py"}')]),
+            _chunk(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1)),
+        ]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"), aclient=_afake_openai_streams([stream]), asleep=_no_asleep
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert decision.action.name == "read_file"  # index 0, not the index-1 search_repo
+    assert decision.action.input == {"path": "app.py"}  # index-0 args joined across fragments
+
+
+async def test_streaming_unsupported_flips_flag_and_falls_back_session_scoped():
+    # MANDATED: a streaming-rejection 4xx flips the per-instance flag once; the SAME request then
+    # succeeds non-streaming, and every later call skips streaming entirely (no `stream=True`).
+    captured: list[dict] = []
+    final = _msg(tool_calls=[_tc("final_answer", '{"answer": "done"}')])
+    reject = _api_status_error(400, "streaming is not supported for this model")
+
+    async def create(**kwargs):
+        captured.append(kwargs)
+        if kwargs.get("stream"):
+            raise reject
+        return SimpleNamespace(choices=[SimpleNamespace(message=final)])
+
+    aclient = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = OpenAIModelClient(HarnessConfig(model="m"), aclient=aclient, asleep=_no_asleep)
+
+    d1 = await client.adecide(_packet())
+    assert isinstance(d1.action, FinalAnswer)  # recovered via the non-streaming fallback
+    assert client._streaming_unsupported is True
+    assert captured[0]["stream"] is True and "stream" not in captured[1]  # streamed once, then fell back
+    assert "streaming is not supported" in d1.streaming_fallback  # the flip reason is surfaced (R5 obs.)
+    assert d1.transport == "native"  # the fallback turn ran non-streamed
+
+    captured.clear()
+    d2 = await client.adecide(_packet())
+    assert isinstance(d2.action, FinalAnswer)
+    assert all(not c.get("stream") for c in captured)  # session-scoped: never streams again
+    assert d2.streaming_fallback == ""  # the signal fires only on the flip turn, not every later turn
+
+
+async def test_streaming_idle_stall_retries_as_transport_not_fallback():
+    # An inter-chunk idle stall surfaces as httpx.ReadTimeout → TransportError → R3 retry (re-issue),
+    # NOT a capability fallback: the flag stays down and the backoff sleeper is used.
+    slept: list[float] = []
+
+    async def sleeper(seconds: float) -> None:
+        slept.append(seconds)
+
+    stall = _AsyncStream(
+        [_chunk(tool_calls=[_tc_delta(0, call_id="c", name="read_file", arguments='{"pa')])],
+        fail=httpx.ReadTimeout("idle"),
+    )
+    good = _AsyncStream(
+        [
+            _chunk(tool_calls=[_tc_delta(0, call_id="c", name="read_file", arguments='{"path": "a.py"}')]),
+            _chunk(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1)),
+        ]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"),
+        aclient=_afake_openai_streams([stall, good]),
+        transport_max_retries=2,
+        asleep=sleeper,
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert len(decision.transport_trace) == 1  # one recovered idle stall
+    assert client._streaming_unsupported is False  # a stall is transient, not a capability verdict
+    assert len(slept) == 1  # backoff slept once before the re-issue
+    assert stall.closed is True  # the stalled stream was still closed
+
+
+async def test_empty_stream_is_transport_retried():
+    # An empty reassembled body (no tool calls, blank content) is EmptyResponseError → R3, exactly
+    # like the non-streaming NUL case (ADR-0028 R2).
+    empty = _AsyncStream(
+        [_chunk(content=""), _chunk(usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0))]
+    )
+    good = _AsyncStream(
+        [_chunk(tool_calls=[_tc_delta(0, call_id="c", name="final_answer", arguments='{"answer": "x"}')])]
+    )
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"),
+        aclient=_afake_openai_streams([empty, good]),
+        transport_max_retries=2,
+        asleep=_no_asleep,
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert len(decision.transport_trace) == 1  # the empty stream was a recovered transport failure
+
+
+async def test_streaming_broken_framing_falls_back_no_index_zero():
+    # Tool-call deltas that never use index 0 are unusable framing → StreamingUnsupportedError →
+    # non-streaming fallback (a capability problem, not a parse one).
+    bad = _AsyncStream([_chunk(tool_calls=[_tc_delta(1, call_id="c", name="read_file", arguments="{}")])])
+    final = _msg(tool_calls=[_tc("final_answer", '{"answer": "done"}')])
+
+    async def create(**kwargs):
+        if kwargs.get("stream"):
+            return bad
+        return SimpleNamespace(choices=[SimpleNamespace(message=final)])
+
+    aclient = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = OpenAIModelClient(HarnessConfig(model="m"), aclient=aclient, asleep=_no_asleep)
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert client._streaming_unsupported is True  # framing failure flipped the flag
+
+
+async def test_streaming_invalid_args_is_parse_error_not_fallback():
+    # Well-framed call (index 0, name + id) but invalid-JSON arguments is model-correctable:
+    # it surfaces as DecisionParseError (the runner re-prompts next turn) and does NOT flip the flag.
+    def _bad():
+        frag = _tc_delta(0, call_id="c", name="read_file", arguments="{not json")
+        return _AsyncStream([_chunk(tool_calls=[frag])])
+
+    client = OpenAIModelClient(
+        HarnessConfig(model="m"),
+        aclient=_afake_openai_streams([_bad(), _bad(), _bad()]),
+        max_parse_retries=2,
+        asleep=_no_asleep,
+    )
+
+    with pytest.raises(DecisionParseError):
+        await client.adecide(_packet())
+    assert client._streaming_unsupported is False  # a bad-args reply is not a capability verdict
+
+
+async def test_adecide_bridge_offloads_sync_decide_for_fakes():
+    # A plain ModelClient fake (no adecide override) is driven through the async entry point via the
+    # to_thread bridge — the 8 suite fakes keep working unchanged under the runner's async path.
+    class _Fake(ModelClient):
+        def decide(self, context):
+            return ModelDecision(action=FinalAnswer(answer="bridged"))
+
+    decision = await _Fake().adecide(_packet())
+    assert isinstance(decision.action, FinalAnswer)
+    assert decision.action.answer == "bridged"
+
+
+def test_streaming_unsupported_is_not_a_transport_error():
+    # It must NOT be retried at the transport layer (re-issuing the same stream fails identically).
+    assert not issubclass(StreamingUnsupportedError, TransportError)
