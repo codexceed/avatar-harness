@@ -1,8 +1,6 @@
 """Run-scoped dependencies handed to tools and the runtime (§8).
 
-Tools receive these explicitly — never via globals — so a run stays
-self-contained and replayable. Phase 1 carries the minimum the read tools
-need; `state` and `event_log` join when the runner is built.
+Passed explicitly — never via globals — so a run stays self-contained and replayable.
 """
 
 import asyncio

@@ -84,10 +84,8 @@ class ModelDecision(BaseModel):
     transport: str = ""
 
 
-# Cap on the raw-reply excerpt kept per malformed attempt (journal/evidence detail).
-# An edit-bearing attempt gets a higher cap: a failed `str_replace`/`write_file` is only
-# useful to retry WITH its payload, and the flat cap cut real edits mid-body, so the model
-# retried blind and re-emitted the same error (loop-determinism hardening).
+# Per-attempt excerpt cap; edits get a higher cap so a failed `str_replace`/`write_file` keeps its
+# payload for retry (a flat cap cut edits mid-body → the model retried blind, re-emitting the error).
 _RAW_EXCERPT_CAP = 2000
 _PATCH_EXCERPT_CAP = 12000
 # Markers that say a raw reply is carrying a large edit payload (kept whole in the excerpt).
@@ -211,8 +209,7 @@ def parse_decision(raw: str) -> ModelDecision:
         decision = ModelDecision.model_validate(data)
     except ValidationError as exc:
         raise DecisionParseError(f"invalid decision: {exc.errors(include_url=False)}") from exc
-    # `retry_trace`/`transport_trace`/`usage`/`transport` are harness-owned channels: a model
-    # emitting the fields must not plant fake history, bill itself kindly, or impersonate a transport.
+    # Harness-owned channels: a model emitting these must not plant fake history or usage.
     decision.retry_trace = []
     decision.transport_trace = []
     decision.usage = None
@@ -722,9 +719,8 @@ class OpenAIModelClient(ModelClient):
             The validated decision for the current turn.
         """
         client = self._ensure_client()
-        # Wrap the per-transport attempt in the transport-retry loop (ADR-0028 R3): each attempt
-        # rebuilds its messages from `context`, so a retry re-issues the SAME request. The inner
-        # parse-retry (re-prompting on malformed-but-non-empty output) stays inside the attempt.
+        # Each transport-retry attempt rebuilds messages from `context` → re-issues the SAME request
+        # (ADR-0028 R3); the parse-retry (re-prompting on malformed output) stays inside the attempt.
         if self.config.native_tool_calls:
             return self._transport_retry(lambda: self._decide_native(client, context))
         return self._transport_retry(lambda: self._decide_json(client, context))
@@ -959,26 +955,31 @@ class OpenAIModelClient(ModelClient):
         return SimpleNamespace(content=content, tool_calls=[call]), usage_obj
 
     def _native_decision_from_message(
-        self, message: Any, messages: list[dict], trace: list[DecisionRetryNote]
+        self, message: Any, messages: list[dict], trace: list[DecisionRetryNote], tally: _UsageTally
     ) -> tuple[ModelDecision | None, list[dict], DecisionParseError | None]:
-        """Map one native reply message to a decision, or extend `messages` to re-prompt (§6, §18).
+        """Empty-check + map a native reply to a decision, or extend `messages` to re-prompt (§6/§18).
 
-        Shared by the async streaming and async non-streaming native paths (the reassembled and the
-        real message are the same shape). Mirrors the sync `_decide_native` per-reply logic. Does
-        NOT set `usage`/`retry_trace`/`transport`-usage — the caller owns the tally and trace.
+        Shared by every native path (sync, async non-streaming, and the reassembled stream — same
+        message shape). Sets `.transport`; the caller owns the tally/trace.
 
         Args:
             message: The reply message (real or reassembled): `.content`, `.tool_calls`.
             messages: The conversation so far.
             trace: The in-client retry trace; a malformed attempt is appended here.
+            tally: The running usage tally, billed onto an `EmptyResponseError`.
 
         Returns:
-            `(decision, messages, None)` on success (with `.transport` set), or
-            `(None, extended_messages, error)` when the attempt was malformed and the conversation
-            was extended to re-prompt the SAME action.
+            `(decision, messages, None)` on success, or `(None, extended, error)` on a malformed
+            attempt (conversation extended to re-prompt the SAME action).
+
+        Raises:
+            EmptyResponseError: On an empty/NUL body with no tool call — a transport failure, NOT a
+                parse retry (re-issued, not re-prompted); a tool call takes precedence (ADR-0028 R2).
         """
         calls = getattr(message, "tool_calls", None)
         raw_content = message.content or ""
+        if not calls and _is_empty_body(raw_content):
+            raise EmptyResponseError(f"empty model reply ({len(raw_content)} chars)", usage=tally.total())
         if calls:
             call = calls[0]  # one action per turn (§6)
             try:
@@ -1005,8 +1006,11 @@ class OpenAIModelClient(ModelClient):
         try:
             decision = parse_decision(raw_content)  # endpoint ignored tools= — legacy fallback
         except DecisionParseError as exc:
-            excerpt = _excerpt(raw_content, patch=_carries_patch(raw_content))
-            trace.append(DecisionRetryNote(error=str(exc), raw=excerpt))
+            trace.append(
+                DecisionRetryNote(
+                    error=str(exc), raw=_excerpt(raw_content, patch=_carries_patch(raw_content))
+                )
+            )
             retry = (
                 f"That was not a valid decision ({exc}). Call one of the provided tools "
                 "— re-send the SAME intended action, do not switch to a different one."
@@ -1020,6 +1024,164 @@ class OpenAIModelClient(ModelClient):
         decision.transport = "json_fallback"  # native asked, endpoint answered in prose
         return decision, messages, None
 
+    def _json_decision_from_message(
+        self, message: Any, messages: list[dict], trace: list[DecisionRetryNote], tally: _UsageTally
+    ) -> tuple[ModelDecision | None, list[dict], DecisionParseError | None]:
+        """Empty-check + map a legacy-JSON reply to a decision, or extend `messages` to re-prompt (§6).
+
+        Args:
+            message: The reply message (`.content` carries the JSON object).
+            messages: The conversation so far.
+            trace: The in-client retry trace; a malformed attempt is appended here.
+            tally: The running usage tally, billed onto an `EmptyResponseError`.
+
+        Returns:
+            `(decision, messages, None)` on success, or `(None, extended, error)` on a malformed attempt.
+
+        Raises:
+            EmptyResponseError: On an empty/NUL body (a transport failure, ADR-0028 R2).
+        """
+        raw = message.content or ""
+        if _is_empty_body(raw):
+            raise EmptyResponseError(f"empty model reply ({len(raw)} chars)", usage=tally.total())
+        try:
+            decision = parse_decision(raw)
+        except DecisionParseError as exc:
+            trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
+            retry = (
+                f"That was not a valid decision ({exc}). Re-send the SAME intended "
+                "action as one valid JSON decision — do not switch to a different action."
+            )
+            extended = [*messages, {"role": "assistant", "content": raw}, {"role": "user", "content": retry}]
+            return None, extended, exc
+        decision.transport = "json"  # native disabled (the legacy escape hatch)
+        return decision, messages, None
+
+    def _fetch_sync(self, client: Any, messages: list[dict], **create_kwargs: Any) -> tuple[Any, Any]:
+        """Issue one sync create; return its reply message and the response (usage carrier).
+
+        Args:
+            client: The OpenAI-compatible client.
+            messages: The conversation for this attempt.
+            **create_kwargs: `tools` or `response_format`.
+
+        Returns:
+            A `(message, usage_carrier)` pair for the parse-retry loop.
+        """
+        response = self._create(client, messages=messages, **create_kwargs)
+        return response.choices[0].message, response
+
+    async def _afetch(self, client: Any, messages: list[dict], **create_kwargs: Any) -> tuple[Any, Any]:
+        """Async non-streaming twin of `_fetch_sync`.
+
+        Args:
+            client: The async OpenAI-compatible client.
+            messages: The conversation for this attempt.
+            **create_kwargs: `tools` or `response_format`.
+
+        Returns:
+            A `(message, usage_carrier)` pair for the parse-retry loop.
+        """
+        response = await self._acreate(client, messages=messages, **create_kwargs)
+        return response.choices[0].message, response
+
+    async def _afetch_stream(
+        self, client: Any, messages: list[dict], **create_kwargs: Any
+    ) -> tuple[Any, Any]:
+        """Stream + reassemble one reply (ADR-0029 R5); return the message and a usage carrier.
+
+        Args:
+            client: The async OpenAI-compatible client.
+            messages: The conversation for this attempt.
+            **create_kwargs: `tools` for the streaming call.
+
+        Returns:
+            A `(message, usage_carrier)` pair for the parse-retry loop.
+        """
+        message, usage_obj = await self._areassemble(client, messages=messages, **create_kwargs)
+        return message, SimpleNamespace(usage=usage_obj)
+
+    def _parse_retry(
+        self,
+        messages: list[dict],
+        fetch: Callable[..., Any],
+        handle: Callable[..., Any],
+        client: Any,
+        create_kwargs: dict[str, Any],
+    ) -> ModelDecision:
+        """Sync parse-retry loop: fetch a reply, map it, re-prompt malformed attempts (§6, ADR-0028 R2).
+
+        Each attempt re-issues the SAME request; `usage` sums across attempts; `handle` raises
+        `EmptyResponseError` (transport) on an empty body and re-prompts a malformed one.
+
+        Args:
+            messages: The initial conversation (rebuilt on each malformed attempt).
+            fetch: `fetch(client, messages, **create_kwargs) -> (message, usage_carrier)`.
+            handle: `handle(message, messages, trace, tally) -> (decision|None, messages, error)`.
+            client: The OpenAI-compatible client passed to `fetch`.
+            create_kwargs: `tools`/`response_format` passed to `fetch`.
+
+        Returns:
+            The validated decision (with `retry_trace`/`usage` set).
+
+        Raises:
+            DecisionParseError: When every attempt is malformed (an empty body raises
+                `EmptyResponseError` from `handle`, propagating as a transport failure).
+        """
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        last_error: DecisionParseError | None = None
+        for _ in range(self.max_parse_retries + 1):
+            message, usage_carrier = fetch(client, messages, **create_kwargs)
+            tally.add(usage_carrier)
+            decision, messages, last_error = handle(message, messages, trace, tally)
+            if decision is not None:
+                decision.retry_trace = trace
+                decision.usage = tally.total()
+                return decision
+        raise DecisionParseError(
+            str(last_error) if last_error else "model returned no valid decision", usage=tally.total()
+        ) from last_error
+
+    async def _aparse_retry(
+        self,
+        messages: list[dict],
+        fetch: Callable[..., Any],
+        handle: Callable[..., Any],
+        client: Any,
+        create_kwargs: dict[str, Any],
+    ) -> ModelDecision:
+        """Async twin of `_parse_retry` (only the fetch is awaited).
+
+        Args:
+            messages: The initial conversation (rebuilt on each malformed attempt).
+            fetch: Awaitable `fetch(client, messages, **create_kwargs) -> (message, usage_carrier)`.
+            handle: `handle(message, messages, trace, tally) -> (decision|None, messages, error)`.
+            client: The async OpenAI-compatible client passed to `fetch`.
+            create_kwargs: `tools`/`response_format` passed to `fetch`.
+
+        Returns:
+            The validated decision (with `retry_trace`/`usage` set).
+
+        Raises:
+            DecisionParseError: When every attempt is malformed (an empty body raises
+                `EmptyResponseError` from `handle`, propagating as a transport failure).
+        """
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        last_error: DecisionParseError | None = None
+        for _ in range(self.max_parse_retries + 1):
+            message, usage_carrier = await fetch(client, messages, **create_kwargs)
+            tally.add(usage_carrier)
+            decision, messages, last_error = handle(message, messages, trace, tally)
+            if decision is not None:
+                decision.retry_trace = trace
+                decision.usage = tally.total()
+                return decision
+        raise DecisionParseError(
+            str(last_error) if last_error else "model returned no valid decision", usage=tally.total()
+        ) from last_error
+
     async def _adecide_native_stream(self, client: Any, context: ContextPacket) -> ModelDecision:
         """One streamed native decision (ADR-0029 R5): reassemble, then reuse the §6 parse path.
 
@@ -1029,36 +1191,17 @@ class OpenAIModelClient(ModelClient):
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output (valid envelope, bad args).
-            EmptyResponseError: If the reassembled reply is an empty/NUL body (a transport failure).
         """
-        # `_areassemble` may also raise `StreamingUnsupportedError` (unusable framing) — it propagates
-        # to `adecide`, which flips the per-instance flag and falls back to the non-streaming path.
-        messages: list[dict] = list(build_messages(context, native_tools=True))
-        tools = build_tool_schemas(context)
-        last_error: DecisionParseError | None = None
-        trace: list[DecisionRetryNote] = []
-        tally = _UsageTally()
-        for _ in range(self.max_parse_retries + 1):
-            message, usage_obj = await self._areassemble(client, messages=messages, tools=tools)
-            tally.add(SimpleNamespace(usage=usage_obj))
-            if not message.tool_calls and _is_empty_body(message.content or ""):
-                raise EmptyResponseError(
-                    f"empty model reply ({len(message.content or '')} chars)", usage=tally.total()
-                )
-            decision, messages, last_error = self._native_decision_from_message(message, messages, trace)
-            if decision is not None:
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                return decision
-        raise DecisionParseError(
-            str(last_error) if last_error else "model returned no valid decision", usage=tally.total()
-        ) from last_error
+        return await self._aparse_retry(
+            list(build_messages(context, native_tools=True)),
+            self._afetch_stream,
+            self._native_decision_from_message,
+            client,
+            {"tools": build_tool_schemas(context)},
+        )
 
     async def _adecide_native_async(self, client: Any, context: ContextPacket) -> ModelDecision:
-        """One non-streaming native decision over the async client (the D4 fallback path).
+        """One non-streaming native decision over the async client (the D4 streaming fallback).
 
         Args:
             client: The async OpenAI-compatible client.
@@ -1066,32 +1209,14 @@ class OpenAIModelClient(ModelClient):
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output.
-            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
         """
-        messages: list[dict] = list(build_messages(context, native_tools=True))
-        tools = build_tool_schemas(context)
-        last_error: DecisionParseError | None = None
-        trace: list[DecisionRetryNote] = []
-        tally = _UsageTally()
-        for _ in range(self.max_parse_retries + 1):
-            response = await self._acreate(client, messages=messages, tools=tools)
-            tally.add(response)
-            message = response.choices[0].message
-            if not getattr(message, "tool_calls", None) and _is_empty_body(message.content or ""):
-                raise EmptyResponseError(
-                    f"empty model reply ({len(message.content or '')} chars)", usage=tally.total()
-                )
-            decision, messages, last_error = self._native_decision_from_message(message, messages, trace)
-            if decision is not None:
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                return decision
-        raise DecisionParseError(
-            str(last_error) if last_error else "model returned no valid decision", usage=tally.total()
-        ) from last_error
+        return await self._aparse_retry(
+            list(build_messages(context, native_tools=True)),
+            self._afetch,
+            self._native_decision_from_message,
+            client,
+            {"tools": build_tool_schemas(context)},
+        )
 
     async def _adecide_json_async(self, client: Any, context: ContextPacket) -> ModelDecision:
         """One non-streaming legacy-JSON decision over the async client (native disabled).
@@ -1102,42 +1227,14 @@ class OpenAIModelClient(ModelClient):
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output.
-            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
         """
-        messages = build_messages(context)
-        last_error: DecisionParseError | None = None
-        trace: list[DecisionRetryNote] = []
-        tally = _UsageTally()
-        for _ in range(self.max_parse_retries + 1):
-            response = await self._acreate(client, messages=messages, response_format={"type": "json_object"})
-            tally.add(response)
-            raw = response.choices[0].message.content or ""
-            if _is_empty_body(raw):
-                raise EmptyResponseError(f"empty model reply ({len(raw)} chars)", usage=tally.total())
-            try:
-                decision = parse_decision(raw)
-            except DecisionParseError as exc:
-                last_error = exc
-                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
-                retry = (
-                    f"That was not a valid decision ({exc}). Re-send the SAME intended "
-                    "action as one valid JSON decision — do not switch to a different action."
-                )
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": retry},
-                ]
-            else:
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                decision.transport = "json"
-                return decision
-        message = str(last_error) if last_error else "model returned no valid decision"
-        raise DecisionParseError(message, usage=tally.total()) from last_error
+        return await self._aparse_retry(
+            build_messages(context),
+            self._afetch,
+            self._json_decision_from_message,
+            client,
+            {"response_format": {"type": "json_object"}},
+        )
 
     def _create(self, client: Any, **kwargs: Any) -> Any:
         """Issue one `chat.completions.create`, mapping a call failure to `TransportError`.
@@ -1179,75 +1276,14 @@ class OpenAIModelClient(ModelClient):
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output.
-            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
         """
-        messages: list[dict] = list(build_messages(context, native_tools=True))
-        tools = build_tool_schemas(context)
-        last_error: DecisionParseError | None = None
-        trace: list[DecisionRetryNote] = []
-        tally = _UsageTally()  # every attempt costs tokens; the decision reports the sum
-        for _ in range(self.max_parse_retries + 1):
-            response = self._create(client, messages=messages, tools=tools)
-            tally.add(response)
-            message = response.choices[0].message
-            calls = getattr(message, "tool_calls", None)
-            raw_content = message.content or ""
-            # An empty / whitespace / all-NUL body with no tool call is a *transport* failure, not
-            # a parse error (ADR-0028 R2): raise so the transport-retry re-issues the request,
-            # rather than re-prompting the model for a dead reply. Tool calls take precedence.
-            if not calls and _is_empty_body(raw_content):
-                raise EmptyResponseError(f"empty model reply ({len(raw_content)} chars)", usage=tally.total())
-            if calls:
-                call = calls[0]  # the protocol is exactly one action per turn (§6)
-                try:
-                    decision = _decision_from_tool_call(call, thought=message.content or "")
-                except DecisionParseError as exc:
-                    last_error = exc
-                    raw = f"{call.function.name}({call.function.arguments or ''})"
-                    is_patch = call.function.name in ("str_replace", "write_file")
-                    trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=is_patch)))
-                    messages = [
-                        *messages,
-                        _assistant_call_message(message, call),
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.id,
-                            "content": (
-                                f"Invalid arguments ({exc}). Re-send the SAME intended "
-                                "action with valid arguments."
-                            ),
-                        },
-                    ]
-                    continue
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                decision.transport = "native"
-                return decision
-            raw = message.content or ""
-            try:
-                decision = parse_decision(raw)  # endpoint ignored tools= — legacy fallback
-            except DecisionParseError as exc:
-                last_error = exc
-                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
-                retry = (
-                    f"That was not a valid decision ({exc}). Call one of the provided tools "
-                    "— re-send the SAME intended action, do not switch to a different one."
-                )
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": retry},
-                ]
-                continue
-            decision.retry_trace = trace
-            decision.usage = tally.total()
-            decision.transport = "json_fallback"  # native asked, endpoint answered in prose
-            return decision
-        text = str(last_error) if last_error else "model returned no valid decision"
-        raise DecisionParseError(text, usage=tally.total()) from last_error
+        return self._parse_retry(
+            list(build_messages(context, native_tools=True)),
+            self._fetch_sync,
+            self._native_decision_from_message,
+            client,
+            {"tools": build_tool_schemas(context)},
+        )
 
     def _decide_json(self, client: Any, context: ContextPacket) -> ModelDecision:
         """One decision over the legacy single-JSON-object protocol (the escape hatch).
@@ -1258,44 +1294,11 @@ class OpenAIModelClient(ModelClient):
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output.
-            EmptyResponseError: If the reply is an empty/NUL body (a transport failure).
         """
-        messages = build_messages(context)
-        last_error: DecisionParseError | None = None
-        trace: list[DecisionRetryNote] = []
-        tally = _UsageTally()
-        for _ in range(self.max_parse_retries + 1):
-            response = self._create(client, messages=messages, response_format={"type": "json_object"})
-            tally.add(response)
-            raw = response.choices[0].message.content or ""
-            # Empty / NUL body → transport failure, not a parse retry (ADR-0028 R2).
-            if _is_empty_body(raw):
-                raise EmptyResponseError(f"empty model reply ({len(raw)} chars)", usage=tally.total())
-            try:
-                decision = parse_decision(raw)
-            except DecisionParseError as exc:
-                last_error = exc
-                # Annotate, don't swallow: the runner records each note as evidence and
-                # journals it, so a failed (e.g. truncated-patch) attempt stays visible.
-                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
-                retry = (
-                    f"That was not a valid decision ({exc}). Re-send the SAME intended "
-                    "action as one valid JSON decision — do not switch to a different action."
-                )
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": retry},
-                ]
-            else:
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                decision.transport = "json"  # native disabled (the legacy escape hatch)
-                return decision
-        # The loop only exits without returning via the except branch, which always
-        # sets last_error; the fallback keeps this total without an (O-stripped) assert.
-        message = str(last_error) if last_error else "model returned no valid decision"
-        raise DecisionParseError(message, usage=tally.total()) from last_error
+        return self._parse_retry(
+            build_messages(context),
+            self._fetch_sync,
+            self._json_decision_from_message,
+            client,
+            {"response_format": {"type": "json_object"}},
+        )
