@@ -33,7 +33,8 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0025](0025-persist-journal-refined-failure-mode.md) | Persist the journal-refined failure bucket on `ResultRow` (one classification, one source of truth) | Accepted — implemented 2026-06-18 |
 | [0026](0026-bounded-concurrency-in-the-eval-runner.md) | Bounded concurrency in the eval runner (thread pool over hermetic cells, opt-in) | Accepted — implemented 2026-06-19 |
 | [0027](0027-sandboxed-execution-trust-and-self-verification-calibration.md) | Sandboxed execution trust + self-verification calibration (Eval-0) | Proposed (R3 implemented 2026-06-20) |
-| [0028](0028-transport-retry-and-request-timeout.md) | Transport-layer retry + request timeout for model calls (NUL/hang resilience) | Proposed — R1–R4 implemented 2026-06-20 |
+| [0028](0028-transport-retry-and-request-timeout.md) | Transport-layer retry + request timeout for model calls (NUL/hang resilience) | Proposed — R1–R4 implemented 2026-06-20; R5 → ADR-0029 |
+| [0029](0029-streaming-idle-timeout-for-model-calls.md) | Streaming idle-timeout for model calls (ADR-0028 R5) | Proposed — awaiting approval |
 
 ## Conventions
 
