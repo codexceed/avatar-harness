@@ -2,7 +2,7 @@
 # `uv` manages the environment; the default dependency group (dev) is synced automatically.
 # Soft-gate tools run ephemerally via `uvx` to keep the locked dev env minimal.
 
-.PHONY: install test run lint format typecheck docstrings deps smoke \
+.PHONY: install test run eval eval-diff eval-matrix lint format typecheck docstrings deps smoke \
         docs-api docs-serve docs-validate check check-hard check-soft clean
 
 # Mintlify's CLI needs Node LTS (not 25+); use fnm to pin it (repo .node-version = 22).
@@ -35,6 +35,19 @@ eval:
 # Regression-diff two result files:  make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl
 eval-diff:
 	uv run python -m evals.diff $(BASELINE) $(CANDIDATE)
+
+# Standing reliability matrix: the four tracked models, 5 seeds, 8-way concurrent, output kept.
+# A named shortcut for the recurring regression run (delegates to `eval` via target-specific vars).
+# Command-line vars still win, so any knob is overridable:
+#   make eval-matrix                        # the pinned set: 4 models x 5 seeds, CONCURRENCY=8
+#   make eval-matrix SEEDS=3 CONCURRENCY=4  # override seeds/concurrency
+#   make eval-matrix MATRIX_MODELS="a,b"    # swap the model set
+MATRIX_MODELS ?= minimax/minimax-m3,z-ai/glm-5.1,openai/gpt-5.3-codex,z-ai/glm-5.2
+eval-matrix: MODELS = $(MATRIX_MODELS)
+eval-matrix: SEEDS = 5
+eval-matrix: CONCURRENCY = 8
+eval-matrix: NO_CLEANUP = 1
+eval-matrix: eval
 
 # --- Individual checks ---
 
