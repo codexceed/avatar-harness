@@ -9,6 +9,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 
+import pytest
 from conftest import ScriptedModel
 from pydantic import BaseModel
 
@@ -57,6 +58,40 @@ def _read_registry(tmp_path) -> ToolRegistry:
     for tool in (read_file, search_repo):
         reg.register(tool)
     return reg
+
+
+async def test_arun_cancellation_propagates_out_of_the_loop(tmp_path):
+    # ADR-0024: a cancel during the (async) model call must unwind arun at once. The narrow
+    # `except DecisionParseError` must not swallow CancelledError (a BaseException), and no
+    # outer handler may trap it — so cancelling the task raises straight out of arun.
+    started = asyncio.Event()
+
+    class _Blocking(ModelClient):
+        def decide(self, context):  # the runner uses adecide; decide must never be hit here
+            raise AssertionError("decide() should not be called when adecide is overridden")
+
+        async def adecide(self, context):
+            started.set()
+            await asyncio.sleep(30)  # a slow in-flight model call
+            raise AssertionError("the call should have been cancelled")  # pragma: no cover
+
+    config = HarnessConfig()
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    runner = AgentRunner(
+        model_client=_Blocking(),
+        registry=_read_registry(tmp_path),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+    )
+
+    task = asyncio.create_task(runner.arun(TaskState(goal="g", task_kind="investigate")))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 async def test_arun_drives_loop_to_terminal_outcome(tmp_path):

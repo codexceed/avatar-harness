@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import importlib.util
 import sys
@@ -885,6 +886,89 @@ def test_truncated_retry_excerpt_is_marked():
     raw = decision.retry_trace[0].raw
     assert len(raw) < len(long_invalid)  # still capped
     assert "[truncated" in raw  # but loudly
+
+
+def _fake_async_openai_messages(messages: list, captured: list[dict] | None = None):
+    """An async transport returning each prebuilt reply *message* in turn (non-streaming path)."""
+    replies = iter(messages)
+
+    async def create(**kwargs):
+        if captured is not None:
+            captured.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=next(replies))])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+async def test_adecide_parses_native_decision():
+    # The non-streaming async path (`stream_model_calls=False` → `_adecide_native_async`).
+    reply = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", stream_model_calls=False), aclient=_fake_async_openai_messages([reply])
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert decision.action.name == "read_file"
+    assert decision.transport == "native"
+
+
+async def test_adecide_retries_then_succeeds():
+    # Same malformed-then-valid retry path as the sync driver, sharing the parse-retry loop.
+    bad = _msg(tool_calls=[_tc("read_file", "{not json")])
+    good = _msg(tool_calls=[_tc("read_file", '{"path": "app.py"}')])
+    captured: list[dict] = []
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", stream_model_calls=False),
+        aclient=_fake_async_openai_messages([bad, good], captured),
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, ToolCall)
+    assert len(decision.retry_trace) == 1  # the malformed attempt is recorded, not swallowed
+    assert len(captured) == 2  # it retried in-conversation
+
+
+async def test_adecide_json_transport():
+    content = '{"thought_summary": "done", "action": {"type": "final_answer", "answer": "x"}}'
+    client = OpenAIModelClient(
+        HarnessConfig(model="m", native_tool_calls=False, stream_model_calls=False),
+        aclient=_fake_async_openai_messages([_msg(content=content)]),
+    )
+
+    decision = await client.adecide(_packet())
+
+    assert isinstance(decision.action, FinalAnswer)
+    assert decision.transport == "json"
+
+
+async def test_adecide_cancellation_aborts_in_flight_call():
+    # Cancelling the awaiting task raises CancelledError *at the in-flight call* (httpx aborts
+    # the socket there) and propagates out of adecide — it is never swallowed (ADR-0030, the
+    # guarantee the runner's cancel-race relies on). Simulated with a create() that blocks.
+    started = asyncio.Event()
+    saw_cancel: dict = {}
+
+    async def create(**kwargs):
+        started.set()
+        try:
+            await asyncio.sleep(30)  # a slow in-flight request
+        except asyncio.CancelledError:
+            saw_cancel["v"] = True  # httpx would abort the socket at this point
+            raise
+        return SimpleNamespace(choices=[SimpleNamespace(message=_msg(content="never"))])  # pragma: no cover
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    mc = OpenAIModelClient(HarnessConfig(model="m", stream_model_calls=False), aclient=client)
+
+    task = asyncio.create_task(mc.adecide(_packet()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert saw_cancel.get("v")  # the cancel reached the in-flight call, not just the wrapper
 
 
 def test_request_uses_config_temperature():

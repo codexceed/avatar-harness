@@ -235,6 +235,9 @@ class AgentRunner:
             TransportError: When a model call fails at the transport layer (timeout / NUL body)
                 past the client's retries — a system failure surfaced to the caller, never fed
                 back to the model or masked as a soft `incomplete` (§16, ADR-0028 R4).
+            asyncio.CancelledError: When the run task itself is cancelled (the signal /
+                `_run_task.cancel()` path, ADR-0030) — re-raised after aborting the in-flight
+                model call so the loop unwinds without orphaning the request.
         """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
@@ -261,7 +264,15 @@ class AgentRunner:
                 # transport/parse error arms still apply to `task.result()`.
                 task = asyncio.ensure_future(self.model_client.adecide(context))
                 cancel_wait = asyncio.ensure_future(self.deps.cancellation.event().wait())
-                done, _ = await asyncio.wait({task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
+                try:
+                    done, _ = await asyncio.wait({task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
+                except asyncio.CancelledError:
+                    # arun itself was cancelled (the signal/Task.cancel() path, ADR-0030 #80/#81):
+                    # asyncio.wait does NOT cancel its children, so abort the in-flight model call
+                    # explicitly to avoid orphaning the httpx request, then re-raise to unwind.
+                    task.cancel()
+                    cancel_wait.cancel()
+                    raise
                 if cancel_wait in done:
                     # Cancelling the task aborts the underlying httpx request; the streaming path's
                     # `finally: await stream.close()` releases the connection.

@@ -36,6 +36,7 @@ AVATAR_API_KEY=sk-or-...                       # required; falls back to OPENAI_
 AVATAR_MODEL=openai/gpt-4o-mini                # any model your endpoint serves
 AVATAR_BASE_URL=https://openrouter.ai/api/v1   # default (OpenRouter); swap for OpenAI/local
 AVATAR_TEMPERATURE=0.0                          # sampling temperature (0 = as deterministic as the provider allows)
+AVATAR_REQUEST_TIMEOUT=                          # per-call model timeout (s); unset = SDK default (10 min)
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbatim in context
 ```
@@ -70,6 +71,9 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 - **Ground a goal** in a file with `@path/to/file`.
 - **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`delete_file`) auto-allow when their paths validate inside the workspace.
 - **Conversational by default** — verification runs and is reported, but the reply isn't gated on it (you're the terminal authority); `--auto` keeps the strict gate.
+- **Prompt history** — `↑`/`↓` recall the prompts you submitted this sitting (stepping past the newest restores your in-progress draft).
+- **`Ctrl+C`** copies the current selection if one is active, else interrupts the in-flight run — **instantly**, even mid model call (it aborts the request and frees the cockpit) — else quits.
+- **Copying text** — to copy with your OS clipboard shortcut (e.g. `Cmd+C`), use your terminal's native selection: in **iTerm2** hold **Option** while drag-selecting, in **Terminal.app** / **GNOME Terminal** / **Windows Terminal** hold **Shift**, then copy as usual. (A plain mouse drag selects *within* the app — copy that with `Ctrl+C`.)
 
 ### Flags
 

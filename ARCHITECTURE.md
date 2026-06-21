@@ -157,7 +157,7 @@ sequenceDiagram
     R->>R: open workspace (assert clean git state)
     loop until terminal or budget exhausted
         R->>C: build(state, ws) returns compact packet
-        R->>M: decide(packet) returns validated ModelDecision
+        R->>M: await adecide(packet) returns validated ModelDecision (cancellable)
         alt action = tool_call
             R->>P: before_tool_call (awaited gate)
             alt allowed
@@ -361,7 +361,7 @@ What exists in `avatar-harness/avatar/` today (through Phase 3.2 — the MVP coc
 | `journal.py` | `JsonlEventJournal` — privileged lossless write-ahead sink; one JSON line per event, flushed per event, round-trips via `load_events` | ADR-0001 |
 | `tools/` | `base` (`ToolResult`/`ToolDefinition`/`ToolRegistry`/`ToolRuntime` — handler exceptions isolated as failed results), `filesystem`, `search`, `edit` (`str_replace`/`write_file`/`delete_file`, ADR-0015), `commands` (`run_tests`/`run_linter`/`run_command` — `run_command` is tier-3, approval-gated, editing/verifying, and captures its file mutations into the diff) | `§10` |
 | `permission.py` | `PermissionPolicy` + `ToolPermission` — the synchronous `before_tool_call` gate | `§11` |
-| `model_client.py` | Constrained decision union + `OpenAIModelClient` (lazy client — no key to construct); kind-aware prompt via `_KIND_FRAMING` | `§6` |
+| `model_client.py` | Constrained decision union + `OpenAIModelClient` (lazy client — no key to construct); kind-aware prompt via `_KIND_FRAMING`; async cancellable `adecide` (the runner's call site — `AsyncOpenAI`, ADR-0024) with a sync-wrapping default so non-async clients still work | `§6` |
 | `context.py` | `ContextBuilder` + `ContextPacket` (carries `task_kind`) — compact, phase-gated per-turn packet | `§9` |
 | `verifier.py` | `Verifier` — `investigate`/`edit`/`test_only` gates; pure executor over the frozen verification plan (config override tier as the no-plan fallback) | `§12`, ADR-0007 |
 | `planner.py` | `VerificationPlanner` — per-session plan resolution: config override → deterministic detection (CI > manifests > Makefile, program-position classification) → citation-validated LLM fallback (`AVATAR_PLANNER_MODEL`, opt-in) | ADR-0007 |
