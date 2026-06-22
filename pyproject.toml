@@ -31,9 +31,10 @@ dev = [
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-# Eval fixtures are deliberately-imperfect sample repos the agent operates on (a buggy
-# function, a secret file) — input data, not code we maintain. Don't lint or format them.
-extend-exclude = ["evals/fixtures"]
+# Eval fixtures and research-experiment fixtures are deliberately-imperfect sample repos the
+# agent operates on (a buggy function with no type hints, a secret file) — input data, not
+# code we maintain. Don't lint or format them.
+extend-exclude = ["evals/fixtures", "docs/research/2026-06-22-verification-authority"]
 
 [tool.ruff.lint]
 select = [
