@@ -16,7 +16,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0008](0008-non-executable-edit-verification.md) | Verification contract for non-executable edits | Proposed |
 | [0009](0009-execution-sandbox-isolation.md) | Execution sandbox isolation | Accepted (deferred) |
 | [0010](0010-git-status-diff-as-model-tools.md) | `git_status` / `git_diff` as model-callable tools | Accepted (deferred) |
-| [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed |
+| [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed — gap #1 confirmed 2026-06-22 |
 | [0012](0012-wire-level-api-mocking.md) | Wire-level API mocking for eval probes (mock the endpoint, not the client library) | Proposed |
 | [0013](0013-evals-package-boundary-and-gates.md) | `evals/` stays an in-repo package, held to the harness quality gates via config | Accepted |
 | [0014](0014-greenfield-self-authored-verification.md) | Greenfield self-authored verification (the no-contract floor) | Accepted — implemented 2026-06-14 |
