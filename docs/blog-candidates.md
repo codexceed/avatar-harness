@@ -19,7 +19,7 @@ Claude's addition** (Codex's blind spot — it critiqued only the content-risk a
 
 **Two guardrails on every post:**
 - **Directional evidence / case study, never a model leaderboard** (n=5 seeds, few tasks, one project, evolving harness). Say "failure-mode discovery," "directional," not "model X beats Y."
-- **The 4-question template:** *what did we measure · what artifact proves it · what did we infer · what could still be wrong.* That split is the line between a research-engineering post and a vibes essay.
+- **The 6-question template:** *what motivated this · what we did · what we measured · what we inferred · what we're uncertain about · where we go from here.* That arc is the line between a research-engineering post and a vibes essay — and it generalizes past evals as the blog's scope grows.
 
 **The spine** (publish in order; each gated on real evidence; home = personal blog, then cross-post):
 
@@ -72,7 +72,7 @@ error-risk discipline below (so don't swing on an unverified claim).
 3. **Manifesto (5) + flagship (⭐) cash it in** — the two highest-risk/highest-reward pieces ride the accumulated base + the research venues (LessWrong/AF), where the frontier-contributor credential actually lands.
 
 **Two feedback rules (goal: real critique, visibly metabolized):**
-- **A venue's comments on post N become post N+1's "what could still be wrong" section** — visibly incorporating critique is itself a credibility signal and closes the loop.
+- **A venue's comments on post N become post N+1's "what we're uncertain about" section** — visibly incorporating critique is itself a credibility signal and closes the loop.
 - **Stagger, don't blast.** blog + X on day 0, HN day 1–2 (Tue–Thu AM ET land best), Reddit/LW later that week — so issues surfaced early are fixed before the bigger swing.
 
 > Older sections below (**Risk-calibrated rollout**, **Distribution targets**, **Recommended
