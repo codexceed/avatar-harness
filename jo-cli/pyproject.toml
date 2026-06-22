@@ -12,7 +12,7 @@ keywords = ["llm", "agent", "coding-agent", "tui", "textual", "cockpit", "repl"]
 dependencies = [
     # The harness core. `[openai]` so the cockpit runs out of the box against an
     # OpenAI-compatible endpoint; inject your own ModelClient to target another backend.
-    "avatar-harness[openai]>=1.2,<2",
+    "avatar-harness[openai]>=2,<3",
     "textual>=0.50",
     "rich>=13",  # the cockpit styles transcript lines (rich.text.Text)
 ]
