@@ -10,7 +10,7 @@ so the import direction stays strictly consumer → core.
 import argparse
 import sys
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import uuid4
 
 from avatar.artifact import ArtifactManager
@@ -124,6 +124,12 @@ def main(
     )
     parser.add_argument("task", nargs="?", default=None, help="The natural-language task to run.")
     parser.add_argument(
+        "--task-kind",
+        choices=("edit", "investigate", "test_only"),
+        default=task_kind,
+        help="Verification contract for this task (default: investigate).",
+    )
+    parser.add_argument(
         "--log",
         default=None,
         help="Path to the JSONL event log (default: events/<session_id>.jsonl + a latest.jsonl pointer).",
@@ -153,7 +159,7 @@ def main(
             emitter=emitter,
             model_client=model_client,
             allow_dirty=args.allow_dirty,
-            task_kind=task_kind,
+            task_kind=cast(Literal["edit", "investigate", "test_only"], args.task_kind),
         )
     except DirtyWorkspaceError as exc:
         print(
