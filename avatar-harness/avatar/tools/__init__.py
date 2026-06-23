@@ -11,10 +11,10 @@ def default_registry() -> ToolRegistry:
     """A registry with the MVP tool surface registered, phase-gated by definition.
 
     Read tools are active in every phase; the edit tools (`str_replace` (the string-anchored
-    editor), `write_file`, `delete_file` — ADR-0015) only in `editing`; the
-    command tools in `editing`/`verifying` (§10/§21 capability groups); `run_command`
-    in every phase but tier-3 (default-blocked in batch, approval-gated in the REPL —
-    ADR-0002 D4). The `ContextBuilder` exposes only the phase-active subset to the model.
+    editor), `write_file`, `delete_file` — ADR-0015) only in `editing`; the command tools
+    all in `editing`/`verifying` (§10/§21 capability groups) — `run_tests`/`run_linter` at
+    tier-2 (allowed), `run_command` at tier-3 (default-blocked in batch, approval-gated in
+    the REPL — ADR-0002 D4). The `ContextBuilder` exposes only the phase-active subset to the model.
 
     Returns:
         A `ToolRegistry` with the MVP tools registered.
