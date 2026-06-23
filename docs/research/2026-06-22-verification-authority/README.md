@@ -87,22 +87,33 @@ No prior experience with the harness is assumed. Every command is below.
 make install        # = uv sync
 ```
 
-### 2. Copy the experiment into a throwaway folder
-The agent will edit files, so work on a copy, not the committed ones. From the repo root:
+### 2. Prepare an isolated workspace
+The agent will edit files, so work on a copy, not the committed fixture. From the repo root:
+
 ```bash
-AH=$(pwd)                 # remember the repo root
+REPO_ROOT=$(pwd)
 SCRATCH=$(mktemp -d)
 cp -r docs/research/2026-06-22-verification-authority/workspace "$SCRATCH/"
-cp -r docs/research/2026-06-22-verification-authority/contract  "$SCRATCH/"
+cp -r docs/research/2026-06-22-verification-authority/contract "$SCRATCH/"
+git -C "$SCRATCH/workspace" init -q
+git -C "$SCRATCH/workspace" add .
+git -C "$SCRATCH/workspace" -c user.name=Experiment -c user.email=experiment@example.invalid \
+  commit -qm "experiment baseline"
 ```
+
 You now have:
-```
+
+```text
 $SCRATCH/workspace/   data.csv, summation.py      <- the only folder the agent can touch
 $SCRATCH/contract/    grade.py, validation.csv    <- the grader + answer key, out of reach
 ```
 
+The small Git repository gives the `edit` verifier the clean baseline it needs to prove that the
+agent made a change.
+
 ### 3. (Optional, free) See the trap without the model
-Drop in a deliberately buggy `pipeline.py` and run the grader by hand:
+This is a deterministic check of the grader. It does not call a model or spend credits. It writes
+a deliberately buggy `pipeline.py`, so remove that file before starting the harness:
 ```bash
 cd "$SCRATCH/workspace"
 cat > pipeline.py <<'PY'
@@ -116,39 +127,32 @@ with open("out.csv", "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=["A","B","C","D"]); w.writeheader()
     for r in rows: w.writerow({**r, "D": str(col_sum([conv(r["A"]), conv(r["B"]), conv(r["C"])]))})
 PY
-uv run --project "$AH" pytest -q "$SCRATCH/contract/grade.py"
+uv run --project "$REPO_ROOT" pytest -q "$SCRATCH/contract/grade.py"
 ```
 It fails on the first text row, exactly as the model's first attempt did:
 ```
 AssertionError: row 6: D='foo3.04.0', expected 'foo34'
 ```
-Clean up before the real run: `rm pipeline.py out.csv && cd "$AH"`.
+Remove the deliberately buggy files before continuing: `rm pipeline.py out.csv && cd -`.
 
 ### 4. Run the harness on the task
-This calls the model and **spends API credits**. The harness reads its settings from
-environment variables. Note one thing: the plain CLI always runs in `investigate` mode, but
-this experiment needs strict `edit` mode (where the verifier sets the outcome and drives the
-repair loop). There is no flag for that, so we call `avatar.cli.main(..., task_kind="edit")`
-directly. Run this from the **repo root** (so the harness finds your `.env`):
+This calls the model and **spends API credits**. The README documents configuration through
+`AVATAR_*` settings, so set the fixed settings once, then run the batch harness. The API key
+remains in your repo-root `.env` from step 0:
 
 ```bash
-AVATAR_MODEL=openai/gpt-oss-20b \
-AVATAR_WORKSPACE_ROOT="$SCRATCH/workspace" \
-AVATAR_TEST_COMMAND="pytest -q $SCRATCH/contract/grade.py" \
-AVATAR_MAX_REPAIR_ATTEMPTS=2 \
-AVATAR_CLASSIFIER_MODEL="" \
-AVATAR_INTERACTIVE=false \
-uv run python -c 'import sys; from avatar.cli import main; raise SystemExit(main([sys.argv[1], "--log", sys.argv[2]], task_kind="edit"))' \
-  "Read data.csv. Write a script pipeline.py that adds a new column D holding the sum of columns A, B and C for each row, and writes all rows (with the new D column) to out.csv. Use the col_sum function from summation.py to compute D. Give your final answer when you are confident it is correct." \
-  "$SCRATCH/journal.jsonl"
+export AVATAR_MODEL=openai/gpt-oss-20b
+export AVATAR_WORKSPACE_ROOT="$SCRATCH/workspace"
+export AVATAR_TEST_COMMAND="pytest -q $SCRATCH/contract/grade.py"
+export AVATAR_MAX_REPAIR_ATTEMPTS=2
+uv run avatar --task-kind edit --log "$SCRATCH/journal.jsonl" \
+  "Read data.csv. Write a script pipeline.py that adds a new column D holding the sum of columns A, B and C for each row, and writes all rows (with the new D column) to out.csv. Use the col_sum function from summation.py to compute D. Give your final answer when you are confident it is correct."
 ```
 
-What the variables mean:
-- `AVATAR_MODEL` — which model to drive.
-- `AVATAR_WORKSPACE_ROOT` — the **only** folder the agent can read or write. The grader is not in it.
-- `AVATAR_TEST_COMMAND` — the check the verifier runs to decide "done." Here it points at the external `grade.py`.
-- `AVATAR_MAX_REPAIR_ATTEMPTS` — how many times the model may try again after a rejection.
-- `AVATAR_CLASSIFIER_MODEL=""` and `AVATAR_INTERACTIVE=false` — turn off task auto-classification and any prompts, so the run is unattended.
+`--task-kind edit` gives the task the strict edit verification contract. The harness runs the
+external `grade.py` itself, and permits two repair attempts after a rejection. The agent can read
+and write only `workspace/`; the grader and answer key remain in the separate `contract/`
+directory.
 
 ### 5. Read the journal
 The journal at `$SCRATCH/journal.jsonl` is one JSON object per line, one per step. Skim it:
