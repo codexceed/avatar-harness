@@ -665,10 +665,11 @@ async def test_default_adecide_runs_sync_decide_in_thread():
     assert decision.action.answer == "from sync decide"
 
 
-def test_request_timeout_kwarg_is_omitted_when_unset_and_set_when_configured():
-    # Passing timeout=None to the SDK would mean *no* timeout (httpx); an unset request_timeout
-    # must omit the kwarg so the SDK keeps its own default (ADR-0024).
-    assert OpenAIModelClient(HarnessConfig(model="m"))._timeout_kwargs() == {}
+def test_request_timeout_kwarg_defaults_to_30s_and_is_omitted_only_when_none():
+    # Default is 30s; only an explicit None omits the kwarg (restoring the SDK default), since
+    # passing None through would mean *no* httpx timeout (ADR-0024).
+    assert OpenAIModelClient(HarnessConfig(model="m"))._timeout_kwargs() == {"timeout": 30.0}
+    assert OpenAIModelClient(HarnessConfig(model="m", request_timeout=None))._timeout_kwargs() == {}
     assert OpenAIModelClient(HarnessConfig(model="m", request_timeout=12.5))._timeout_kwargs() == {
         "timeout": 12.5
     }
