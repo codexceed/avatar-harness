@@ -95,12 +95,10 @@ class HarnessConfig(BaseSettings):
     base_url: str = "https://openrouter.ai/api/v1"
     api_key: str | None = None  # AVATAR_API_KEY; if unset, the client falls back to OPENAI_API_KEY
 
-    # Per-request timeout (seconds) for model calls (ADR-0024). `None` keeps the OpenAI SDK
-    # default (10 minutes). The primary "don't hang while busy" mechanism is the now-cancellable
-    # async call (`adecide`); this is a backstop you can tighten. It is passed to the
-    # (Async)OpenAI client only when set — passing `None` would mean *no* timeout in httpx,
-    # the opposite of the intent.
-    request_timeout: float | None = None
+    # Per-request timeout (seconds) for model calls (ADR-0024). Defaults to 30s so a silent
+    # endpoint errors fast instead of hanging on the SDK default (10 min). `None` restores the
+    # SDK default; it reaches the client only when set (passing `None` means *no* httpx timeout).
+    request_timeout: float | None = 30.0
 
     # Decision transport (ADR-0003 A). Native provider function-calling is the default —
     # the provider owns the JSON envelope, so a large patch can't die in hand-escaping.
