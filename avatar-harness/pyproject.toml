@@ -1,6 +1,6 @@
 [project]
 name = "avatar-harness"
-version = "2.1.0"
+version = "2.2.0"
 description = "A minimal, ground-up coding agent harness: a bounded, verifiable loop around an LLM."
 readme = "README.md"
 requires-python = ">=3.12"
