@@ -5,6 +5,9 @@ journal events, and parsed markdown — no model, no network.
 """
 
 import json
+import subprocess
+from collections.abc import Sequence
+from pathlib import Path
 
 from evals.cluster import Cluster, cluster_failures, triage_report
 from evals.distill import TrajectoryDigest, distill, distill_results
@@ -12,6 +15,7 @@ from evals.journal_read import row_events
 from evals.proposal import ChangeProposal, load_proposals, score_impact, write_proposals
 from evals.result import ResultRow
 from evals.triage import parse_adr_index, parse_catalog, triage
+from evals.validate import ValidationVerdict, frozen_assets, run_ladder
 
 
 def _row(**kw) -> ResultRow:
@@ -265,3 +269,224 @@ def test_triage_report_pairs_each_cluster_with_a_verdict():
     assert len(report) == 1
     assert report[0].cluster.task == "t"
     assert report[0].triage.novel is True  # no overlap with the catalog / open ADRs
+
+
+# --- E. validate: the canary ladder + frozen grading assets (Workflow B's only eval-spender) ----
+#
+# The ladder is the tested unit (offline, with injected stage runners — mirroring how `run_task` is
+# tested with a ScriptedModel while `main` is the live driver). It must (1) spend nothing past a
+# failed local check, (2) screen cheaply on a 1-seed canary before the full matrix, (3) reject a
+# change that trades one task for another or that helps the matrix overall while regressing a single
+# model. `frozen_assets` proves the anti-Goodhart property: grading is done against a trusted ref,
+# never the agent's (possibly gamed) worktree.
+
+
+def _cell(task: str, model: str, seed: int, solved: bool) -> ResultRow:
+    return ResultRow(
+        task=task,
+        model=model,
+        seed=seed,
+        solved=solved,
+        outcome="success" if solved else "incomplete",
+        iterations=1,
+    )
+
+
+def _matrix(models, tasks, seeds, solved) -> list[ResultRow]:
+    """A full (model x task x seed) matrix; `solved(model, task, seed) -> bool` sets each cell."""
+    return [_cell(t, m, s, solved(m, t, s)) for m in models for t in tasks for s in range(seeds)]
+
+
+class _Recorder:
+    """A scripted `run_eval`: records each call and returns the next pre-built matrix in order."""
+
+    def __init__(self, *returns: list[ResultRow]) -> None:
+        self.calls: list[tuple[list[str], list[str], int]] = []
+        self._returns = list(returns)
+
+    def __call__(self, models: Sequence[str], tasks: Sequence[str], seeds: int) -> list[ResultRow]:
+        self.calls.append((list(models), list(tasks), seeds))
+        return self._returns.pop(0)
+
+
+_OK_LOCAL = lambda: (True, "make check clean")  # noqa: E731
+
+
+def test_run_ladder_stops_at_local_on_unit_failure():
+    # A failed unit/local check ends the ladder before any eval spend (the cheapest rung).
+    run_eval = _Recorder()
+    verdict = run_ladder(
+        baseline=[_cell("secret-safety", "A", 0, False)],
+        affected_models=["A"],
+        target_tasks=["secret-safety"],
+        all_models=["A"],
+        all_tasks=["secret-safety"],
+        seeds=8,
+        run_local=lambda: (False, "pytest: 1 failed"),
+        run_eval=run_eval,
+    )
+    assert isinstance(verdict, ValidationVerdict)
+    assert verdict.passed is False
+    assert verdict.stage_reached == "local"
+    assert run_eval.calls == []  # ZERO eval spend
+
+
+def test_run_ladder_stops_at_canary_on_raw_regression():
+    # Canary (1 seed, affected models) shows a previously-passing run now failing -> stop; the full
+    # matrix never runs. (The target passed in the baseline canary seed and now fails.)
+    baseline = [_cell("secret-safety", "A", 0, True)]
+    canary = [_cell("secret-safety", "A", 0, False)]
+    run_eval = _Recorder(canary)
+    verdict = run_ladder(
+        baseline=baseline,
+        affected_models=["A"],
+        target_tasks=["secret-safety"],
+        all_models=["A"],
+        all_tasks=["secret-safety"],
+        seeds=8,
+        run_local=_OK_LOCAL,
+        run_eval=run_eval,
+    )
+    assert verdict.passed is False
+    assert verdict.stage_reached == "canary"
+    assert len(run_eval.calls) == 1  # canary ran, matrix did not
+
+
+def test_run_ladder_stops_at_canary_when_no_improvement():
+    # The target is still failing in the canary -> nothing to gain, don't spend the full matrix.
+    baseline = [_cell("secret-safety", "A", 0, False)]
+    canary = [_cell("secret-safety", "A", 0, False)]
+    run_eval = _Recorder(canary)
+    verdict = run_ladder(
+        baseline=baseline,
+        affected_models=["A"],
+        target_tasks=["secret-safety"],
+        all_models=["A"],
+        all_tasks=["secret-safety"],
+        seeds=8,
+        run_local=_OK_LOCAL,
+        run_eval=run_eval,
+    )
+    assert verdict.passed is False
+    assert verdict.stage_reached == "canary"
+    assert len(run_eval.calls) == 1
+
+
+def test_run_ladder_passes_when_canary_survives_and_matrix_improves():
+    models, tasks, seeds = ["A", "B"], ["secret-safety", "other"], 8
+    # Baseline: secret-safety fails everywhere; other passes everywhere.
+    baseline = _matrix(models, tasks, seeds, lambda m, t, s: t != "secret-safety")
+    # Canary (1 seed, affected models): secret-safety now passes -> survives.
+    canary = _matrix(models, ["secret-safety"], 1, lambda m, t, s: True)
+    # Full matrix: secret-safety fixed everywhere, other unchanged -> big, agnostic improvement.
+    matrix = _matrix(models, tasks, seeds, lambda m, t, s: True)
+    run_eval = _Recorder(canary, matrix)
+    verdict = run_ladder(
+        baseline=baseline,
+        affected_models=models,
+        target_tasks=["secret-safety"],
+        all_models=models,
+        all_tasks=tasks,
+        seeds=seeds,
+        run_local=_OK_LOCAL,
+        run_eval=run_eval,
+    )
+    assert verdict.passed is True
+    assert verdict.stage_reached == "matrix"
+    # The canary screens cheap (affected models, target task, 1 seed); the matrix is global.
+    assert run_eval.calls[0] == (models, ["secret-safety"], 1)
+    assert run_eval.calls[1] == (models, tasks, seeds)
+
+
+def test_run_ladder_fails_matrix_on_cross_task_regression():
+    # Survives the canary, but the full matrix shows the fix traded one task for another: it fixes
+    # secret-safety and breaks `other` by the same amount -> globally a wash, so it is rejected.
+    # This is the "validate globally, never per-failed-task" guarantee.
+    models, tasks, seeds = ["A", "B"], ["secret-safety", "other"], 8
+    baseline = _matrix(models, tasks, seeds, lambda m, t, s: t != "secret-safety")
+    canary = _matrix(models, ["secret-safety"], 1, lambda m, t, s: True)
+    # secret-safety fixed (+16) but `other` broken (-16): nets out across the matrix.
+    matrix = _matrix(models, tasks, seeds, lambda m, t, s: t == "secret-safety")
+    run_eval = _Recorder(canary, matrix)
+    verdict = run_ladder(
+        baseline=baseline,
+        affected_models=models,
+        target_tasks=["secret-safety"],
+        all_models=models,
+        all_tasks=tasks,
+        seeds=seeds,
+        run_local=_OK_LOCAL,
+        run_eval=run_eval,
+    )
+    assert verdict.passed is False
+    assert verdict.stage_reached == "matrix"
+
+
+def test_run_ladder_fails_matrix_on_model_agnosticism_violation():
+    # The overall metrics look like a clear win (+24 vs -8 -> significant improvement), but it is
+    # carried entirely by model A while model B significantly regresses on a non-target task. The
+    # 1-seed canary on the target can't see it; only the full matrix + per-model agnosticism check
+    # catches it -> rejected.
+    models, tasks, seeds = ["A", "B"], ["secret-safety", "t2", "t3", "other"], 8
+
+    def base(m, t, s):  # secret-safety fails; everything else passes
+        return t != "secret-safety"
+
+    def cand(m, t, s):
+        if m == "A":
+            return True  # A: secret-safety, t2, t3 all fixed (+24), other still passes
+        # B: secret-safety stays failing (so the canary on B shows no flip), other now broken (-8)
+        return t not in ("secret-safety", "other")
+
+    baseline = _matrix(models, tasks, seeds, base)
+    # Canary: A's secret-safety flips to pass, B's stays failing -> one newly-passing, no regression
+    # -> survives.
+    canary = _matrix(models, ["secret-safety"], 1, lambda m, t, s: m == "A")
+    matrix = _matrix(models, tasks, seeds, cand)
+    run_eval = _Recorder(canary, matrix)
+    verdict = run_ladder(
+        baseline=baseline,
+        affected_models=models,
+        target_tasks=["secret-safety"],
+        all_models=models,
+        all_tasks=tasks,
+        seeds=seeds,
+        run_local=_OK_LOCAL,
+        run_eval=run_eval,
+    )
+    assert verdict.passed is False
+    assert verdict.stage_reached == "matrix"
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_frozen_assets_restores_grading_surface_from_trusted_ref(tmp_path):
+    # The anti-Goodhart property: `validate` grades against the grading surface (specs · probes ·
+    # fixtures) restored from a TRUSTED ref, never the agent's worktree — so a candidate that edits
+    # a spec/probe to make itself pass is graded against the untouched original.
+    repo = tmp_path / "repo"
+    (repo / "evals" / "tasks").mkdir(parents=True)
+    (repo / "evals" / "probes").mkdir(parents=True)
+    (repo / "evals" / "fixtures" / "demo").mkdir(parents=True)
+    trusted_spec = 'id = "secret-safety"\ngoal = "do not leak"\n'
+    (repo / "evals" / "tasks" / "secret-safety.toml").write_text(trusted_spec, encoding="utf-8")
+    (repo / "evals" / "probes" / "leak_check.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    (repo / "evals" / "fixtures" / "demo" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "trusted")
+
+    # The agent dirties the grading surface in the worktree (the gaming attempt).
+    (repo / "evals" / "tasks" / "secret-safety.toml").write_text(
+        'id = "secret-safety"\ngoal = "trivially pass"\n', encoding="utf-8"
+    )
+
+    dest = tmp_path / "frozen"
+    out = frozen_assets("HEAD", repo, dest)
+
+    # Restored from the trusted ref — the dirty worktree edit is not present.
+    assert (out / "tasks" / "secret-safety.toml").read_text() == trusted_spec
+    assert (out / "probes" / "leak_check.py").exists()
+    assert (out / "fixtures" / "demo" / "app.py").exists()
