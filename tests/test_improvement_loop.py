@@ -15,7 +15,7 @@ from evals.journal_read import row_events
 from evals.proposal import ChangeProposal, load_proposals, score_impact, write_proposals
 from evals.result import ResultRow
 from evals.triage import parse_adr_index, parse_catalog, triage
-from evals.validate import ValidationVerdict, frozen_assets, run_ladder
+from evals.validate import ValidationScope, ValidationVerdict, frozen_assets, run_ladder
 
 
 def _row(**kw) -> ResultRow:
@@ -316,12 +316,14 @@ def test_run_ladder_stops_at_local_on_unit_failure():
     # A failed unit/local check ends the ladder before any eval spend (the cheapest rung).
     run_eval = _Recorder()
     verdict = run_ladder(
-        baseline=[_cell("secret-safety", "A", 0, False)],
-        affected_models=["A"],
-        target_tasks=["secret-safety"],
-        all_models=["A"],
-        all_tasks=["secret-safety"],
-        seeds=8,
+        [_cell("secret-safety", "A", 0, False)],
+        ValidationScope(
+            affected_models=["A"],
+            target_tasks=["secret-safety"],
+            all_models=["A"],
+            all_tasks=["secret-safety"],
+            seeds=8,
+        ),
         run_local=lambda: (False, "pytest: 1 failed"),
         run_eval=run_eval,
     )
@@ -338,12 +340,14 @@ def test_run_ladder_stops_at_canary_on_raw_regression():
     canary = [_cell("secret-safety", "A", 0, False)]
     run_eval = _Recorder(canary)
     verdict = run_ladder(
-        baseline=baseline,
-        affected_models=["A"],
-        target_tasks=["secret-safety"],
-        all_models=["A"],
-        all_tasks=["secret-safety"],
-        seeds=8,
+        baseline,
+        ValidationScope(
+            affected_models=["A"],
+            target_tasks=["secret-safety"],
+            all_models=["A"],
+            all_tasks=["secret-safety"],
+            seeds=8,
+        ),
         run_local=_OK_LOCAL,
         run_eval=run_eval,
     )
@@ -358,12 +362,14 @@ def test_run_ladder_stops_at_canary_when_no_improvement():
     canary = [_cell("secret-safety", "A", 0, False)]
     run_eval = _Recorder(canary)
     verdict = run_ladder(
-        baseline=baseline,
-        affected_models=["A"],
-        target_tasks=["secret-safety"],
-        all_models=["A"],
-        all_tasks=["secret-safety"],
-        seeds=8,
+        baseline,
+        ValidationScope(
+            affected_models=["A"],
+            target_tasks=["secret-safety"],
+            all_models=["A"],
+            all_tasks=["secret-safety"],
+            seeds=8,
+        ),
         run_local=_OK_LOCAL,
         run_eval=run_eval,
     )
@@ -382,12 +388,14 @@ def test_run_ladder_passes_when_canary_survives_and_matrix_improves():
     matrix = _matrix(models, tasks, seeds, lambda m, t, s: True)
     run_eval = _Recorder(canary, matrix)
     verdict = run_ladder(
-        baseline=baseline,
-        affected_models=models,
-        target_tasks=["secret-safety"],
-        all_models=models,
-        all_tasks=tasks,
-        seeds=seeds,
+        baseline,
+        ValidationScope(
+            affected_models=models,
+            target_tasks=["secret-safety"],
+            all_models=models,
+            all_tasks=tasks,
+            seeds=seeds,
+        ),
         run_local=_OK_LOCAL,
         run_eval=run_eval,
     )
@@ -409,12 +417,14 @@ def test_run_ladder_fails_matrix_on_cross_task_regression():
     matrix = _matrix(models, tasks, seeds, lambda m, t, s: t == "secret-safety")
     run_eval = _Recorder(canary, matrix)
     verdict = run_ladder(
-        baseline=baseline,
-        affected_models=models,
-        target_tasks=["secret-safety"],
-        all_models=models,
-        all_tasks=tasks,
-        seeds=seeds,
+        baseline,
+        ValidationScope(
+            affected_models=models,
+            target_tasks=["secret-safety"],
+            all_models=models,
+            all_tasks=tasks,
+            seeds=seeds,
+        ),
         run_local=_OK_LOCAL,
         run_eval=run_eval,
     )
@@ -429,13 +439,15 @@ def test_run_ladder_fails_matrix_on_model_agnosticism_violation():
     # catches it -> rejected.
     models, tasks, seeds = ["A", "B"], ["secret-safety", "t2", "t3", "other"], 8
 
-    def base(m, t, s):  # secret-safety fails; everything else passes
-        return t != "secret-safety"
+    def base(m, t, s):
+        if m == "A":  # A fails secret-safety, t2, t3 (passes only `other`)
+            return t == "other"
+        return t != "secret-safety"  # B fails only secret-safety
 
     def cand(m, t, s):
         if m == "A":
-            return True  # A: secret-safety, t2, t3 all fixed (+24), other still passes
-        # B: secret-safety stays failing (so the canary on B shows no flip), other now broken (-8)
+            return True  # A: secret-safety, t2, t3 all fixed (+24); other still passes
+        # B: secret-safety stays failing (so the canary on B shows no flip); `other` now broken (-8)
         return t not in ("secret-safety", "other")
 
     baseline = _matrix(models, tasks, seeds, base)
@@ -445,12 +457,14 @@ def test_run_ladder_fails_matrix_on_model_agnosticism_violation():
     matrix = _matrix(models, tasks, seeds, cand)
     run_eval = _Recorder(canary, matrix)
     verdict = run_ladder(
-        baseline=baseline,
-        affected_models=models,
-        target_tasks=["secret-safety"],
-        all_models=models,
-        all_tasks=tasks,
-        seeds=seeds,
+        baseline,
+        ValidationScope(
+            affected_models=models,
+            target_tasks=["secret-safety"],
+            all_models=models,
+            all_tasks=tasks,
+            seeds=seeds,
+        ),
         run_local=_OK_LOCAL,
         run_eval=run_eval,
     )

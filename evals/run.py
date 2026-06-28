@@ -35,35 +35,41 @@ _DEFAULT_SEEDS = 3
 _DEFAULT_TEMPERATURE = 0.7
 
 
-def _fixture_path(name: str) -> Path | None:
+def _fixture_path(name: str, evals_root: Path = _EVALS_ROOT) -> Path | None:
     """Resolve a fixture name to its directory, or `None` for the bare 'empty' fixture.
 
     Args:
         name: The fixture name from the spec.
+        evals_root: The ``evals`` directory to resolve fixtures under; defaults to this repo's, but
+            `validate` passes a frozen copy restored from a trusted ref (ADR-0024).
 
     Returns:
         The fixture directory, or `None` when it is 'empty' / absent (a bare repo).
     """
     if name == "empty":
         return None
-    candidate = _EVALS_ROOT / "fixtures" / name
+    candidate = evals_root / "fixtures" / name
     return candidate if candidate.exists() else None
 
 
-def _resolve_probe(command: str) -> str:
-    """Make a repo-relative ``evals/...`` probe-script path absolute against the repo root.
+def _resolve_probe(command: str, evals_root: Path = _EVALS_ROOT) -> str:
+    """Make a repo-relative ``evals/...`` probe-script path absolute against the assets root.
 
     The probe runs with the scratch repo as cwd (so it inspects the agent's output), but the
-    probe script itself lives in this repo — so its path must be absolute.
+    probe script itself lives under ``evals/`` — so its path must be absolute.
 
     Args:
         command: The probe command from the spec.
+        evals_root: The ``evals`` directory the probe scripts live under; defaults to this repo's,
+            but `validate` passes a frozen copy so a candidate can't grade against an edited probe.
 
     Returns:
-        The command with any leading ``evals/...`` path made absolute.
+        The command with any leading ``evals/...`` path made absolute (against ``evals_root``'s
+        parent, so ``evals/probes/x.py`` resolves to ``<evals_root>/probes/x.py``).
     """
+    base = evals_root.parent
     parts = shlex.split(command)
-    return " ".join(str(_REPO_ROOT / p) if p.startswith("evals/") else p for p in parts)
+    return " ".join(str(base / p) if p.startswith("evals/") else p for p in parts)
 
 
 def _slug(model: str) -> str:
@@ -101,6 +107,7 @@ def run_task(
     model_client: ModelClient | None = None,
     seed: int = 0,
     workspace_root: Path | None = None,
+    evals_root: Path | None = None,
 ) -> ResultRow:
     """Run one task hermetically and score it.
 
@@ -112,12 +119,16 @@ def run_task(
         seed: The seed index (recorded on the row; varies the matrix, not the engine).
         workspace_root: The run workspace to provision the scratch repo under; `None` uses
             the system temp dir.
+        evals_root: The ``evals`` directory to resolve fixtures + probe scripts under; `None` uses
+            this repo's. `validate` passes a frozen copy restored from a trusted ref so the candidate
+            harness is graded against an untouched grading surface (ADR-0024 / ADR-0011 D1+D2).
 
     Returns:
         The scored `ResultRow` (its `workspace` field points at the scratch repo).
     """
+    root = evals_root or _EVALS_ROOT
     label = f"{_slug(config.model)}__{spec.id}__seed{seed}__"
-    repo = provision(_fixture_path(spec.fixture), parent=workspace_root, label=label)
+    repo = provision(_fixture_path(spec.fixture, root), parent=workspace_root, label=label)
     # Errors after provisioning still produce a row that carries the scratch path, so it maps to
     # its files and the cleanup contract holds (provision-stage failures propagate to the caller).
     try:
@@ -147,7 +158,9 @@ def run_task(
         # — so a no-leak guard plus a give-up `incomplete` run does not score solved.
         reached_success = state.outcome == "success"
         probe_exit = (
-            run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
+            run_probe(_resolve_probe(spec.success_probe, root), repo, env=spec.env)
+            if spec.success_probe
+            else None
         )
         row = ResultRow(
             task=spec.id,
