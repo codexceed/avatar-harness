@@ -101,7 +101,7 @@ flowchart TB
 
 - **Layer 1 — deterministic Python CLIs in `evals/`** (TDD'd, replayable, no model): `distill`, `triage`, `score`/`route`, `validate`. The cheap, exact primitives; only `validate` spends (and only when invoked).
 - **Layer 2 — two named Claude Workflow scripts** (the `Workflow` tool: a `meta` block + phases, parameterized by `args`) that orchestrate only the *reasoning* and **shell out to Layer 1 at the deterministic seams**. (The Workflow tool runs agents/JS, not Python — so determinism lives in `evals/`.)
-- **The seam — a typed `ChangeProposal`** A writes and B consumes (`evals/proposals/<stamp>/<id>.md`); B is invoked `--proposal <id>`. Decoupling makes each workflow invokable/replayable alone.
+- **The seam — a typed `ChangeProposal`** B will consume; `evals/proposal.py` holds it. **As of ADR-0031, Workflow A emits only a human-readable digest (`evals/proposals/<stamp>/proposals.md`), not per-`<id>.md` `ChangeProposal` artifacts** — the structured seam is retained in the tree but deferred-from-emission until Workflow B (its consumer) exists. The references to `<id>.md` / `--proposal <id>` below describe that future B-coupled state.
 
 ---
 
@@ -256,7 +256,7 @@ TDD per the repo protocol: **propose the test list → maintainer approves → r
 
 ### Increment 2 — Workflow A `evals-to-proposals` (the analysis MVP)
 - [x] **2a · deterministic spine (`evals/cluster.py`, TDD'd):** `cluster_failures` groups failed runs by `(task, bucket)` — the grading-truth failure mode (`evals.classify`, persisted as `ResultRow.failure_mode`), **not** the harness `outcome` (ADR-0025 / catalog B4) — carrying models · runs · a token symptom · sample actions; `triage_report` runs the token-overlap **prefilter** per cluster; `python -m evals.cluster <results>` prints the report. The prefilter is coarse (trajectory tokens rarely match a catalogue *title*'s descriptive vocabulary), so it is a hint — the workflow's judge is authoritative.
-- [x] **2b · Workflow A script (`evals/workflows/evals_to_proposals.js`):** the Layer-2 `meta`+phases orchestration — `Triage` (shell out to `evals.cluster`) → `Analyze` (one judge subagent per cluster: confirm novel vs known, classify A/B/C/D) → `Propose` (one subagent per novel mode → `ChangeProposal`) → `Reconcile` (barrier: mutual + codebase compatibility, write `evals/proposals/<stamp>/` + append `failure-modes.md`).
+- [x] **2b · Workflow A script (`evals/workflows/evals_to_proposals.js`):** the Layer-2 `meta`+phases orchestration — `Triage` (shell out to `evals.cluster`) → `Analyze` (one judge subagent per cluster: confirm novel vs known) → `Propose` (one subagent per novel mode → a brief, code-free issue+fix entry) → `Reconcile` (barrier: dedupe/order, write the digest `evals/proposals/<stamp>/proposals.md` + append `failure-modes.md`). **Per ADR-0031 the output is the human digest, not per-`<id>.md` `ChangeProposal` artifacts** (structured emission deferred until Workflow B).
 - **Exit (deterministic spine met):** `python -m evals.cluster` reports clusters + prefilter verdicts, read-only / zero spend. *Running the full workflow (the subagent fan-out) is an explicit opt-in step via the `Workflow` tool — it spends Claude tokens (no eval spend) and is not exercised by `make`/CI.*
 
 ### Increment 3 — Workflow B `proposal-to-pr` + `validate` (the spender) — **HITL-gated**

@@ -152,6 +152,60 @@ binomial SE). `mcnemar` pairs rows by `(model, task, seed)` and uses the exact t
 
 ---
 
+## From eval results to change proposals (`evals-to-proposals`)
+
+A run tells you *what* failed; the **`evals-to-proposals`** workflow turns that into *what to do
+about it* — a short, human-readable list of proposed harness changes. It is the read-only half of
+the eval-driven improvement loop (ADR-0024): it **never re-runs the matrix** (zero eval spend) and
+**implements nothing** — it only reads a finished results file and writes a digest for you to review.
+
+```bash
+# After a kept run (note the results stamp it prints, e.g. 20260627T211653Z):
+make eval-matrix                      # → evals/results/<stamp>.jsonl  (+ .summary.json)
+```
+
+Then run the workflow (it is a Claude **Workflow**-tool script, invoked on demand — not via `make`):
+
+```
+Workflow({ scriptPath: "evals/workflows/evals_to_proposals.js",
+           args: { results: "evals/results/<stamp>.jsonl", stamp: "<stamp>" } })
+```
+
+What it does, in four phases:
+
+1. **Triage** — a deterministic Layer-1 pass (`python -m evals.cluster`) groups the failed runs into
+   clusters and pre-checks each against past findings.
+2. **Analyze** — one reasoning pass per cluster decides whether it is a **genuinely new** problem or
+   a **known** one already understood/handled. Known ones are dropped (no noise).
+3. **Propose** — for each new problem, one pass drafts a brief issue-and-fix entry.
+4. **Reconcile** — dedupes and orders the entries, then writes the digest.
+
+### The output: a proposals digest you can actually read
+
+The single artifact is **`evals/proposals/<stamp>/proposals.md`** — a digest meant to be skimmed and
+controlled by a human, **not** a machine dump. It opens with an **At a glance** index table (one row
+per issue: what's wrong · the fix · size · risk), then one self-contained entry per issue:
+
+- **The issue** — what went wrong, in plain language, with a small visual.
+- **Related history** — whether we've seen something like it before (described in words; it does
+  **not** make you look up any code or catalog id).
+- **The proposed change** — the fix, kept brief, usually with a tiny before/after.
+- **How we'd verify** — a 2–3 bullet test sketch.
+
+> It is deliberately **self-contained**: it cites no failure-mode catalog codes, because those mean
+> nothing to a reader. (The workflow may *consult* [`docs/research/failure-modes.md`](../docs/research/failure-modes.md)
+> for historical context and append newly-confirmed modes back to it, but the digest you read never
+> refers to it by code.)
+
+If every failure maps to an already-known mode, the workflow writes nothing and says so — that is a
+valid, healthy outcome (the loop's job is to surface what's *new*).
+
+> **Note:** this workflow currently emits only the human digest. The structured, machine-readable
+> hand-off (`ChangeProposal`, `evals/proposal.py`) to a future PR-building workflow ("Workflow B")
+> is intentionally deferred until that consumer exists.
+
+---
+
 ## Task specs
 
 Tasks are **TOML** files in `evals/tasks/` (stdlib `tomllib` — zero extra deps).

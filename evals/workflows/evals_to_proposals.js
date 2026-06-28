@@ -1,8 +1,14 @@
 // Workflow A — `evals-to-proposals` (ADR-0024, Increment 2).
 //
-// The read-only half of the evals-driven improvement loop: an eval results dir → a reviewed,
-// scored, deduplicated set of ChangeProposals. ZERO eval spend (it never re-runs the matrix);
+// The read-only half of the evals-driven improvement loop: an eval results file → a brief,
+// human-readable proposals digest (`evals/proposals/<stamp>/proposals.md`) — an "At a glance"
+// index plus one self-contained entry per novel failure (the issue, related history in plain
+// language, the proposed change, how we'd verify). ZERO eval spend (it never re-runs the matrix);
 // it spends only Claude tokens on the reasoning leaves, and only for *novel* clusters.
+//
+// The digest is the human-facing control surface; it deliberately uses NO failure-modes.md catalog
+// codes (they're invisible to a reader). The structured ChangeProposal seam (evals/proposal.py),
+// the typed hand-off to Workflow B, is NOT emitted here yet — it returns when Workflow B is built.
 //
 // This is a Claude `Workflow`-tool script (Layer 2). It is EXECUTED ON DEMAND, opt-in, via the
 // Workflow tool — it is not run by `make`/pytest and is intentionally not covered by the Python
@@ -15,13 +21,13 @@
 
 export const meta = {
   name: 'evals-to-proposals',
-  description: 'Eval results → deduplicated, scored ChangeProposals (read-only, zero eval spend)',
+  description: 'Eval results → a brief, human-readable proposals digest (read-only, zero eval spend)',
   whenToUse: 'After a human-gated `make eval --no-cleanup` run, to triage failures into reviewed proposals.',
   phases: [
     { title: 'Triage', detail: 'Layer-1 deterministic prefilter: cluster failures + token-overlap dedup' },
-    { title: 'Analyze', detail: 'one judge subagent per cluster — confirm novel vs known, classify A/B/C/D' },
-    { title: 'Propose', detail: 'one subagent per novel mode — a TDD ChangeProposal' },
-    { title: 'Reconcile', detail: 'barrier: mutual + codebase compatibility; write the proposals dir' },
+    { title: 'Analyze', detail: 'one judge subagent per cluster — confirm novel vs known' },
+    { title: 'Propose', detail: 'one subagent per novel mode — a brief issue + change entry' },
+    { title: 'Reconcile', detail: 'barrier: dedupe/score, assemble the human digest (proposals.md)' },
   ],
 }
 
@@ -61,25 +67,36 @@ const VERDICT_SCHEMA = {
   },
 }
 
-const PROPOSAL_SCHEMA = {
+// A single human-readable digest entry — NOT the structured ChangeProposal schema. The typed
+// Workflow-A→B seam (evals/proposal.py) is intentionally NOT emitted here yet: this workflow's
+// output is a digest a human reads and controls; structured output returns when Workflow B exists.
+const ENTRY_SCHEMA = {
   type: 'object',
-  required: ['id', 'mode', 'title', 'remediation_type', 'blast_radius', 'tdd_plan', 'body'],
+  required: ['slug', 'title', 'whats_wrong', 'the_fix', 'size', 'risk', 'meta_line', 'body'],
   properties: {
-    id: { type: 'string' },
-    mode: { type: 'string' },
-    title: { type: 'string' },
-    remediation_type: { type: 'string', enum: ['prompt_instruction', 'guardrail_check', 'code_logic', 'doc_only'] },
-    blast_radius: { type: 'string', enum: ['local', 'global'] },
-    touches_grader: { type: 'boolean' },
-    target_tasks: { type: 'array', items: { type: 'string' } },
-    tdd_plan: { type: 'array', items: { type: 'string' } },
-    evidence: { type: 'array', items: { type: 'string' } },
-    body: { type: 'string' },
+    slug: { type: 'string', description: 'kebab-case id for ordering/reference only' },
+    title: { type: 'string', description: 'plain-language headline, NO catalog codes (e.g. "A network crash is disguised as a new secret-safety failure")' },
+    whats_wrong: { type: 'string', description: 'ONE sentence for the index table — the symptom a human cares about' },
+    the_fix: { type: 'string', description: 'ONE sentence for the index table — the change in plain language' },
+    size: { type: 'string', description: 'rough effort, e.g. "~20-line triage fix" / "prompt tweak" / "new guardrail check"' },
+    risk: { type: 'string', description: 'Low/Medium/High + a clause of why, e.g. "Low — triage label only, grading untouched"' },
+    meta_line: { type: 'string', description: 'one-line summary rendered as a blockquote under the heading, e.g. "1 of 15 failed runs · triage label only · no eval spend to validate"' },
+    body: {
+      type: 'string',
+      description:
+        'The per-issue markdown, brief and balancing prose with ONE small visual (an ASCII sketch or a tiny before/after table). ' +
+        'Exactly these H3 sections, in order: "### The issue", "### Related history", "### The proposed change", "### How we\'d verify". ' +
+        'Related history MUST be plain language with NO catalog codes (say "a known network failure mode", never "A9"). ' +
+        'How we\'d verify is a 2-3 bullet test sketch. Do NOT include the "## N · title" heading or the meta blockquote — Reconcile adds those.',
+    },
   },
 }
 
-const results = args?.results
-const stamp = args?.stamp ?? 'run'
+// `args` can arrive as an object or, depending on how Workflow was invoked, as a JSON string —
+// coerce so a direct `Workflow({scriptPath, args})` call works without a wrapper.
+const a = typeof args === 'string' ? JSON.parse(args) : (args ?? {})
+const results = a.results
+const stamp = a.stamp ?? 'run'
 if (!results) throw new Error('evals-to-proposals: args.results (a results JSONL path) is required')
 
 // ── Phase 1 · Triage (deterministic Layer-1 prefilter, run via a thin shell-out agent) ─────────
@@ -119,32 +136,52 @@ const proposals = (
         return null // known mode: linked to the catalog/ADR, dropped from the fan-out
       }
       return agent(
-        `Write ONE test-driven ChangeProposal for this novel failure mode, adhering strictly to the project goals in ` +
-          `HARNESS_DESIGN.md / ARCHITECTURE.md / README.md and ADR-0024 (evals/improvement-loop-design.md).\n` +
+        `Write ONE brief, human-readable proposal entry for this novel failure mode, adhering strictly to the ` +
+          `project goals in HARNESS_DESIGN.md / ARCHITECTURE.md / README.md and ADR-0024 (evals/improvement-loop-design.md).\n` +
           `Cluster: ${JSON.stringify(c)}\nMode: ${JSON.stringify(verdict)}\n` +
-          `Set remediation_type (prompt_instruction | guardrail_check | code_logic | doc_only) and blast_radius ` +
-          `(local | global); set touches_grader=true if it edits specs/probes/fixtures/verifier/scoring. Name the ` +
-          `failed tasks (${(c.models || []).join(',')} on ${c.task}) in target_tasks for validation, and give a concrete tdd_plan.`,
-        { label: `propose:${verdict.mode}`, phase: 'Propose', schema: PROPOSAL_SCHEMA },
+          `Failed tasks: ${(c.models || []).join(',')} on ${c.task}.\n\n` +
+          `AUDIENCE: a human reviewer who will NOT look anything up. The entry must be self-contained and skimmable — ` +
+          `balance short prose with ONE small visual (an ASCII sketch or a tiny before/after table), not walls of text.\n` +
+          `CRITICAL: never cite failure-modes.md catalog codes (A6, B4, ADR-0028, …) — they are invisible to the reader. ` +
+          `You MAY read docs/research/failure-modes.md to ground the "Related history" section, but describe any prior/related ` +
+          `mode in plain language ("a known network failure mode", "a fix for X is already planned"), never by its code.\n` +
+          `Spot-check the file(s) the fix would touch so "The proposed change" and "How we'd verify" are concrete and correct. ` +
+          `Do NOT implement anything and do NOT run evals.`,
+        { label: `propose:${verdict.mode}`, phase: 'Propose', schema: ENTRY_SCHEMA },
       )
     },
   )
 ).filter(Boolean)
 
-log(`drafted ${proposals.length} proposal(s) for novel mode(s)`)
+log(`drafted ${proposals.length} entry(ies) for novel mode(s)`)
 if (proposals.length === 0) return { stamp, proposals: [], note: 'all clusters mapped to known modes — nothing novel to propose' }
 
-// ── Phase 4 · Reconcile (barrier) — mutual + codebase compatibility, then write the artifacts ──
+// ── Phase 4 · Reconcile (barrier) — dedupe/score across entries, assemble the human digest ──────
+// The single output is `proposals.md`: a digest a human reads and controls. The structured
+// Workflow-A→B seam (evals/proposal.py) is intentionally NOT emitted yet — it returns with B.
+const summaryPath = results.replace(/\.jsonl$/, '.summary.json')
 phase('Reconcile')
 const reconciled = await agent(
-  `Reconcile these draft ChangeProposals so they are mutually compatible and compatible with the current codebase ` +
-    `(spot-check the files each would touch). Resolve overlaps, dedupe, and score each with score_impact ` +
-    `(impact 0-10 = cluster share of failures) and predicted_validation_cost. Then WRITE the artifacts:\n` +
-    `  • evals/proposals/${stamp}/<id>.md  (front-matter + body) for every proposal, using the ChangeProposal schema; and\n` +
-    `  • append any newly-confirmed novel modes to docs/research/failure-modes.md (the durable memory).\n` +
-    `Do NOT implement anything and do NOT run evals — this workflow is read-only/zero-spend; Workflow B builds funded proposals.\n` +
-    `Proposals: ${JSON.stringify(proposals)}`,
+  `Assemble a SINGLE human-readable proposals digest from these draft entries. The reader will not look anything up.\n` +
+    `Draft entries (one per novel cluster): ${JSON.stringify(proposals)}\n\n` +
+    `Steps:\n` +
+    `  1. Spot-check the file(s) each fix names so every entry is compatible with the current codebase; drop or merge ` +
+    `any entry that duplicates another (same root cause) — keep the digest tight.\n` +
+    `  2. Order the surviving entries by impact (biggest share of failures first) and number them 1..N.\n` +
+    `  3. Read ${summaryPath} for the run header numbers (models, tasks/specs, seeds, overall pass@1, total failed runs).\n` +
+    `  4. WRITE exactly ONE file, evals/proposals/${stamp}/proposals.md, with this structure and NOTHING else ` +
+    `(no YAML front-matter, no catalog codes anywhere):\n` +
+    `       # Eval → Change Proposals · run \`${stamp}\`\n` +
+    `       <one summary line: N models · M tasks · K seeds · **pass@1 X.XX** · F failed runs → **P proposed change(s)**>\n` +
+    `       ## At a glance\n` +
+    `       <a markdown table with columns: # | What's wrong | The fix | Size | Risk — one row per entry, from its whats_wrong/the_fix/size/risk>\n` +
+    `       ---\n` +
+    `       <then each entry as: "## <n> · <title>", a "> <meta_line>" blockquote, then its body verbatim>\n` +
+    `  5. Append any newly-confirmed novel modes to docs/research/failure-modes.md (the durable memory — that file ` +
+    `MAY use catalog codes; the digest may NOT).\n` +
+    `Do NOT implement anything, do NOT run evals, and do NOT write any other file in evals/proposals/${stamp}/ ` +
+    `(no per-proposal .md, no .jsonl) — this workflow is read-only/zero-spend and emits only the digest.`,
   { label: 'reconcile', phase: 'Reconcile' },
 )
 
-return { stamp, dir: `evals/proposals/${stamp}/`, count: proposals.length, summary: reconciled }
+return { stamp, digest: `evals/proposals/${stamp}/proposals.md`, count: proposals.length, summary: reconciled }
