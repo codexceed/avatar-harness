@@ -101,7 +101,7 @@ flowchart TB
 
 - **Layer 1 — deterministic Python CLIs in `evals/`** (TDD'd, replayable, no model): `distill`, `triage`, `score`/`route`, `validate`. The cheap, exact primitives; only `validate` spends (and only when invoked).
 - **Layer 2 — two named Claude Workflow scripts** (the `Workflow` tool: a `meta` block + phases, parameterized by `args`) that orchestrate only the *reasoning* and **shell out to Layer 1 at the deterministic seams**. (The Workflow tool runs agents/JS, not Python — so determinism lives in `evals/`.)
-- **The seam — a typed `ChangeProposal`** A writes and B consumes (`evals/proposals/<stamp>/<id>.md`); B is invoked `--proposal <id>`. Decoupling makes each workflow invokable/replayable alone.
+- **The seam — a typed `ChangeProposal`** B will consume; `evals/proposal.py` holds it. **As of ADR-0031, Workflow A emits only a human-readable digest (`evals/proposals/<stamp>/proposals.md`), not per-`<id>.md` `ChangeProposal` artifacts** — the structured seam is retained in the tree but deferred-from-emission until Workflow B (its consumer) exists. The references to `<id>.md` / `--proposal <id>` below describe that future B-coupled state.
 
 ---
 
@@ -255,9 +255,9 @@ TDD per the repo protocol: **propose the test list → maintainer approves → r
 - **Exit (met):** `python -m evals.triage "<C1 symptom>"` against the **real** catalog/ADR index → `C1 → ADR-0022` (the dedup signal); a novel symptom → novel; `make check` clean. *`validate` moved to Increment 3 (it is the eval-spender — it belongs with Workflow B, not the free foundation).*
 
 ### Increment 2 — Workflow A `evals-to-proposals` (the analysis MVP)
-- [ ] `evals/workflows/evals_to_proposals.*` (`meta` + phases): ingest→triage (Layer-1) → fan-out 1 subagent/novel cluster → reconcile barrier → write `evals/proposals/<stamp>/` + append `failure-modes.md`.
-- [ ] dry-run against `20260615T164950Z`: 0 novel (proves dedup); a synthetic novel cluster fixture exercises the fan-out.
-- **Exit:** read-only, zero eval spend; produces a reviewable proposals dir; safe to run today.
+- [x] **2a · deterministic spine (`evals/cluster.py`, TDD'd):** `cluster_failures` groups failed runs by `(task, bucket)` — the grading-truth failure mode (`evals.classify`, persisted as `ResultRow.failure_mode`), **not** the harness `outcome` (ADR-0025 / catalog B4) — carrying models · runs · a token symptom · sample actions; `triage_report` runs the token-overlap **prefilter** per cluster; `python -m evals.cluster <results>` prints the report. The prefilter is coarse (trajectory tokens rarely match a catalogue *title*'s descriptive vocabulary), so it is a hint — the workflow's judge is authoritative.
+- [x] **2b · Workflow A script (`evals/workflows/evals_to_proposals.js`):** the Layer-2 `meta`+phases orchestration — `Triage` (shell out to `evals.cluster`) → `Analyze` (one judge subagent per cluster: confirm novel vs known) → `Propose` (one subagent per novel mode → a brief, code-free issue+fix entry) → `Reconcile` (barrier: dedupe/order, write the digest `evals/proposals/<stamp>/proposals.md` + append `failure-modes.md`). **Per ADR-0031 the output is the human digest, not per-`<id>.md` `ChangeProposal` artifacts** (structured emission deferred until Workflow B).
+- **Exit (deterministic spine met):** `python -m evals.cluster` reports clusters + prefilter verdicts, read-only / zero spend. *Running the full workflow (the subagent fan-out) is an explicit opt-in step via the `Workflow` tool — it spends Claude tokens (no eval spend) and is not exercised by `make`/CI.*
 
 ### Increment 3 — Workflow B `proposal-to-pr` + `validate` (the spender) — **HITL-gated**
 - [ ] `evals/validate.py` — the **canary ladder** (unit/local → 1-seed canary on affected models → full matrix on survival) against **frozen `evals/` assets**, verdict via `evals.diff`; `test_validate_canary_ladder_runs_frozen_assets` (scripted/offline). *Moved from Increment 1: it is the only eval-spender, so it lands with Workflow B.*

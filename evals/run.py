@@ -11,7 +11,7 @@ import json
 import re
 import shlex
 import shutil
-from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,7 +19,7 @@ from avatar.config import HarnessConfig
 from avatar.harness import Harness
 from avatar.journal import JsonlEventJournal
 from avatar.model_client import ModelClient
-from evals.classify import failure_histogram
+from evals.classify import classify, failure_histogram
 from evals.journal_read import row_events
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
@@ -149,7 +149,7 @@ def run_task(
         probe_exit = (
             run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
         )
-        return ResultRow(
+        row = ResultRow(
             task=spec.id,
             model=cfg.model,
             seed=seed,
@@ -163,7 +163,7 @@ def run_task(
             workspace=str(repo),
         )
     except Exception as exc:  # one bad run must not lose the matrix; keep the scratch path on the row
-        return ResultRow(
+        row = ResultRow(
             task=spec.id,
             model=config.model,
             seed=seed,
@@ -172,6 +172,15 @@ def run_task(
             iterations=0,
             workspace=str(repo),
         )
+    # Classify and persist the bucket NOW, while the scratch journal still exists (it is deleted by
+    # the caller's cleanup), so the `loop_oscillation` / `decision_error` refinements are captured
+    # and every downstream consumer reads one consistent value off the row (ADR-0025). A solved row
+    # short-circuits to "solved" before `classify` ever inspects events, so skip the journal read
+    # for it — otherwise every green run on a clean matrix materializes a (potentially huge) journal
+    # only to discard it.
+    events = None if row.solved else _journal_events(row)
+    row.failure_mode = classify(row, events)
+    return row
 
 
 def _load_specs() -> list[TaskSpec]:
@@ -181,6 +190,87 @@ def _load_specs() -> list[TaskSpec]:
         The loaded specs.
     """
     return [load_task_spec(p) for p in sorted((_EVALS_ROOT / "tasks").glob("*.toml"))]
+
+
+def _run_one(model: str, cfg: HarnessConfig, spec: TaskSpec, seed: int, run_workspace: Path) -> ResultRow:
+    """Run and score one ``(model, spec, seed)`` cell, catching provision-stage failures.
+
+    `run_task` already turns *run* errors into an error row that carries the scratch path; this
+    wrapper additionally catches a *provision*-stage failure (which propagates out of `run_task`)
+    so one bad cell never sinks the matrix. It is the unit dispatched to a worker thread.
+
+    Args:
+        model: The model id (used to label an error row when provisioning fails).
+        cfg: The per-model harness config (temperature + model already applied).
+        spec: The task spec for this cell.
+        seed: The seed index for this cell.
+        run_workspace: The run workspace to provision the scratch repo under.
+
+    Returns:
+        The scored `ResultRow`, or an error row if provisioning raised.
+    """
+    try:
+        return run_task(spec, config=cfg, seed=seed, workspace_root=run_workspace)
+    except Exception as exc:  # provision-stage failure (run_task handles run errors itself)
+        return ResultRow(
+            task=spec.id,
+            model=model,
+            seed=seed,
+            solved=False,
+            outcome=f"error: {type(exc).__name__}: {exc}"[:200],
+            iterations=0,
+        )
+
+
+def _run_matrix(
+    models: list[str],
+    base: HarnessConfig,
+    specs: list[TaskSpec],
+    *,
+    seeds: int,
+    run_workspace: Path,
+    concurrency: int,
+) -> list[ResultRow]:
+    """Run the full ``model * spec * seed`` matrix under a bounded thread pool.
+
+    The cells are hermetic — `run_task` provisions a uniquely-labelled scratch repo per cell and
+    drives its own `asyncio.run`, so a worker thread runs an entire trajectory in its own event
+    loop with no shared mutable state. Concurrency is I/O-bound (model API + subprocess probes),
+    so the GIL is released where it matters. Rows are reassembled in matrix order (model-major,
+    then spec, then seed) regardless of completion order, so the results artifact is deterministic;
+    only the live progress lines arrive as cells finish. ``concurrency=1`` reproduces the old
+    strictly-sequential behaviour exactly.
+
+    Args:
+        models: The model ids, in matrix order.
+        base: The base harness config (temperature already applied); per-model config is derived.
+        specs: The task specs, in matrix order.
+        seeds: The number of seeds per ``(model, spec)`` pair.
+        run_workspace: The run workspace to provision scratch repos under.
+        concurrency: The max number of cells run in parallel (clamped to ``>= 1``).
+
+    Returns:
+        The scored rows in matrix order.
+    """
+    cfg_by_model = {model: base.model_copy(update={"model": model}) for model in models}
+    cells = [
+        (model, cfg_by_model[model], spec, seed)
+        for model in models
+        for spec in specs
+        for seed in range(seeds)
+    ]
+    rows: list[ResultRow | None] = [None] * len(cells)
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        futures = {
+            pool.submit(_run_one, model, cfg, spec, seed, run_workspace): i
+            for i, (model, cfg, spec, seed) in enumerate(cells)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            row = future.result()
+            rows[index] = row
+            print(f"{row.model}  {row.task}  seed={row.seed}  -> {'PASS' if row.solved else row.outcome}")
+    return [row for row in rows if row is not None]
 
 
 def _resolve_run_workspace(workspace: str | None, stamp: str) -> tuple[Path, bool]:
@@ -250,21 +340,20 @@ def build_summary(
     seeds: int,
     temperature: float,
     stamp: str,
-    events_for: Callable[[ResultRow], Sequence[dict] | None] | None,
 ) -> dict:
     """Build the aggregate-metrics summary the runner persists alongside the per-run JSONL.
 
     Reuses the same metric/classifier functions ``main()`` prints, so the artifact and the
-    stdout summary can never drift. Floats are rounded to 4 decimals.
+    stdout summary can never drift. The failure histogram reads each row's persisted
+    ``failure_mode`` (set at scoring time, ADR-0025), so the refinements are already baked in —
+    no journal resolver is threaded here. Floats are rounded to 4 decimals.
 
     Args:
-        rows: The result rows from the run.
+        rows: The result rows from the run (each carrying its scoring-time ``failure_mode``).
         models: The model ids in matrix order (one ``per_model`` entry each).
         seeds: The seeds-per-task count for the run.
         temperature: The sampling temperature for the run.
         stamp: The shared timestamp (pairs the summary with ``<stamp>.jsonl``).
-        events_for: Resolver of a row's journal events, threaded into ``failure_histogram`` so
-            ``loop_oscillation`` / ``decision_error`` refinements are included.
 
     Returns:
         A JSON-serializable summary dict.
@@ -288,7 +377,7 @@ def build_summary(
         "models": models,
         "overall_pass_at_1": round(pass_at_1(rows), 4),
         "per_model": per_model,
-        "failure_histogram": failure_histogram(rows, events_for=events_for),
+        "failure_histogram": failure_histogram(rows),
     }
 
 
@@ -332,6 +421,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="keep the run workspace (scratch repos) for inspection; default removes it",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="max cells run in parallel across the model x spec x seed matrix; default 1 (sequential)",
+    )
     args = parser.parse_args(argv)
 
     base = HarnessConfig().model_copy(update={"temperature": args.temperature})
@@ -344,24 +439,14 @@ def main(argv: list[str] | None = None) -> int:
     stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     run_workspace, preexisting = _resolve_run_workspace(args.workspace, stamp)
 
-    rows: list[ResultRow] = []
-    for model in models:
-        cfg = base.model_copy(update={"model": model})
-        for spec in specs:
-            for seed in range(args.seeds):
-                try:
-                    row = run_task(spec, config=cfg, seed=seed, workspace_root=run_workspace)
-                except Exception as exc:  # provision-stage failure (run_task handles run errors itself)
-                    row = ResultRow(
-                        task=spec.id,
-                        model=model,
-                        seed=seed,
-                        solved=False,
-                        outcome=f"error: {type(exc).__name__}: {exc}"[:200],
-                        iterations=0,
-                    )
-                rows.append(row)
-                print(f"{model}  {spec.id}  seed={seed}  -> {'PASS' if row.solved else row.outcome}")
+    rows = _run_matrix(
+        models,
+        base,
+        specs,
+        seeds=args.seeds,
+        run_workspace=run_workspace,
+        concurrency=args.concurrency,
+    )
 
     out = _write_results(rows, stamp)
     print(f"\nwrote {len(rows)} rows -> {out}")
@@ -371,22 +456,20 @@ def main(argv: list[str] | None = None) -> int:
         mrows = [r for r in rows if r.model == model]
         print(f"  {model}: pass@1={pass_at_1(mrows):.2f}  pass^k={pass_caret_k(mrows):.2f}  (n={len(mrows)})")
     print(f"overall pass@1={pass_at_1(rows):.2f}  (n={len(rows)})")
-    # Classify with each row's journal events (read before cleanup) so loop_oscillation /
-    # decision_error are reachable, not just the row-only buckets.
-    hist = failure_histogram(rows, events_for=_journal_events)
+    # Each row already carries its journal-refined `failure_mode` (persisted at scoring time, while
+    # the journal was live), so loop_oscillation / decision_error are baked in — the histogram just
+    # tallies the stored buckets, no journal re-read and no ordering dependency on cleanup (ADR-0025).
+    hist = failure_histogram(rows)
     if hist:
         print("failure modes: " + ", ".join(f"{k}={v}" for k, v in sorted(hist.items())))
 
     # Persist the aggregate metrics + histogram as a sibling artifact, sharing the results stamp.
-    # MUST precede cleanup: the histogram reads journals that cleanup deletes (already read above,
-    # but build_summary re-derives it via the same resolver, so order matters either way).
     summary = build_summary(
         rows,
         models=models,
         seeds=args.seeds,
         temperature=args.temperature,
         stamp=stamp,
-        events_for=_journal_events,
     )
     summary_path = out.with_name(f"{stamp}.summary.json")
     write_summary(summary, summary_path)

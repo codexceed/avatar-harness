@@ -9,6 +9,7 @@ import json
 import math
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,9 @@ from pydantic import ValidationError
 from avatar.config import HarnessConfig
 from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
 from avatar.workspace import Workspace
-from evals.classify import classify, failure_histogram
+from evals.classify import classify, failure_histogram, resolve_failure_mode
+from evals.cluster import Cluster, cluster_failures
+from evals.distill import TrajectoryDigest
 from evals.metrics import pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, load_results, write_results
@@ -26,6 +29,7 @@ from evals.run import (
     _cleanup_workspaces,
     _journal_events,
     _resolve_run_workspace,
+    _run_matrix,
     build_summary,
     run_task,
     write_summary,
@@ -155,6 +159,74 @@ def test_eval_run_produces_result_row():
     assert row.outcome is not None
     assert row.iterations >= 1
     assert isinstance(row.solved, bool)
+
+
+# --- C2. matrix driver: bounded concurrency + deterministic ordering ----------
+
+
+def _matrix_specs(n: int) -> list[TaskSpec]:
+    """`n` trivial specs, ids ``t0..t{n-1}``, for driving `_run_matrix` offline."""
+    return [TaskSpec(id=f"t{i}", goal="g", task_kind="investigate", fixture="empty") for i in range(n)]
+
+
+def test_run_matrix_preserves_matrix_order(monkeypatch, tmp_path):
+    # Rows must come back in model-major → spec → seed order regardless of completion order, so
+    # the results artifact is deterministic even though cells finish out of order under a pool.
+    def fake(spec, *, config, seed, workspace_root):
+        # Sleep longer for earlier cells so completion order is the reverse of submission order.
+        time.sleep(0.02 * (5 - int(spec.id[1:])))
+        return ResultRow(
+            task=spec.id, model=config.model, seed=seed, solved=True, outcome="success", iterations=1
+        )
+
+    monkeypatch.setattr("evals.run.run_task", fake)
+    rows = _run_matrix(
+        ["m1", "m2"], HarnessConfig(), _matrix_specs(3), seeds=2, run_workspace=tmp_path, concurrency=4
+    )
+    got = [(r.model, r.task, r.seed) for r in rows]
+    expected = [(model, f"t{s}", seed) for model in ("m1", "m2") for s in range(3) for seed in range(2)]
+    assert got == expected
+
+
+@pytest.mark.parametrize("concurrency", [1, 4])
+def test_run_matrix_honours_concurrency_cap(monkeypatch, tmp_path, concurrency):
+    # The pool must run at most `concurrency` cells at once — and exactly that many when the
+    # matrix is large enough. concurrency=1 reproduces the old strictly-sequential behaviour.
+    lock = threading.Lock()
+    state = {"current": 0, "peak": 0}
+
+    def fake(spec, *, config, seed, workspace_root):
+        with lock:
+            state["current"] += 1
+            state["peak"] = max(state["peak"], state["current"])
+        time.sleep(0.05)
+        with lock:
+            state["current"] -= 1
+        return ResultRow(
+            task=spec.id, model=config.model, seed=seed, solved=True, outcome="success", iterations=1
+        )
+
+    monkeypatch.setattr("evals.run.run_task", fake)
+    rows = _run_matrix(
+        ["m"], HarnessConfig(), _matrix_specs(4), seeds=1, run_workspace=tmp_path, concurrency=concurrency
+    )
+    assert len(rows) == 4
+    assert state["peak"] == concurrency
+
+
+def test_run_matrix_catches_provision_failure(monkeypatch, tmp_path):
+    # A provision-stage failure propagates out of run_task; the driver must turn it into an error
+    # row so one bad cell never sinks the matrix.
+    def boom(spec, *, config, seed, workspace_root):
+        raise RuntimeError("provision exploded")
+
+    monkeypatch.setattr("evals.run.run_task", boom)
+    rows = _run_matrix(
+        ["m"], HarnessConfig(), _matrix_specs(2), seeds=1, run_workspace=tmp_path, concurrency=2
+    )
+    assert len(rows) == 2
+    assert all((r.outcome or "").startswith("error: RuntimeError: provision exploded") for r in rows)
+    assert all(not r.solved for r in rows)
 
 
 def test_eval_journal_excluded_from_search(tmp_path):
@@ -396,6 +468,73 @@ def test_failure_histogram_counts_failures_only():
     assert failure_histogram(rows) == {"verification_failed": 1, "budget_exhausted": 1}
 
 
+# --- H2. clustering keys on the grading-truth bucket, not the harness outcome (B4 / ADR-0025) --
+
+
+def _digest(task: str, model: str, seed: int, actions: list[str]) -> TrajectoryDigest:
+    return TrajectoryDigest(
+        task=task, model=model, seed=seed, outcome="incomplete", iterations=len(actions), actions=actions
+    )
+
+
+def test_cluster_keys_on_grading_truth_not_outcome():
+    # The z-ai/glm-5.2 create-chatbot shape: the agent declared done (outcome="success") but the
+    # probe failed (probe_exit=1) -> solved=False. The cluster must bucket on the grading truth
+    # (probe_failed), NOT produce a self-contradictory "success" failure cluster (catalog B4).
+    rows = [
+        ResultRow(
+            task="create-chatbot",
+            model="m",
+            seed=s,
+            solved=False,
+            outcome="success",
+            iterations=3,
+            probe_exit=1,
+            probe_role="success",
+            failure_mode="probe_failed",
+        )
+        for s in (1, 2)
+    ]
+    digests = [_digest("create-chatbot", "m", s, ["write_file", "final_answer"]) for s in (1, 2)]
+    clusters = cluster_failures(rows, digests)
+    assert len(clusters) == 1
+    assert clusters[0].bucket == "probe_failed"
+    assert clusters[0].runs == 2
+    assert "probe_failed" in clusters[0].symptom
+    assert "success" not in clusters[0].symptom  # the misleading token is gone
+
+
+def test_cluster_splits_distinct_buckets_under_one_task():
+    # A genuinely-stuck run (budget_exhausted) must never fold into a declared-done-but-broken run
+    # (probe_failed) just because they share a task — distinct mechanisms, distinct clusters.
+    rows = [
+        ResultRow(
+            task="t",
+            model="m",
+            seed=0,
+            solved=False,
+            outcome="success",
+            iterations=3,
+            probe_exit=1,
+            probe_role="success",
+            failure_mode="probe_failed",
+        ),
+        ResultRow(
+            task="t",
+            model="m",
+            seed=1,
+            solved=False,
+            outcome="incomplete",
+            iterations=20,
+            failure_mode="budget_exhausted",
+        ),
+    ]
+    digests = [_digest("t", "m", 0, ["write_file"]), _digest("t", "m", 1, ["search_repo"])]
+    buckets = sorted(c.bucket for c in cluster_failures(rows, digests))
+    assert buckets == ["budget_exhausted", "probe_failed"]
+    assert isinstance(cluster_failures(rows, digests)[0], Cluster)
+
+
 # --- I. statistics: clustered CI + paired McNemar (Slice 2) -------------------
 
 
@@ -471,12 +610,23 @@ def test_no_secret_leak_probe(tmp_path):
 # --- K. review follow-ups: live histogram path + probe-bearing scoring contract -----
 
 
-def test_failure_histogram_uses_events_resolver():
-    # DO3: with an events resolver, an incomplete run refines to loop_oscillation (unreachable
-    # row-only). This is the live-path behavior run.py now exercises.
+def test_failure_histogram_reads_persisted_failure_mode():
+    # ADR-0025: the bucket is computed once at scoring time (journal live) and persisted on the row;
+    # the histogram tallies that stored value, so a journal-refined loop_oscillation survives without
+    # the histogram re-reading any events. No dual mode at the consumer boundary.
     row = _frow("incomplete", False)
-    events = [{"type": "model_decision", "action": "read_file({})"} for _ in range(4)]
-    assert failure_histogram([row], events_for=lambda _r: events) == {"loop_oscillation": 1}
+    row.failure_mode = "loop_oscillation"
+    assert failure_histogram([row]) == {"loop_oscillation": 1}
+
+
+def test_resolve_failure_mode_prefers_persisted_else_row_only():
+    # Persisted value wins (journal-refined); an empty field falls back to a row-only classify so
+    # results files written before the field existed still bucket.
+    persisted = _frow("incomplete", False)
+    persisted.failure_mode = "loop_oscillation"
+    assert resolve_failure_mode(persisted) == "loop_oscillation"
+    legacy = _frow("incomplete", False)  # failure_mode == "" (pre-ADR-0025 row)
+    assert resolve_failure_mode(legacy) == "budget_exhausted"
 
 
 def test_journal_events_reads_row_workspace(tmp_path):
@@ -555,6 +705,30 @@ def test_run_task_with_probe_scores_via_probe(tmp_path):
     )
     assert row.solved is True and row.probe_exit == 0
     assert row.workspace is not None and Path(row.workspace).parent == run_dir
+    assert row.failure_mode == "solved"  # ADR-0025: the bucket is persisted at scoring time
+
+
+def test_run_task_persists_journal_refined_failure_mode(tmp_path):
+    # The whole motivation for ADR-0025: a refinement only the journal reveals must survive on the
+    # row. This run OSCILLATES — the same search repeated, never concluding — so it ends `incomplete`
+    # with repeated_action_max ≥ 3. run_task must persist the journal-refined `loop_oscillation`,
+    # NOT the row-only `budget_exhausted` an after-the-fact (journal-gone) classify would yield.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    spec = TaskSpec(
+        id="investigate-question",
+        goal="find the widget",
+        task_kind="investigate",
+        fixture="empty",
+        budgets={"max_iterations": 3},
+    )
+    # A single decision the ScriptedModel repeats every turn -> 3 identical actions before the cap.
+    decisions = [ModelDecision(action=ToolCall(name="search_repo", input={"query": "widget"}))]
+    row = run_task(
+        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+    )
+    assert row.solved is False and row.outcome == "incomplete"
+    assert row.failure_mode == "loop_oscillation"
 
 
 # --- L. aggregate summary artifact (build_summary / write_summary) -------------
@@ -586,7 +760,6 @@ def test_build_summary_metadata_and_per_model_metrics():
         seeds=2,
         temperature=0.7,
         stamp="20260615T000000Z",
-        events_for=lambda _r: [],
     )
     assert summary["stamp"] == "20260615T000000Z"
     assert summary["n"] == 6
@@ -607,40 +780,29 @@ def test_build_summary_metadata_and_per_model_metrics():
     assert per_model["m2"]["n"] == 2
 
 
-def test_build_summary_histogram_uses_events_resolver():
-    # An incomplete run refines to loop_oscillation only via the journal-events resolver —
-    # build_summary must thread events_for through exactly as main() does.
+def test_build_summary_histogram_reads_persisted_failure_mode():
+    # ADR-0025: build_summary tallies each row's persisted `failure_mode`; the loop_oscillation
+    # refinement was baked in at scoring time, so no journal resolver is threaded here.
     rows = [
         _mrow("m1", "a", 0, True),
         _mrow("m1", "b", 0, False, outcome="incomplete"),
     ]
-    events = [{"type": "model_decision", "action": "read_file({})"} for _ in range(4)]
-    summary = build_summary(
-        rows,
-        models=["m1"],
-        seeds=1,
-        temperature=0.0,
-        stamp="TS",
-        events_for=lambda _r: events,
-    )
+    rows[1].failure_mode = "loop_oscillation"
+    summary = build_summary(rows, models=["m1"], seeds=1, temperature=0.0, stamp="TS")
     assert summary["failure_histogram"] == {"loop_oscillation": 1}
 
 
 def test_build_summary_rounds_floats_to_4dp():
     # 2 of 3 solved -> 0.6666... must round to 0.6667.
     rows = [_mrow("m1", "a", 0, True), _mrow("m1", "a", 1, True), _mrow("m1", "a", 2, False)]
-    summary = build_summary(
-        rows, models=["m1"], seeds=3, temperature=0.7, stamp="TS", events_for=lambda _r: []
-    )
+    summary = build_summary(rows, models=["m1"], seeds=3, temperature=0.7, stamp="TS")
     assert summary["overall_pass_at_1"] == 0.6667
     assert summary["per_model"][0]["pass_at_1"] == 0.6667
 
 
 def test_write_summary_round_trips_to_json(tmp_path):
     rows = [_mrow("m1", "a", 0, True), _mrow("m1", "a", 1, False, outcome="incomplete")]
-    summary = build_summary(
-        rows, models=["m1"], seeds=2, temperature=0.7, stamp="TS", events_for=lambda _r: []
-    )
+    summary = build_summary(rows, models=["m1"], seeds=2, temperature=0.7, stamp="TS")
     path = tmp_path / "TS.summary.json"
     write_summary(summary, path)
     back = json.loads(path.read_text(encoding="utf-8"))
@@ -664,9 +826,7 @@ def test_summary_pairs_with_results_jsonl_by_stamp(tmp_path):
     stamp = "20260615T120000Z"
     rows = [_mrow("m1", "a", 0, True)]
     write_results(rows, results / f"{stamp}.jsonl")
-    summary = build_summary(
-        rows, models=["m1"], seeds=1, temperature=0.7, stamp=stamp, events_for=lambda _r: []
-    )
+    summary = build_summary(rows, models=["m1"], seeds=1, temperature=0.7, stamp=stamp)
     summary_path = results / f"{stamp}.summary.json"
     write_summary(summary, summary_path)
     assert (results / f"{stamp}.jsonl").exists()

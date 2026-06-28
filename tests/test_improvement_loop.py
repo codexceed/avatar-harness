@@ -4,6 +4,9 @@ Deterministic and offline: digests/triage/proposals are pure functions over resu
 journal events, and parsed markdown — no model, no network.
 """
 
+import json
+
+from evals.cluster import Cluster, cluster_failures, triage_report
 from evals.distill import TrajectoryDigest, distill, distill_results
 from evals.journal_read import row_events
 from evals.proposal import ChangeProposal, load_proposals, score_impact, write_proposals
@@ -191,9 +194,18 @@ def test_changeproposal_markdown_has_front_matter_and_body(tmp_path):
     p = _proposal(body="The model burns its budget hunting for a leaked copy.")
     md = p.to_markdown()
     assert md.startswith("---")  # YAML front-matter fence
-    assert "id: c1-conclude" in md
-    assert "remediation_type: prompt_instruction" in md
+    assert 'id: "c1-conclude"' in md  # scalars are JSON-quoted (valid YAML)
+    assert 'remediation_type: "prompt_instruction"' in md
     assert "The model burns its budget" in md
+
+
+def test_changeproposal_markdown_quotes_colon_bearing_title():
+    # Regression: a ": " inside an unquoted title makes a YAML parser read a nested mapping and
+    # the front-matter fails to render. to_markdown JSON-encodes every scalar, so it stays valid.
+    title = "Edit mission: run the artifact before declaring done"
+    md = _proposal(title=title).to_markdown()
+    line = next(ln for ln in md.splitlines() if ln.startswith("title: "))
+    assert json.loads(line.removeprefix("title: ")) == title  # quoted + JSON-valid (JSON ⊂ YAML)
 
 
 def test_proposals_roundtrip_to_disk(tmp_path):
@@ -201,3 +213,55 @@ def test_proposals_roundtrip_to_disk(tmp_path):
     path = tmp_path / "proposals.jsonl"
     write_proposals(proposals, path)
     assert load_proposals(path) == proposals
+
+
+# --- D. cluster: group failures + triage prefilter (Workflow A's deterministic spine) ----------
+
+
+def _digest(task: str, model: str, seed: int, outcome: str, actions: list[str]) -> TrajectoryDigest:
+    return TrajectoryDigest(
+        task=task, model=model, seed=seed, outcome=outcome, iterations=20, actions=actions
+    )
+
+
+def test_cluster_groups_failures_by_task_outcome_and_skips_solved():
+    rows = [
+        _row(model="m1", seed=0),  # secret-safety / incomplete
+        _row(model="m2", seed=1),  # secret-safety / incomplete (different model)
+        _row(task="other", model="m1", seed=0, outcome="failed"),
+        _row(model="m1", seed=2, solved=True, outcome="success"),  # solved -> excluded
+    ]
+    digests = [
+        _digest("secret-safety", "m1", 0, "incomplete", ["read_file({'path': 'credentials'})"]),
+        _digest("secret-safety", "m2", 1, "incomplete", ["search_repo({'query': 'sk'})"]),
+        _digest("other", "m1", 0, "failed", []),
+        _digest("secret-safety", "m1", 2, "success", []),
+    ]
+    clusters = cluster_failures(rows, digests)
+    assert {c.task for c in clusters} == {"secret-safety", "other"}  # the solved run is excluded
+    ss = next(c for c in clusters if c.task == "secret-safety")
+    # Keyed on the grading-truth bucket (ADR-0025): the two incomplete secret-safety give-ups
+    # bucket as budget_exhausted (row-only fallback — no persisted failure_mode on these rows).
+    assert ss.bucket == "budget_exhausted" and ss.runs == 2 and ss.models == ["m1", "m2"]
+
+
+def test_cluster_symptom_includes_task_bucket_and_action_tokens():
+    rows = [_row(model="m1", seed=0)]
+    digests = [_digest("secret-safety", "m1", 0, "incomplete", ["read_file({'path': 'credentials'})"])]
+    [cluster] = cluster_failures(rows, digests)
+    assert "secret-safety" in cluster.symptom and "budget_exhausted" in cluster.symptom
+    assert "credentials" in cluster.symptom and "read_file" in cluster.symptom
+
+
+def test_triage_report_pairs_each_cluster_with_a_verdict():
+    catalog = parse_catalog(_CATALOG)
+    adrs = parse_adr_index(_ADR_INDEX)
+    clusters = [
+        Cluster(
+            task="t", bucket="budget_exhausted", models=["m"], runs=1, symptom="widget frobnicator timeout"
+        )
+    ]
+    report = triage_report(clusters, catalog, adrs)
+    assert len(report) == 1
+    assert report[0].cluster.task == "t"
+    assert report[0].triage.novel is True  # no overlap with the catalog / open ADRs

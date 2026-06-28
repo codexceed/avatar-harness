@@ -24,5 +24,5 @@ Two things live here, layered:
 
 - Every Layer-1 module is a `python -m evals.<name>` CLI with an argparse `main()`, mirrors the pydantic style of `result.py`/`spec.py` (`to_jsonl` / `load_*` / `write_*`), and is **TDD'd in `tests/test_evals.py`** with an injected `ScriptedModel` (offline, no network).
 - `evals/` is held to the same gates as `src/` (ADR-0013): ruff · pyrefly · pydoclint · deptry. `evals/probes/` and `evals/fixtures/` are the only carve-outs. Run `make check` before committing.
-- Saved Workflow scripts live in `evals/workflows/` (invoked via `Workflow({scriptPath})`); proposal artifacts in `evals/proposals/<stamp>/`.
+- Saved Workflow scripts live in `evals/workflows/` (invoked via `Workflow({scriptPath})`); Workflow A's artifact is the human-readable digest `evals/proposals/<stamp>/proposals.md` (ADR-0031 — code-free, no per-`<id>.md` `ChangeProposal` files; structured emission deferred until Workflow B).
 - Run journals must stay **distillable**: never let a tool dump unbounded output into `ToolEnd.content`, and keep the journal out of the agent-searchable tree (the 875 MB blowup; Increment 0).

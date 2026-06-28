@@ -52,6 +52,11 @@ Args:
 Returns:
     The final `TaskState` with a terminal `outcome`.
 
+Raises:
+    TransportError: When a model call fails at the transport layer (timeout / NUL body)
+        past the client's retries — a system failure surfaced to the caller, never fed
+        back to the model or masked as a soft `incomplete` (§16, ADR-0028 R4).
+
 #### `AgentRunner.run(self, state: TaskState) -> TaskState`
 
 Drive the loop to a terminal outcome synchronously (§5).

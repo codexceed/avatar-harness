@@ -42,6 +42,7 @@ from avatar.model_client import (
     FinalAnswer,
     ModelClient,
     ToolCall,
+    TransportError,
 )
 from avatar.permission import PermissionPolicy
 from avatar.planner import VerificationPlanner
@@ -215,7 +216,7 @@ class AgentRunner:
         """
         return asyncio.run(self.arun(state))
 
-    async def arun(self, state: TaskState) -> TaskState:  # noqa: PLR0915 — deliberate near-verbatim §5 transcription
+    async def arun(self, state: TaskState) -> TaskState:  # noqa: PLR0915, PLR0912, C901 — deliberate near-verbatim §5 transcription (+ transport/streaming-fallback surface, ADR-0028/0029)
         """Drive the loop to a terminal outcome asynchronously — the real loop (§5).
 
         A near-verbatim async transcription of the §5 pseudocode: blocking model/tool/
@@ -228,6 +229,14 @@ class AgentRunner:
 
         Returns:
             The final `TaskState` with a terminal `outcome`.
+
+        Raises:
+            TransportError: When a model call fails at the transport layer (timeout / NUL body)
+                past the client's retries — a system failure surfaced to the caller, never fed
+                back to the model or masked as a soft `incomplete` (§16, ADR-0028 R4).
+            asyncio.CancelledError: When the run task itself is cancelled (the signal /
+                `_run_task.cancel()` path, ADR-0030) — re-raised after aborting the in-flight
+                model call so the loop unwinds without orphaning the request.
         """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
@@ -248,7 +257,63 @@ class AgentRunner:
             self.emitter.emit("turn_start", task_id=state.task_id, iteration=state.iterations)
             self._publish(TurnStart(task_id=state.task_id, turn=state.iterations, iteration=state.iterations))
             try:
-                decision = await asyncio.to_thread(self.model_client.decide, context)
+                # Race the model call against a cancel (ADR-0029 R5): ESC/wall-clock can abort an
+                # in-flight call mid-stream, not just between turns. The async call replaces the old
+                # `to_thread(decide)` (which was uncancellable); kept inside this try: so the
+                # transport/parse error arms still apply to `task.result()`.
+                task = asyncio.ensure_future(self.model_client.adecide(context))
+                cancel_wait = asyncio.ensure_future(self.deps.cancellation.event().wait())
+                try:
+                    # Bound the race by the REMAINING wall-clock budget (ADR-0029): the streaming idle
+                    # timeout only bounds the gap between chunks, so a live-but-runaway stream could
+                    # otherwise blow past max_wall_clock_seconds within one turn (checked only between
+                    # turns). An empty `done` means the deadline elapsed mid-call.
+                    done, _ = await asyncio.wait(
+                        {task, cancel_wait},
+                        timeout=max(0.0, deadline - time.monotonic()),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except asyncio.CancelledError:
+                    # arun itself was cancelled (the signal/Task.cancel() path, ADR-0030 #80/#81):
+                    # asyncio.wait does NOT cancel its children, so abort the in-flight model call
+                    # explicitly to avoid orphaning the httpx request, then re-raise to unwind.
+                    task.cancel()
+                    cancel_wait.cancel()
+                    raise
+                if not done or cancel_wait in done:
+                    # Either the wall-clock deadline hit (empty `done`) or a user cancel fired: both
+                    # abort the in-flight call (cancelling `task` aborts httpx; the streaming path's
+                    # `finally: await stream.close()` releases the connection). Drain BOTH children via
+                    # gather(return_exceptions) so neither leaks a "future exception never retrieved".
+                    timed_out = not done
+                    task.cancel()
+                    cancel_wait.cancel()
+                    await asyncio.gather(task, cancel_wait, return_exceptions=True)
+                    if timed_out:
+                        self._stop_incomplete(state, "wall-clock budget exceeded", kind="budget")
+                    else:
+                        # If a cancel and the model's completion land in the same tick, cancel wins and
+                        # the finished decision's usage is forfeited (unbilled) — an accepted, rare loss.
+                        self._stop_incomplete(state, "run cancelled", kind="cancelled")
+                        self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
+                    self.emitter.emit("turn_end", task_id=state.task_id)
+                    self._publish(TurnEnd(task_id=state.task_id, turn=state.iterations))
+                    break
+                cancel_wait.cancel()
+                await asyncio.gather(cancel_wait, return_exceptions=True)  # drain the loser symmetrically
+                decision = task.result()  # re-raises TransportError / DecisionParseError as today
+            except TransportError as exc:
+                # A transport failure (timeout / NUL body) that survived the client's retries is a
+                # SYSTEM failure, not model-correctable (§16, ADR-0028 R4): never feed it back to the
+                # model. Bill the lost attempts, journal it distinctly (not as `decision_error`), and
+                # surface it to the caller — the eval runner records a distinct error row, never a
+                # silent one-turn `incomplete`.
+                self._record_usage(state, getattr(exc, "usage", None))
+                state.latest_error = str(exc)
+                self.emitter.emit("transport_error", error=str(exc))
+                self.emitter.emit("turn_end", task_id=state.task_id)
+                self._publish(TurnEnd(task_id=state.task_id, turn=state.iterations))
+                raise
             except DecisionParseError as exc:
                 # A malformed decision is model-correctable: feed it back, don't crash (§6).
                 # The lost turn still cost tokens — bill them (the client sums attempts).
@@ -285,6 +350,18 @@ class AgentRunner:
                         recovered=True,
                     )
                 )
+
+            # Transport failures the client recovered from in-flight (NUL/timeout that re-issued
+            # and succeeded): journal each as `transport_retry` so a flaky provider is visible
+            # (ADR-0028 R4). UNLIKE parse retries these are NOT add_feedback'd — a dead provider
+            # reply is not model-correctable (§16), so it never enters the model's context.
+            for err in decision.transport_trace:
+                self.emitter.emit("transport_retry", error=err, recovered=True)
+
+            # The session dropped streaming→non-streaming this turn (ADR-0029 R5): journal it so an
+            # eval can tell whether streaming was exercised. Like transport_retry, NOT fed to the model.
+            if decision.streaming_fallback:
+                self.emitter.emit("streaming_fallback", reason=decision.streaming_fallback)
 
             self._record_usage(state, decision.usage)
 
