@@ -708,6 +708,35 @@ def test_run_task_with_probe_scores_via_probe(tmp_path):
     assert row.failure_mode == "solved"  # ADR-0025: the bucket is persisted at scoring time
 
 
+def test_run_task_resolves_fixtures_and_probes_under_a_frozen_evals_root(tmp_path):
+    # `validate` grades a candidate against FROZEN assets (ADR-0024): run_task must resolve BOTH the
+    # fixture and the probe script under the given `evals_root`, never this repo's `evals/`.
+    frozen = tmp_path / "frozen" / "evals"
+    (frozen / "fixtures" / "seeded").mkdir(parents=True)
+    (frozen / "fixtures" / "seeded" / "marker.txt").write_text("from-frozen\n", encoding="utf-8")
+    (frozen / "probes").mkdir(parents=True)
+    # A probe that exists ONLY in the frozen root and exits 7 — a distinctive code proving THIS
+    # script ran (not any repo probe).
+    (frozen / "probes" / "mark.py").write_text("raise SystemExit(7)\n", encoding="utf-8")
+    spec = TaskSpec(
+        id="frozen-check", goal="g", fixture="seeded", success_probe="python evals/probes/mark.py"
+    )
+    decisions = [ModelDecision(action=FinalAnswer(answer="done"))]
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    row = run_task(
+        spec,
+        config=HarnessConfig(),
+        model_client=ScriptedModel(decisions),
+        seed=0,
+        workspace_root=run_dir,
+        evals_root=frozen,
+    )
+    assert row.probe_exit == 7  # the frozen probe ran
+    assert row.workspace is not None
+    assert (Path(row.workspace) / "marker.txt").read_text() == "from-frozen\n"  # frozen fixture provisioned
+
+
 def test_run_task_persists_journal_refined_failure_mode(tmp_path):
     # The whole motivation for ADR-0025: a refinement only the journal reveals must survive on the
     # row. This run OSCILLATES — the same search repeated, never concluding — so it ends `incomplete`
