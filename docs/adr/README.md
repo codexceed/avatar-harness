@@ -36,6 +36,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0028](0028-transport-retry-and-request-timeout.md) | Transport-layer retry + request timeout for model calls (NUL/hang resilience) | Proposed — R1–R4 implemented 2026-06-20; R5 → ADR-0029 |
 | [0029](0029-streaming-idle-timeout-for-model-calls.md) | Streaming idle-timeout for model calls (ADR-0028 R5) | Accepted — implemented 2026-06-21 |
 | [0030](0030-interruptible-runs-via-async-model-client.md) | Interruptible runs via an async model client (cancellable in-flight model calls) | Accepted — core implemented 2026-06-17; extended by 0028/0029 |
+| [0031](0031-proposals-as-human-digest.md) | Workflow A emits a human-readable proposals digest; defer the structured `ChangeProposal` seam (amends 0024) | Accepted — implemented 2026-06-28 |
 
 ## Conventions
 
