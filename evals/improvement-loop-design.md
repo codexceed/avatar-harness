@@ -240,12 +240,11 @@ sequenceDiagram
 
 TDD per the repo protocol: **propose the test list → maintainer approves → red → green → record.** Built behind `evals/` + one guarded `src/` guardrail; the only `src/` engine touch is Increment 0.
 
-### Increment 0 — `search_repo` guardrail (small, standalone, unblocks clean inputs)
-- [ ] `test_search_repo_caps_large_output_with_marker` — output capped (~50 KB) with the `… [truncated: shown/total chars shown]` marker.
-- [ ] `test_search_summary_notes_truncation`.
-- [ ] `test_eval_journal_excluded_from_search` — the eval journal path is covered by `_journal_ignores` (the regression that would have caught 875 MB).
-- [ ] impl: cap in `tools/search.py`; align `evals/run.py` journal path with the workspace exclusion.
-- **Exit:** a large search can't balloon `ToolEnd.content`/the journal; `make check` clean.
+### Increment 0 — `search_repo` guardrail (small, standalone, unblocks clean inputs) ✅ built (PR #75)
+- [x] `test_search_repo_caps_large_output_with_marker` — output capped (~50 KB) with the `… [truncated: shown/total chars shown]` marker. *Also asserts the `(truncated)` summary note (the planned `test_search_summary_notes_truncation` was folded into this test rather than kept standalone).*
+- [x] `test_eval_journal_excluded_from_search` — the eval journal path is covered by `_journal_ignores` (the regression that would have caught 875 MB).
+- [x] impl: `_MAX_SEARCH_OUTPUT_CHARS = 50_000` cap in `avatar/tools/search.py`; `evals/run.py` journal path aligned with the workspace exclusion.
+- **Exit (met):** a large search can't balloon `ToolEnd.content`/the journal; `make check` clean.
 
 ### Increment 1 — Layer-1 read-only foundation + `ChangeProposal` (the free core) ✅ built (15 tests)
 - [x] `distill` (`evals/distill.py`) — journal → `TrajectoryDigest` in a **single streaming pass** (ordered/capped actions, repeat/failure/`decision_error` counts, token curve; KB-bounded; `tool_end.content` never retained); a shared streaming reader `evals/journal_read.py` (`iter_events`/`row_events`) feeds both this and `run.py`.
