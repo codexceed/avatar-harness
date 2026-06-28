@@ -200,9 +200,47 @@ per issue: what's wrong · the fix · size · risk), then one self-contained ent
 If every failure maps to an already-known mode, the workflow writes nothing and says so — that is a
 valid, healthy outcome (the loop's job is to surface what's *new*).
 
-> **Note:** this workflow currently emits only the human digest. The structured, machine-readable
-> hand-off (`ChangeProposal`, `evals/proposal.py`) to a future PR-building workflow ("Workflow B")
-> is intentionally deferred until that consumer exists.
+> **Note:** this workflow emits only the human digest. The structured `ChangeProposal`
+> (`evals/proposal.py`) is reconstructed by Workflow B from the funded digest entry (ADR-0024 §seam;
+> ADR-0031) — Workflow A's job stays read-only and human-facing.
+
+---
+
+## From a funded proposal to a validated PR (`proposal-to-pr`)
+
+Once you've read the digest and decided to build an entry (**Gate 1 — funding**), the
+**`proposal-to-pr`** workflow turns that one proposal into a TDD'd, statistically-validated PR. It is
+the **only** part of the loop that spends eval budget, which is why it runs per-funded-proposal and
+**never merges** (Gate 2 — review + merge — stays human).
+
+```
+Workflow({ scriptPath: "evals/workflows/proposal_to_pr.js",
+           args: { digest: "evals/proposals/<stamp>/proposals.md", entry: 1,
+                   baseline: "evals/results/<stamp>.jsonl", trusted_ref: "main" } })
+```
+
+What it does:
+
+1. **Scope** — reconstructs the typed `ChangeProposal` from the funded entry and **routes on
+   blast-radius**: a *global* or *grader-touching* change is drafted as an **ADR-proposal PR** (zero
+   eval spend) for a human to decide — never auto-built.
+2. **Build** — a fresh git worktree; a TDD subagent drives the fix to local green (`make check`).
+3. **Validate** — the deterministic **canary ladder** (`python -m evals.validate`): unit/local →
+   1-seed canary on the affected models → full matrix, each graded against the grading surface
+   (specs · probes · fixtures) **frozen from a trusted ref** so a candidate can't grade itself
+   against a spec it just edited. The verdict is **global**: paired McNemar + per-model agnosticism.
+4. **Open PR** — cites the baseline rows, the digest entry, and the validation verdict so a reviewer
+   can confirm "solved, not gamed." A stubborn proposal that won't validate within the rework cap is
+   **escalated to the ADR route**, not merged.
+
+You can also run the ladder directly against any candidate worktree:
+
+```bash
+uv run python -m evals.validate --baseline evals/results/<stamp>.jsonl \
+  --worktree . --trusted-ref main \
+  --affected-models gemini,sonnet --target-tasks secret-safety \
+  --models gpt-5.1,sonnet,gemini --seeds 5
+```
 
 ---
 

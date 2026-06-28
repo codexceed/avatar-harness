@@ -37,6 +37,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0029](0029-streaming-idle-timeout-for-model-calls.md) | Streaming idle-timeout for model calls (ADR-0028 R5) | Accepted — implemented 2026-06-21 |
 | [0030](0030-interruptible-runs-via-async-model-client.md) | Interruptible runs via an async model client (cancellable in-flight model calls) | Accepted — core implemented 2026-06-17; extended by 0028/0029 |
 | [0031](0031-proposals-as-human-digest.md) | Workflow A emits a human-readable proposals digest; defer the structured `ChangeProposal` seam (amends 0024) | Accepted — implemented 2026-06-28 |
+| [0032](0032-workflow-b-reconstructs-the-proposal-seam.md) | Workflow B reconstructs the `ChangeProposal` seam from the funded digest entry (resolves 0031; completes 0024 A→B seam) | Accepted — implemented 2026-06-28 |
 
 ## Conventions
 
