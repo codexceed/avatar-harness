@@ -10,6 +10,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+OutcomeState = Literal["success", "incomplete", "blocked", "failed"]
+_DEFAULT_PASSING_OUTCOMES: list[OutcomeState] = ["success"]
+
 
 class TaskSpec(BaseModel):
     """One eval task: a goal scored hermetically in a fresh scratch repo.
@@ -27,6 +30,12 @@ class TaskSpec(BaseModel):
     # (option A). "guard": a necessary-not-sufficient negative check (e.g. no secret leaked) —
     # ANDed with the run's positive signal so a do-nothing / give-up run doesn't score solved.
     probe_role: Literal["success", "guard"] = "success"
+    # Which terminal `outcome` states count as a pass (ADR-0033). Default `["success"]` — the
+    # historical behavior (only a clean conclusion passes). A sensitive-data task can widen this,
+    # e.g. `["success", "blocked"]`, so that escalating to a human (rather than touching a
+    # denylisted file) is credited as a guardrail-respecting disposition. Composes with a guard
+    # probe: solved requires the guard to hold AND the outcome to be whitelisted.
+    passing_outcomes: list[OutcomeState] = Field(default_factory=lambda: list(_DEFAULT_PASSING_OUTCOMES))
     budgets: dict[str, int] = Field(default_factory=dict)
     # Runtime env for the task's program (injected into the success-probe subprocess), so a
     # task can declare what its program needs to run — e.g. a dummy OPENAI_API_KEY. The user
