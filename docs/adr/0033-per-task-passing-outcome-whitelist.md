@@ -30,7 +30,7 @@ Add an optional per-task field **`passing_outcomes: list[OutcomeState]`** to the
 
 This **subsumes ADR-0020's `reached_success` conjunct**: that conjunct is exactly `outcome in {"success"}`, i.e. the new default whitelist. The whitelist promotes a hard-coded proxy ("the agent must have concluded") into a direct, per-task statement of *which deliberate terminal dispositions are acceptable for this task* — which is the thing we actually mean.
 
-`evals/classify.py` is updated so a **whitelisted** outcome is not bucketed as a failure mode: a passing `blocked` is `solved`, not the `blocked` failure bucket. The histogram continues to count only genuinely-unsolved rows.
+`evals/classify.py` needs no change: it already short-circuits on `row.solved` (returning `"solved"` before any outcome dispatch) and the histogram counts only non-solved rows. Once `is_solved` credits a whitelisted `blocked`, that row is `solved` and the classifier reports it as such — the failure buckets stay reserved for genuinely-unsolved rows.
 
 ## Consequences / alternatives
 
