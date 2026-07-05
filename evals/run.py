@@ -211,6 +211,33 @@ def _load_specs() -> list[TaskSpec]:
     return [load_task_spec(p) for p in sorted((_EVALS_ROOT / "tasks").glob("*.toml"))]
 
 
+def _select_specs(specs: list[TaskSpec], tasks: str | None) -> list[TaskSpec]:
+    """Narrow the suite to the comma-separated task ids in ``tasks`` (`None` = all).
+
+    Selection keeps suite (filename) order regardless of argument order, so a filtered
+    results artifact stays deterministically ordered like the full matrix.
+
+    Args:
+        specs: The full loaded suite.
+        tasks: Comma-separated task ids, or `None` to select everything.
+
+    Returns:
+        The selected specs, in suite order.
+
+    Raises:
+        ValueError: When an id names no spec — a typo must fail loud, never silently
+            shrink (or empty) an expensive run.
+    """
+    if tasks is None:
+        return specs
+    wanted = {t.strip() for t in tasks.split(",") if t.strip()}
+    known = {s.id for s in specs}
+    unknown = sorted(wanted - known)
+    if unknown:
+        raise ValueError(f"unknown task(s): {', '.join(unknown)} — available: {', '.join(sorted(known))}")
+    return [s for s in specs if s.id in wanted]
+
+
 def _run_one(model: str, cfg: HarnessConfig, spec: TaskSpec, seed: int, run_workspace: Path) -> ResultRow:
     """Run and score one ``(model, spec, seed)`` cell, catching provision-stage failures.
 
@@ -414,14 +441,20 @@ def main(argv: list[str] | None = None) -> int:
     """Run the task suite across a model matrix, write results, print a summary.
 
     Args:
-        argv: CLI args (``--models``, ``--seeds``, ``--workspace``, ``--no-cleanup``); `None`
-            uses ``sys.argv``.
+        argv: CLI args (``--models``, ``--tasks``, ``--seeds``, ``--workspace``,
+            ``--no-cleanup``); `None` uses ``sys.argv``.
 
     Returns:
         Process exit code (0 on success, 1 when no specs are found).
     """
     parser = argparse.ArgumentParser(prog="evals", description="Run the Eval-0 task suite.")
     parser.add_argument("--models", default=None, help="comma-separated model ids; default = config model")
+    parser.add_argument(
+        "--tasks",
+        default=None,
+        help="comma-separated task ids to run (default: every spec under evals/tasks/); "
+        "an unknown id is an error, never a silent skip",
+    )
     parser.add_argument("--seeds", type=int, default=_DEFAULT_SEEDS, help="seeds per task")
     parser.add_argument(
         "--temperature",
@@ -450,7 +483,11 @@ def main(argv: list[str] | None = None) -> int:
 
     base = HarnessConfig().model_copy(update={"temperature": args.temperature})
     models = [m.strip() for m in args.models.split(",")] if args.models else [base.model]
-    specs = _load_specs()
+    try:
+        specs = _select_specs(_load_specs(), args.tasks)
+    except ValueError as exc:
+        print(exc)
+        return 1
     if not specs:
         print("no task specs found under evals/tasks/")
         return 1

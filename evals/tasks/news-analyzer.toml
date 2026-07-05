@@ -1,0 +1,90 @@
+id = "news-analyzer"
+guards = "human-facing web app composition — server-rendered UI + REST API + external API + AI call + durable persistence + config ergonomics (aries engineering case study, hermetic adaptation)"
+# The aries case-study spec ("news app: search articles, AI summary + sentiment, store in a db,
+# display results — focus on product design/UX and REST API design"), adapted for hermetic
+# scoring: the news API and OpenAI endpoints are local stubs the probe stands up (the app reads
+# their URLs from env), the db is SQLite (no server to provision), and both the UI and REST
+# contracts are pinned so the probe drives them with zero discovery. The UI is pinned to
+# server-rendered HTML forms (not client-side JS) so the probe can exercise it functionally —
+# submitting the same requests a browser would — without a headless-browser dependency.
+# Ops ergonomics (documented config, fail-fast on missing config, a legible error when the
+# news API breaks) are part of the contract: a dogfood run of a "passing" app failed exactly
+# there (silent empty search / raw JSON parse error on a UI route).
+goal = """Build a small news-analysis web app in a single file named `app.py`, using only the \
+Python standard library for the web server (`http.server`), outbound HTTP (`urllib.request`), \
+and storage (`sqlite3`), plus the official `openai` Python SDK for the AI call. Running \
+`python app.py` must serve HTTP on 127.0.0.1 at the port given by the `PORT` environment \
+variable (default 8000).
+
+The app is a human-facing web UI backed by a JSON API. A user must be able to search recent \
+news, pick any result to analyze, and see every stored analysis — entirely from a browser.
+
+Configuration (this contract's settings are environment variables):
+
+- `PORT` (optional, default 8000); `NEWS_API_URL` (required) and `NEWS_API_KEY` (required — \
+the news API's key, sent as the `apikey` query-string parameter on every news request); and \
+the OpenAI client's `OPENAI_API_KEY` (required) and `OPENAI_BASE_URL` (optional override) — \
+construct the OpenAI client purely from the environment; never hardcode a key or base URL.
+- Document every configuration setting the app reads — name, purpose, required or optional, \
+default — whatever its mechanism (environment variable, config file, flag), in documentation \
+shipped with the app: a README file or a clearly marked configuration section in `app.py`'s \
+module docstring or comments. A bare `os.environ` read in code is not documentation.
+- Validate required configuration at startup: launched without `NEWS_API_URL` or \
+`NEWS_API_KEY`, the app must exit non-zero immediately with an error naming the missing \
+variable — never run with search silently broken.
+
+The UI (server-rendered HTML with plain forms — no external assets, no JavaScript required):
+
+1. `GET /` — the home page: a search form (a text input named `q`, submitting via GET to \
+`/search`) plus a list of every stored analysis (title, summary, sentiment).
+
+2. `GET /search?q=<query>` — fetch articles from the news API at `NEWS_API_URL` (send a GET \
+request to it with `q` and `apikey` (= `NEWS_API_KEY`) as query-string parameters; it \
+returns JSON shaped `{"articles": [{"title", "url", "description", "content"}, ...]}`, or \
+an error status without a valid key). Render every result's title, each with its own \
+analyze button — a per-result form that POSTs that article's `title`, `url`, and `content` \
+(e.g. as hidden inputs) to `/analyze`.
+
+3. `POST /analyze` — form-encoded body from a search result's analyze button. Run the \
+analysis described below, store it, then redirect to `/` (or render a page showing the \
+stored analysis).
+
+4. If the news API is unreachable or returns an invalid (non-JSON) response, `/search` must \
+render a human-readable HTML error page naming the news API / `NEWS_API_URL` as the problem \
+— never a raw exception string, never a silent empty result list — and the server must keep \
+running.
+
+The REST API:
+
+5. `GET /api/articles?q=<query>` — respond 200 with a JSON body containing the article list \
+fetched from the news API (same fetch as `/search`).
+
+6. `POST /api/analyses` — JSON body `{"title", "url", "content"}`; run the analysis, store \
+it, and respond 200 or 201 with the stored record as JSON. A missing or malformed body gets \
+a 4xx JSON error, never a crash.
+
+7. `GET /api/analyses` — respond 200 with a JSON list of every stored analysis (title, url, \
+summary, sentiment).
+
+The analysis (shared by `/analyze` and `/api/analyses`): make one OpenAI chat-completions \
+call per analyzed article (model `gpt-4.1-nano`), including that article's content in the \
+request, asking the model to reply with a JSON object with exactly two keys: `summary` (a \
+short string) and `sentiment` (one of `positive`, `neutral`, `negative`). Parse that reply — \
+different articles will produce different summaries and sentiments — and store the analysis \
+(title, url, summary, sentiment) in a SQLite database file named `news.db` in the working \
+directory, so stored analyses survive an app restart."""
+task_kind = "edit"
+fixture = "empty"
+success_probe = "python evals/probes/news_app_smoke.py app.py"
+
+[budgets]
+# The heaviest task in the suite: a UI (3 pages/actions) + a JSON API (3 endpoints)
+# + persistence + config ergonomics (docs, fail-fast, degraded-mode error page).
+max_iterations = 50
+max_wall_clock_seconds = 600
+
+# Runtime env for the program under test: the canonical env-driven OpenAI client must not
+# crash at startup. The probe layers PORT / NEWS_API_URL / OPENAI_BASE_URL on top (and
+# deliberately omits NEWS_API_URL in its fail-fast launch).
+[env]
+OPENAI_API_KEY = "sk-eval-dummy"
