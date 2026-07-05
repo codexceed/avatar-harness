@@ -64,8 +64,10 @@ class ChangeProposal(BaseModel):
         """
         lines = ["---"]
         for key, value in self.model_dump(exclude={"body"}).items():
-            rendered = json.dumps(value) if isinstance(value, (list, dict)) else value
-            lines.append(f"{key}: {rendered}")
+            # `json.dumps` output is valid YAML (JSON is a subset of YAML 1.2) and quotes/escapes
+            # every scalar — so a colon-bearing title (e.g. "Edit mission: run it"), which a raw
+            # scalar would make YAML read as a nested mapping, can no longer break the front-matter.
+            lines.append(f"{key}: {json.dumps(value)}")
         lines.extend(["---", "", self.body])
         return "\n".join(lines)
 

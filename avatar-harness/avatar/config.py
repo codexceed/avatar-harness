@@ -66,6 +66,25 @@ class HarnessConfig(BaseSettings):
     test_command: str = ""
     lint_command: str = ""
     command_timeout_seconds: int = 120
+    # Per-request timeout for one model call (ADR-0028 R1). The non-streaming ceiling; with R5
+    # streaming on, the idle timeout does the fast stall-detection so this is a loose backstop.
+    request_timeout_seconds: float = Field(240.0, gt=0)
+    # Stream completions and bound the gap *between* chunks instead of total time (ADR-0029 R5):
+    # a stall is caught in ~idle-timeout regardless of how long a legit generation runs. Passed as
+    # the httpx `read` timeout per streaming call. Distinct from `request_timeout_seconds`.
+    request_idle_timeout_seconds: float = Field(30.0, gt=0)
+    # Master switch for R5 streaming (ADR-0029). `False` = exact non-streaming async behavior.
+    # Distinct from the runtime per-instance `_streaming_unsupported` flag (a provider that rejects
+    # streaming trips that flag for the rest of its session; this config is the global default).
+    stream_model_calls: bool = True
+    # Transport-layer retries (ADR-0028 R3), distinct from `max_parse_retries`: a NUL/empty body or
+    # request failure is re-issued (backoff + jitter), never re-prompted; on exhaustion the client
+    # raises `TransportError`, surfaced as a system failure (§16). Low so the worst case stays bounded.
+    transport_max_retries: int = Field(2, ge=0)
+    # Char budget for the command-tool stdout/stderr excerpt shown to the model: keeps the head AND
+    # tail, elides the middle (`commands._excerpt`) since a failure's signal trails. Floored (`ge`)
+    # so the bound is unconditional — tunable, never disable-able (R3's journal-distillability).
+    command_output_budget: int = Field(16_000, ge=256)
 
     # LLM fallback for verification-plan resolution (ADR-0007 tier 3). Opt-in: unset
     # (the default) keeps resolution fully deterministic/offline. When set, the model
@@ -94,11 +113,6 @@ class HarnessConfig(BaseSettings):
     model: str = "openai/gpt-4o-mini"
     base_url: str = "https://openrouter.ai/api/v1"
     api_key: str | None = None  # AVATAR_API_KEY; if unset, the client falls back to OPENAI_API_KEY
-
-    # Per-request timeout (seconds) for model calls (ADR-0024). Defaults to 30s so a silent
-    # endpoint errors fast instead of hanging on the SDK default (10 min). `None` restores the
-    # SDK default; it reaches the client only when set (passing `None` means *no* httpx timeout).
-    request_timeout: float | None = 30.0
 
     # Decision transport (ADR-0003 A). Native provider function-calling is the default —
     # the provider owns the JSON envelope, so a large patch can't die in hand-escaping.

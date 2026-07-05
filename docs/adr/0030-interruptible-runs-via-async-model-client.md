@@ -1,6 +1,13 @@
-# ADR 0024 — Interruptible runs via an async model client
+# ADR 0030 — Interruptible runs via an async model client
 
-- **Status:** Accepted — core implemented 2026-06-17 (the `jo-cli` race + signal handlers remain a follow-up)
+> **Renumbered 0024 → 0030 (2026-06-21):** this decision collided with the evals-driven
+> improvement-loop chain (ADR-0024…0029) when the two feature lines merged. The evals chain
+> kept the 0024–0029 numbers (it is internally cross-referenced); this standalone decision
+> moved to 0030. Its async-client *implementation* is **extended / partly superseded by
+> ADR-0028** (transport-layer retry + request timeout) and **ADR-0029** (streaming
+> idle-timeout + the runner's cancel-race), which carry the more advanced model client.
+
+- **Status:** Accepted — core implemented 2026-06-17; signal handlers + run-task race landed (#80/#81); client extended by ADR-0028/0029
 - **Date:** 2026-06-17
 - **Deciders:** Sarthak Joshi
 - **Related:** ADR-0001 (async event bus + durable execution — the concurrency foundation this builds on); ADR-0002 (the interactive cockpit, the first consumer that needs prompt interruption); `HARNESS_DESIGN.md` §5 (the runner loop), §23 (cockpit / cancellation); `avatar/deps.py` (`CancellationToken`), `avatar/session.py` (`Session.cancel`). **Supersedes** the *cooperative-only* cancellation model for the model call (the token check at the top of `runner.arun`); the token remains as a cheap turn-boundary fast-path, but is no longer the sole cancellation mechanism.

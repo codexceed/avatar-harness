@@ -16,7 +16,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0008](0008-non-executable-edit-verification.md) | Verification contract for non-executable edits | Proposed |
 | [0009](0009-execution-sandbox-isolation.md) | Execution sandbox isolation | Accepted (deferred) |
 | [0010](0010-git-status-diff-as-model-tools.md) | `git_status` / `git_diff` as model-callable tools | Accepted (deferred) |
-| [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed — gap #1 confirmed 2026-06-22 |
+| [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed |
 | [0012](0012-wire-level-api-mocking.md) | Wire-level API mocking for eval probes (mock the endpoint, not the client library) | Proposed |
 | [0013](0013-evals-package-boundary-and-gates.md) | `evals/` stays an in-repo package, held to the harness quality gates via config | Accepted |
 | [0014](0014-greenfield-self-authored-verification.md) | Greenfield self-authored verification (the no-contract floor) | Accepted — implemented 2026-06-14 |
@@ -30,7 +30,13 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0022](0022-unobtainable-as-terminal-conclusion.md) | Legitimize "unobtainable" as a terminal conclusion (the won't-conclude fix) | Proposed |
 | [0023](0023-two-package-workspace-avatar-sdk-jo-cli.md) | Two-package uv workspace: the `avatar` SDK + the `jo` cockpit, flat layout | Accepted — implemented 2026-06-16 |
 | [0024](0024-evals-driven-improvement-loop.md) | Evals-driven improvement loop: two human-gated workflows over a deterministic core | Proposed |
-| [0024](0024-interruptible-runs-via-async-model-client.md) | Interruptible runs via an async model client (cancellable in-flight model calls) | Accepted — core implemented 2026-06-17 |
+| [0025](0025-persist-journal-refined-failure-mode.md) | Persist the journal-refined failure bucket on `ResultRow` (one classification, one source of truth) | Accepted — implemented 2026-06-18 |
+| [0026](0026-bounded-concurrency-in-the-eval-runner.md) | Bounded concurrency in the eval runner (thread pool over hermetic cells, opt-in) | Accepted — implemented 2026-06-19 |
+| [0027](0027-sandboxed-execution-trust-and-self-verification-calibration.md) | Sandboxed execution trust + self-verification calibration (Eval-0) | Proposed (R3 implemented 2026-06-20) |
+| [0028](0028-transport-retry-and-request-timeout.md) | Transport-layer retry + request timeout for model calls (NUL/hang resilience) | Proposed — R1–R4 implemented 2026-06-20; R5 → ADR-0029 |
+| [0029](0029-streaming-idle-timeout-for-model-calls.md) | Streaming idle-timeout for model calls (ADR-0028 R5) | Accepted — implemented 2026-06-21 |
+| [0030](0030-interruptible-runs-via-async-model-client.md) | Interruptible runs via an async model client (cancellable in-flight model calls) | Accepted — core implemented 2026-06-17; extended by 0028/0029 |
+| [0031](0031-proposals-as-human-digest.md) | Workflow A emits a human-readable proposals digest; defer the structured `ChangeProposal` seam (amends 0024) | Accepted — implemented 2026-06-28 |
 
 ## Conventions
 

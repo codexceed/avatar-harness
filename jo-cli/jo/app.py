@@ -177,7 +177,7 @@ class CockpitApp(App):
         self._set_signal_handlers(install=False)
 
     def _set_signal_handlers(self, *, install: bool) -> None:
-        """Install or remove graceful SIGINT/SIGTERM handlers (ADR-0024).
+        """Install or remove graceful SIGINT/SIGTERM handlers (ADR-0030).
 
         Textual's full-screen driver does not claim `SIGINT`/`SIGTERM`, and in the TUI a
         ctrl+c arrives as a *key* (→ `action_cancel`), not a signal — so these handlers fire
@@ -205,7 +205,7 @@ class CockpitApp(App):
                 pass  # unsupported platform/loop — Textual still tears the app down on exit
 
     def _on_terminate_signal(self) -> None:
-        """An external SIGINT/SIGTERM: cancel any in-flight run, then quit gracefully (ADR-0024)."""
+        """An external SIGINT/SIGTERM: cancel any in-flight run, then quit gracefully (ADR-0030)."""
         if self._run_task is not None and not self._run_task.done():
             self._run_task.cancel()
         self.exit()
@@ -510,7 +510,7 @@ class CockpitApp(App):
         Sets `session` as the current one so an approval modal routes its decision back to it,
         and exposes the run task (`_run_task`) so `action_cancel` / a terminate signal can
         hard-cancel it. A hard cancel injects `CancelledError` at the in-flight `await` —
-        which, with the async model client (ADR-0024), aborts the request at the socket — so
+        which, with the async model client (ADR-0030), aborts the request at the socket — so
         the cockpit frees immediately instead of waiting on a busy agent. The cancelled run's
         state is marked `incomplete` so it records cleanly as history.
 
@@ -549,7 +549,7 @@ class CockpitApp(App):
 
         With nothing selected, a *live* run is **hard-cancelled** — `_run_task.cancel()`
         injects `CancelledError` at the in-flight `await`, which (with the async model
-        client, ADR-0024) aborts the request at the socket, so the cockpit frees instantly
+        client, ADR-0030) aborts the request at the socket, so the cockpit frees instantly
         instead of waiting on a busy agent. The run records as cancelled history (`_observe`),
         leaving no live run — so the next ctrl+c quits.
         """

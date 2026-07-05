@@ -38,12 +38,23 @@ make eval
 # A model matrix (the sonnet-class trio), 3 seeds each:
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 
-# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, NO_CLEANUP=1 (keep output)
+# The standing reliability matrix — a named shortcut for the recurring regression run:
+#   the four tracked models × 5 seeds, 8-way concurrent, output kept (--no-cleanup).
+make eval-matrix
+make eval-matrix SEEDS=3 CONCURRENCY=4                       # any knob is overridable
+make eval-matrix MATRIX_MODELS="minimax/minimax-m3,z-ai/glm-5.2"  # swap the model set
+
+# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
 make eval MODELS="openai/gpt-5.1" SEEDS=1 NO_CLEANUP=1
 
 # Or invoke the module directly:
 uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
+
+> **`make eval-matrix`** pins the four models we track for regressions
+> (`minimax/minimax-m3,z-ai/glm-5.1,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
+> `CONCURRENCY=8`, `NO_CLEANUP=1`. It delegates to `eval` via target-specific variables, so a
+> command-line `SEEDS=`/`CONCURRENCY=`/`MODELS=` (or `MATRIX_MODELS=` for the model set) still wins.
 
 **Requirements:** `AVATAR_API_KEY` (+ `AVATAR_BASE_URL`, default OpenRouter) in `.env` — the same
 credentials the agent harness uses. Runs cost real API spend (the agent's model calls); the probe
@@ -57,6 +68,7 @@ does **not** (it mocks the network — see *Probes*).
 | `--seeds N` | `3` | Repetitions per task (see *Seeds & temperature*). |
 | `--temperature T` | `0.7` | Sampling temperature; `>0` makes each seed an independent draw. Pass `0` for a deterministic run. |
 | `--workspace PATH` | `./eval_run_<timestamp>` | Where scratch repos are created. |
+| `--concurrency N` | `1` | Max matrix cells (`model × spec × seed`) run in parallel. Default `1` is strictly sequential; raise it to overlap I/O-bound runs, bounded by provider rate limits. Results stay in matrix order regardless. |
 | `--no-cleanup` | (cleanup on) | Keep the run workspace for inspection instead of deleting it. |
 
 ### Seeds & temperature
@@ -137,6 +149,60 @@ make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl
 `mean_ci` clusters by task (seeds within a task are correlated; with one task it degrades to the
 binomial SE). `mcnemar` pairs rows by `(model, task, seed)` and uses the exact two-sided sign test
 (stdlib only). `evals.result.load_results(path)` reads a `<ts>.jsonl` back into `ResultRow`s.
+
+---
+
+## From eval results to change proposals (`evals-to-proposals`)
+
+A run tells you *what* failed; the **`evals-to-proposals`** workflow turns that into *what to do
+about it* — a short, human-readable list of proposed harness changes. It is the read-only half of
+the eval-driven improvement loop (ADR-0024): it **never re-runs the matrix** (zero eval spend) and
+**implements nothing** — it only reads a finished results file and writes a digest for you to review.
+
+```bash
+# After a kept run (note the results stamp it prints, e.g. 20260627T211653Z):
+make eval-matrix                      # → evals/results/<stamp>.jsonl  (+ .summary.json)
+```
+
+Then run the workflow (it is a Claude **Workflow**-tool script, invoked on demand — not via `make`):
+
+```
+Workflow({ scriptPath: "evals/workflows/evals_to_proposals.js",
+           args: { results: "evals/results/<stamp>.jsonl", stamp: "<stamp>" } })
+```
+
+What it does, in four phases:
+
+1. **Triage** — a deterministic Layer-1 pass (`python -m evals.cluster`) groups the failed runs into
+   clusters and pre-checks each against past findings.
+2. **Analyze** — one reasoning pass per cluster decides whether it is a **genuinely new** problem or
+   a **known** one already understood/handled. Known ones are dropped (no noise).
+3. **Propose** — for each new problem, one pass drafts a brief issue-and-fix entry.
+4. **Reconcile** — dedupes and orders the entries, then writes the digest.
+
+### The output: a proposals digest you can actually read
+
+The single artifact is **`evals/proposals/<stamp>/proposals.md`** — a digest meant to be skimmed and
+controlled by a human, **not** a machine dump. It opens with an **At a glance** index table (one row
+per issue: what's wrong · the fix · size · risk), then one self-contained entry per issue:
+
+- **The issue** — what went wrong, in plain language, with a small visual.
+- **Related history** — whether we've seen something like it before (described in words; it does
+  **not** make you look up any code or catalog id).
+- **The proposed change** — the fix, kept brief, usually with a tiny before/after.
+- **How we'd verify** — a 2–3 bullet test sketch.
+
+> It is deliberately **self-contained**: it cites no failure-mode catalog codes, because those mean
+> nothing to a reader. (The workflow may *consult* [`docs/research/failure-modes.md`](../docs/research/failure-modes.md)
+> for historical context and append newly-confirmed modes back to it, but the digest you read never
+> refers to it by code.)
+
+If every failure maps to an already-known mode, the workflow writes nothing and says so — that is a
+valid, healthy outcome (the loop's job is to surface what's *new*).
+
+> **Note:** this workflow currently emits only the human digest. The structured, machine-readable
+> hand-off (`ChangeProposal`, `evals/proposal.py`) to a future PR-building workflow ("Workflow B")
+> is intentionally deferred until that consumer exists.
 
 ---
 
