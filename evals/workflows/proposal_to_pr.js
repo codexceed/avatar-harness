@@ -28,7 +28,8 @@
 //              baseline: "evals/results/<stamp>.jsonl",         // the pinned baseline to validate against
 //              trusted_ref: "main",                             // ref to freeze grading assets from
 //              models: "gpt-5.1,sonnet,gemini",                 // full matrix models (default: baseline's)
-//              max_rework: 2 } })                               // hard rework cap before ADR-escalation
+//              max_rework: 2,                                   // hard rework cap before ADR-escalation
+//              local_only: true } })                            // stop at the local rung — zero eval spend (dry run)
 
 export const meta = {
   name: 'proposal-to-pr',
@@ -89,6 +90,11 @@ const entry = a.entry
 const baseline = a.baseline
 const trustedRef = a.trusted_ref ?? 'main'
 const maxRework = Number.isInteger(a.max_rework) ? a.max_rework : 2
+// Dry-validation switch: settle on the LOCAL rung (TDD tests + `make check`) and stop before the
+// canary — i.e. zero eval spend. For a guided/dry run of a proposal whose own verification is
+// local (unit tests + replay), or to prove the Scope→Build path before funding the matrix. The
+// full ladder (local→canary→matrix) is the default; this only ever *reduces* spend, never adds it.
+const localOnly = a.local_only === true
 if (!digest || entry == null || !baseline) {
   throw new Error('proposal-to-pr: args.digest, args.entry, and args.baseline are required')
 }
@@ -165,6 +171,22 @@ for (let attempt = 0; attempt <= maxRework; attempt++) {
   if (!build?.ok) {
     log(`build attempt ${attempt} did not reach local green: ${build?.detail}`)
     continue
+  }
+  // Local-only dry validation: the local rung is exactly what Build just proved (TDD tests +
+  // `make check` clean), so settle here and skip the eval-spending canary/matrix rungs.
+  if (localOnly) {
+    verdict = {
+      passed: true,
+      stage_reached: 'local',
+      summary: `local rung only (local_only=true; no eval spend): ${build.detail}`,
+      raw:
+        `Validation stopped at the LOCAL rung by request — zero eval spend.\n` +
+        `Local green (TDD tests + make check): ${build.detail}\n` +
+        `Files changed: ${(build.files_changed || []).join(', ')}\n` +
+        `The canary + full-matrix rungs were intentionally skipped (fund them separately to spend).`,
+    }
+    log(`local_only → settling on the local rung, no eval spend: ${build.detail}`)
+    break
   }
   // Validate — the only eval spend: shell out to the deterministic canary ladder over FROZEN assets.
   phase('Validate')

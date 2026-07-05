@@ -223,6 +223,20 @@ Workflow({ scriptPath: "evals/workflows/proposal_to_pr.js",
                    baseline: "evals/results/<stamp>.jsonl", trusted_ref: "main" } })
 ```
 
+> **`trusted_ref` must be a ref where the loop *and* the grading assets already live.** It is both
+> the base the candidate worktree is branched from and the ref `validate` freezes `tasks`/`probes`/
+> `fixtures` from. It defaults to `main` — correct once the loop is merged there. **While the loop
+> still lives only on a feature branch, pass that branch** (`trusted_ref: "<branch>"`), or the
+> worktree won't contain `evals/cluster.py`/`validate.py` and — because the PR is opened against the
+> repo default branch — the resulting PR diffs the whole branch delta, not just the fix.
+>
+> **`local_only: true`** stops the ladder at the **local rung** (the TDD tests + `make check` the
+> Build phase already ran) and skips the canary/matrix rungs — **zero eval spend**. Use it for a
+> guided/dry pass, to prove the Scope→Build path before funding matrix spend, or for a proposal whose
+> own verification is inherently local (a triage/tooling fix with no agent-behaviour signal, e.g. the
+> crash-triage-label fix, whose "how we'd verify" is unit tests + replay). It only ever *reduces*
+> spend, never adds it.
+
 What it does:
 
 1. **Scope** — reconstructs the typed `ChangeProposal` from the funded entry and **routes on
