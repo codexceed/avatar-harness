@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -152,7 +153,9 @@ def run_task(
             journal=JsonlEventJournal(repo / "journal.jsonl"),
             unattended=True,  # batch: auto-deny tier-3/denylist asks (no human to resolve them)
         )
+        _agent_t0 = time.monotonic()
         state = asyncio.run(session.run())
+        agent_wall = time.monotonic() - _agent_t0  # latency of the agent loop only (excludes probe)
         # `outcome == "success"` is the verifier's verdict only for a no-probe (strict) task; in
         # conversational mode it just means the agent reached `final_answer`. `is_solved` uses it
         # when there is no probe, AND as the positive signal a *guard* probe is ANDed with (ADR-0020)
@@ -183,6 +186,7 @@ def run_task(
             iterations=state.iterations,
             prompt_tokens=state.prompt_tokens,
             completion_tokens=state.completion_tokens,
+            wall_clock_seconds=agent_wall,
             probe_exit=probe_exit,
             probe_role=spec.probe_role,
             workspace=str(repo),

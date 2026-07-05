@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# Framework's build cache (lives under src/.observablehq/cache); match at any depth.
+**/.observablehq/cache/

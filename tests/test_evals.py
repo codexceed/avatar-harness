@@ -1884,3 +1884,64 @@ def test_shop_portal_probe_counter_examples(tmp_path):
         assert marker in _GOLDEN_SHOP_APP
         repo = _shop_repo(tmp_path, name, _GOLDEN_SHOP_APP.replace(marker, replacement))
         assert run_probe(cmd, repo, timeout_seconds=360) == 1, f"probe passed the {name} counter-example"
+
+
+# --- cost + latency metrics (evals/cost.py — shared, canonical; mirrored by the JS dashboard) ---
+
+from evals.cost import (  # noqa: E402
+    cost_per_solved_usd,
+    load_pricing,
+    mean_run_cost_usd,
+    median_wall_clock_seconds,
+    run_cost_usd,
+)
+
+_PRICE = {"m": {"prompt": 1e-6, "completion": 2e-6}}
+
+
+def _cost_row(*, model="m", solved=True, p=1000, c=500, wall=10.0):
+    return ResultRow(
+        task="t",
+        model=model,
+        seed=0,
+        solved=solved,
+        outcome="success",
+        iterations=1,
+        prompt_tokens=p,
+        completion_tokens=c,
+        wall_clock_seconds=wall,
+    )
+
+
+def test_run_cost_usd_applies_prompt_and_completion_price():
+    # 1000*1e-6 + 500*2e-6 = 0.001 + 0.001
+    assert run_cost_usd(_cost_row(), _PRICE) == pytest.approx(0.002)
+
+
+def test_run_cost_usd_is_none_for_unpriced_model():
+    # Unpriced -> None (not a misleading $0), so callers render "—".
+    assert run_cost_usd(_cost_row(model="unknown"), _PRICE) is None
+    assert mean_run_cost_usd([_cost_row(model="unknown")], _PRICE) is None
+
+
+def test_cost_per_solved_amortizes_failed_spend():
+    # Two runs cost 0.002 each; only one solved -> 0.004 / 1.
+    rows = [_cost_row(solved=True), _cost_row(solved=False)]
+    assert cost_per_solved_usd(rows, _PRICE) == pytest.approx(0.004)
+
+
+def test_cost_per_solved_is_none_when_nothing_solved():
+    assert cost_per_solved_usd([_cost_row(solved=False)], _PRICE) is None
+
+
+def test_median_wall_clock_ignores_missing():
+    rows = [_cost_row(wall=10.0), _cost_row(wall=None), _cost_row(wall=30.0)]
+    assert median_wall_clock_seconds(rows) == 20.0  # median of [10, 30]
+    assert median_wall_clock_seconds([_cost_row(wall=None)]) is None
+
+
+def test_bundled_pricing_covers_the_tracked_models():
+    # The shared source of truth the dashboard also reads; must price the matrix models.
+    p = load_pricing()
+    for m in ("openai/gpt-5.3-codex", "openai/gpt-oss-120b", "deepseek/deepseek-v4-pro"):
+        assert p[m]["prompt"] > 0 and p[m]["completion"] > 0
