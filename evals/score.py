@@ -67,7 +67,13 @@ def is_solved(
     return verifier_passed
 
 
-def run_probe(command: str, cwd: Path, *, env: Mapping[str, str] | None = None) -> int:
+def run_probe(
+    command: str,
+    cwd: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout_seconds: int = _PROBE_TIMEOUT_SECONDS,
+) -> int:
     """Run a success probe in `cwd`, returning its exit code (never raises).
 
     Args:
@@ -75,6 +81,8 @@ def run_probe(command: str, cwd: Path, *, env: Mapping[str, str] | None = None) 
         cwd: The directory to run it in (the scratch repo).
         env: Extra environment for the probe, layered over the current environment
             (the task's declared runtime env, e.g. a dummy OPENAI_API_KEY); `None` = inherit.
+        timeout_seconds: How long the probe may run before it is killed (exit 124); defaults
+            to the 120 s smoke-probe budget, overridden by a spec's ``probe_timeout_seconds``.
 
     Returns:
         The probe's exit code; 127 for an empty/missing program, 124 on timeout.
@@ -90,7 +98,7 @@ def run_probe(command: str, cwd: Path, *, env: Mapping[str, str] | None = None) 
             env=run_env,
             capture_output=True,
             text=True,
-            timeout=_PROBE_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
             check=False,
         )
     except FileNotFoundError:
