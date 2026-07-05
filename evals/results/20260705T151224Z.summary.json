@@ -1,0 +1,44 @@
+{
+  "stamp": "20260705T151224Z",
+  "n": 72,
+  "temperature": 0.7,
+  "seeds": 3,
+  "models": [
+    "minimax/minimax-m3",
+    "openai/gpt-oss-120b",
+    "openai/gpt-5.3-codex",
+    "z-ai/glm-5.2"
+  ],
+  "overall_pass_at_1": 0.8333,
+  "per_model": [
+    {
+      "model": "minimax/minimax-m3",
+      "pass_at_1": 0.8889,
+      "pass_caret_k": 0.8333,
+      "n": 18
+    },
+    {
+      "model": "openai/gpt-oss-120b",
+      "pass_at_1": 0.6667,
+      "pass_caret_k": 0.6667,
+      "n": 18
+    },
+    {
+      "model": "openai/gpt-5.3-codex",
+      "pass_at_1": 0.9444,
+      "pass_caret_k": 0.8333,
+      "n": 18
+    },
+    {
+      "model": "z-ai/glm-5.2",
+      "pass_at_1": 0.8333,
+      "pass_caret_k": 0.6667,
+      "n": 18
+    }
+  ],
+  "failure_histogram": {
+    "probe_failed": 10,
+    "harness_error": 1,
+    "budget_exhausted": 1
+  }
+}

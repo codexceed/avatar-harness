@@ -4,8 +4,9 @@
 **Status:** measured — a wider-spread capability/reliability sweep of the current model landscape,
 anchored on the existing tracked set plus three new SotA offerings.
 **Artifact:** `evals/results/20260705T173314Z.jsonl` (+ `.summary.json`), 7 models × 6 tasks × 5 seeds
-(n=210); journals kept under `eval_run_20260705T173314Z/` (`--no-cleanup`). `evals/results/` is
-gitignored — reproduce rather than expecting the file in a clean checkout.
+(n=210) — committed alongside this note (a `.gitignore` exception to the otherwise-ignored
+`evals/results/`), so the raw data is self-contained here. Journals kept under
+`eval_run_20260705T173314Z/` (`--no-cleanup`, not committed); reproduce them with the command below.
 **Reproduce (matrix):** `make eval-matrix MATRIX_MODELS="minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2,deepseek/deepseek-v4-pro,google/gemma-4-31b-it,qwen/qwen3.6-27b"` (SEEDS=5, CONCURRENCY=8, NO_CLEANUP=1 are the target defaults).
 **Reproduce (heatmap):** `uv run python scripts/eval_heatmap.py evals/results/20260705T173314Z.jsonl`.
 

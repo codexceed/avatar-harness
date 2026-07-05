@@ -4,8 +4,9 @@
 **Status:** measured — task introduction, a 3-seed baseline, and a construct-validity check for the
 new probe (ADR-0036).
 **Artifact:** `evals/results/20260705T151224Z.jsonl` (+ `.summary.json`), 4 models × 6 tasks × 3
-seeds (n=72); journals kept under `eval_run_20260705T151224Z/` (`--no-cleanup`). The earlier
-`20260705T125921Z` run is the 1-seed introduction spot-check that this supersedes.
+seeds (n=72) — committed alongside this note (a `.gitignore` exception), so the raw data is
+self-contained here. Journals kept under `eval_run_20260705T151224Z/` (`--no-cleanup`, not
+committed). The earlier `20260705T125921Z` run is the 1-seed introduction spot-check that this supersedes.
 **Reproduce (matrix):** `make eval-matrix SEEDS=3` (≡ `--models "minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2" --seeds 3 --concurrency 8 --no-cleanup`).
 **Reproduce (heatmap):** `uv run python scripts/eval_heatmap.py evals/results/20260705T151224Z.jsonl`
 (writes the SVG below; byte-stable, so re-running produces no git diff).
