@@ -12,7 +12,9 @@ Usage:
     uv run python scripts/eval_report.py            # newest evals/results/*.jsonl
 
 Sections: headline (pass@1 / pass^k per model), the model x task solved matrix, the
-failure-mode histogram (overall + per model), and token/iteration cost stats.
+failure-mode histogram (overall + per model), and cost stats (tokens · dollars · latency).
+Dollars come from the shared `evals/pricing.json` and latency from the `wall_clock_seconds`
+field, so the numbers match `tools/eval-dashboard` exactly.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
-from statistics import mean, median
+from statistics import mean
 
 # Import the harness's own scoring so this view can never drift from `evals.run`.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +31,13 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from evals.classify import resolve_failure_mode  # noqa: E402
+from evals.cost import (  # noqa: E402
+    cost_per_solved_usd,
+    load_pricing,
+    mean_run_cost_usd,
+    median_wall_clock_seconds,
+    run_cost_usd,
+)
 from evals.metrics import pass_at_1, pass_caret_k  # noqa: E402
 from evals.result import ResultRow, load_results  # noqa: E402
 
@@ -136,27 +145,57 @@ def histogram(rows: Sequence[ResultRow]) -> str:
     return "\n".join(lines)
 
 
+def _usd(x: float | None) -> str:
+    """Format a dollar amount, or ``—`` when unpriced/undefined."""
+    return f"${x:.3f}" if x is not None else "—"
+
+
+def _secs(x: float | None) -> str:
+    """Format a wall-clock in seconds, or ``—`` when unrecorded."""
+    return f"{x:.0f}s" if x is not None else "—"
+
+
 def cost_stats(rows: Sequence[ResultRow]) -> str:
-    """Token and iteration cost per model — mean/median, with a tokens-per-run bar."""
+    """Cost per model — tokens, **dollars** ($/run and $/solved), and agent-loop **latency**.
+
+    Dollars use the shared `evals/pricing.json` (so this matches the dashboard exactly). ``$/solved``
+    amortizes failed-run spend across the successes — the true cost of a *result*, not a run. Latency
+    is the *median* agent-loop wall-clock: the slowest runs are right-censored at the task budget, so
+    the mean would be inflated. Sorted cheapest-$/solved first; unpriced models sink to the end.
+
+    Args:
+        rows: The result rows to summarize.
+
+    Returns:
+        The rendered cost section.
+    """
+    pricing = load_pricing()
     by_model: dict[str, list[ResultRow]] = defaultdict(list)
     for r in rows:
         by_model[r.model].append(r)
 
-    tot = {m: mean(r.prompt_tokens + r.completion_tokens for r in rs) for m, rs in by_model.items()}
-    peak = max(tot.values()) if tot else 0
-    lines = [_rule("COST — tokens & iterations per run (mean)")]
-    lines.append(f"{'model':<22} {'tok/run':>10} {'med tok':>9} {'iters':>7}  relative")
-    for model in sorted(by_model, key=lambda m: -tot[m]):
+    def sort_key(m: str) -> tuple[bool, float]:
+        c = cost_per_solved_usd(by_model[m], pricing)
+        return (c is None, c if c is not None else 0.0)
+
+    lines = [_rule("COST — tokens · dollars · latency per run")]
+    lines.append(f"{'model':<22} {'tok/run':>9} {'$/run':>8} {'$/solved':>9} {'med wall':>9} {'iters':>6}")
+    for model in sorted(by_model, key=sort_key):
         rs = by_model[model]
-        toks = [r.prompt_tokens + r.completion_tokens for r in rs]
+        toks = mean(r.prompt_tokens + r.completion_tokens for r in rs)
         iters = mean(r.iterations for r in rs)
-        bar = _bar(tot[model], peak, 24)
         lines.append(
-            f"{_short_model(model):<22} {tot[model]:>10,.0f} {median(toks):>9,.0f} {iters:>7.1f}  {bar}"
+            f"{_short_model(model):<22} {toks:>9,.0f} {_usd(mean_run_cost_usd(rs, pricing)):>8} "
+            f"{_usd(cost_per_solved_usd(rs, pricing)):>9} {_secs(median_wall_clock_seconds(rs)):>9} "
+            f"{iters:>6.1f}"
         )
-    grand = sum(r.prompt_tokens + r.completion_tokens for r in rows)
-    lines.append("─" * 60)
-    lines.append(f"{'TOTAL':<22} {grand:>10,} tokens across {len(rows)} runs")
+    grand_tok = sum(r.prompt_tokens + r.completion_tokens for r in rows)
+    grand_usd = sum(c for c in (run_cost_usd(r, pricing) for r in rows) if c is not None)
+    lines.append("─" * 66)
+    lines.append(
+        f"{'TOTAL':<22} {grand_tok:>9,} tok   {_usd(grand_usd)} across {len(rows)} runs "
+        f"(prices: evals/pricing.json)"
+    )
     return "\n".join(lines)
 
 

@@ -18,6 +18,11 @@ class ResultRow(BaseModel):
     iterations: int
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # Agent-loop wall-clock in seconds (the `session.run()` span, matching the journal event span) —
+    # the latency cost axis, distinct from token/$ cost. `None` on rows written before the field
+    # existed (or on error rows where the loop did not complete); consumers median over the present
+    # ones. Excludes provision/probe overhead so it reflects the model's own latency, not the harness.
+    wall_clock_seconds: float | None = None
     probe_exit: int | None = None
     # The declared probe's role (ADR-0020), carried so the failure classifier can distinguish a
     # guard violation (e.g. a secret leaked) from an ordinary success-probe failure (code broken).
