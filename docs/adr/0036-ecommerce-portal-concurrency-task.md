@@ -1,4 +1,4 @@
-# ADR 0035 — `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions
+# ADR 0036 — `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions
 
 - **Status:** Proposed
 - **Date:** 2026-07-05

@@ -1,6 +1,6 @@
 id = "ecommerce-portal"
 guards = "concurrency + ACID composition — atomic inventory reservation under contention, async order pipeline with retries against a slow flaky payment processor, cache/search consistency with stock, UI responsiveness under order load (hermetic adaptation: probe-owned payment stub enacts the 3-15s / 5% contract deterministically)"
-# Hermetic adaptations (ADR-0035): the payment processor's randomness (3-15 s latency, ~5%
+# Hermetic adaptations (ADR-0036): the payment processor's randomness (3-15 s latency, ~5%
 # transient failure) is a NARRATIVE contract about the environment — the probe's stub enacts a
 # deterministic schedule within it (keyed on the user_id echoed in the payment payload), so the
 # app designs for the contract while scoring stays exact. `user_id` form/JSON fields stand in

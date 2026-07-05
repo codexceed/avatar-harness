@@ -41,7 +41,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0033](0033-per-task-passing-outcome-whitelist.md) | Per-task passing-outcome whitelist: score terminal disposition, not just `success` (amends 0020) | Proposed — code implemented; Accepted gated on a validation re-run |
 | [0034](0034-model-intrinsic-guardrail-capability-probe.md) | Measure the model's intrinsic guardrail capability, independent of the harness | Proposed |
 | [0035](0035-news-analyzer-task-contract.md) | The `news-analyzer` task contract: hermetic case-study adaptation, server-rendered UI, ops ergonomics as graded surface | Accepted — implemented 2026-07-05 (PR #97) |
-| [0035](0035-ecommerce-portal-concurrency-task.md) | `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions | Proposed |
+| [0036](0036-ecommerce-portal-concurrency-task.md) | `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions | Proposed |
 
 ## Conventions
 

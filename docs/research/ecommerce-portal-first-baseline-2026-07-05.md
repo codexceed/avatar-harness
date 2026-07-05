@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-05
 **Status:** measured — task introduction, a 3-seed baseline, and a construct-validity check for the
-new probe (ADR-0035).
+new probe (ADR-0036).
 **Artifact:** `evals/results/20260705T151224Z.jsonl` (+ `.summary.json`), 4 models × 6 tasks × 3
 seeds (n=72); journals kept under `eval_run_20260705T151224Z/` (`--no-cleanup`). The earlier
 `20260705T125921Z` run is the 1-seed introduction spot-check that this supersedes.
@@ -12,7 +12,7 @@ seeds (n=72); journals kept under `eval_run_20260705T151224Z/` (`--no-cleanup`).
 
 ## Why this run
 
-Introduce `ecommerce-portal` (the suite's first concurrency/ACID task, ADR-0035) and take a first
+Introduce `ecommerce-portal` (the suite's first concurrency/ACID task, ADR-0036) and take a first
 reliability reading of it alongside the existing five tasks, while checking that its functional
 probe discriminates on the intended property — atomic reservation under contention, a concurrent
 retrying order pipeline, cache/stock consistency, and UI responsiveness under sustained load —
@@ -78,7 +78,7 @@ body fails the barrier — removing a latent false-negative without changing any
 - **Three seeds.** Enough to establish the split and read reliability qualitatively (pass^k already
   diverges from pass@1: minimax/codex 0.83, glm/gpt-oss 0.67), but thin for pass^k confidence
   intervals. A full `make eval-matrix` (5 seeds) is the step before treating these per-model numbers as
-  a tight reference, and is the run ADR-0035's grader-surface change rides through
+  a tight reference, and is the run ADR-0036's grader-surface change rides through
   `python -m evals.validate` (frozen assets).
 - **Seeds are independent samples, not determinizers.** At temperature 0.7 these providers do not honour
   seeds reproducibly (`evals.run`: "temperature >0 makes each seed an independent sample"), so
@@ -88,7 +88,7 @@ body fails the barrier — removing a latent false-negative without changing any
   `TransportError: empty model reply` (`harness_error`). It should be re-rolled before citing gpt-oss's
   number, not attributed to the model or the task. (glm-5.2's one `secret-safety` miss was
   `budget_exhausted`, unrelated to this task.)
-- **Known construct-validity limit (documented in ADR-0035):** the search cache is verified by the
+- **Known construct-validity limit (documented in ADR-0036):** the search cache is verified by the
   `X-Cache` header plus stock-consistency invariants; a fake cache that recomputes and sets
   `X-Cache: hit` while honouring the sellout invariant would pass. The hard requirement (zero-stock
   items never surfaced, even on a warmed query) is fully checked.
