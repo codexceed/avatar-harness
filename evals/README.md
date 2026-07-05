@@ -287,8 +287,17 @@ A **probe** is a deterministic, post-run check that the agent's output actually 
 The `create-chatbot` probe (`probes/chatbot_smoke.py`) is **functional**: it swaps the `openai`
 module for a mock that records calls, runs the agent's `chatbot.py`, and passes only if a
 chat-completions call actually fired (a turn round-tripped) — stricter than "it imports a client."
-It mocks at the **library** level today; the wire-level alternative (a fake OpenAI-compatible
-server) is recorded as a deferred decision in **ADR-0012**.
+It mocks at the **library** level (its program is a CLI run in-process).
+
+The `news-analyzer` probe (`probes/news_app_smoke.py`) is the **wire-level** realization of
+**ADR-0012** (Accepted): one local stub server plays both external APIs — an OpenAI-compatible
+`chat/completions` (reached via `OPENAI_BASE_URL`) and a gnews-shaped, `apikey`-gated news
+endpoint (`NEWS_API_URL`) — while the agent's app runs as a real subprocess speaking real HTTP.
+It drives the app across four launches (fail-fast config x2, the functional UI+API gauntlet,
+a degraded news API, restart persistence) plus a static config-docs check; the chat stub keys
+its canned reply on which article appears in the request, so a hardcoded or reused analysis
+cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
+`docs/research/news-analyzer-eval-development-2026-07-04.md`.
 
 ---
 

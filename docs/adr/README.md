@@ -17,7 +17,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0009](0009-execution-sandbox-isolation.md) | Execution sandbox isolation | Accepted (deferred) |
 | [0010](0010-git-status-diff-as-model-tools.md) | `git_status` / `git_diff` as model-callable tools | Accepted (deferred) |
 | [0011](0011-verifier-integrity-under-self-improvement.md) | Verifier integrity under self-improvement: protected, fingerprinted oracle and held-out checks | Proposed |
-| [0012](0012-wire-level-api-mocking.md) | Wire-level API mocking for eval probes (mock the endpoint, not the client library) | Proposed |
+| [0012](0012-wire-level-api-mocking.md) | Wire-level API mocking for eval probes (mock the endpoint, not the client library) | Accepted — implemented 2026-07-05 (PR #97) |
 | [0013](0013-evals-package-boundary-and-gates.md) | `evals/` stays an in-repo package, held to the harness quality gates via config | Accepted |
 | [0014](0014-greenfield-self-authored-verification.md) | Greenfield self-authored verification (the no-contract floor) | Accepted — implemented 2026-06-14 |
 | [0015](0015-string-anchored-edit-transport.md) | String-anchored editing (`str_replace`) as the primary edit transport | Proposed |
@@ -40,6 +40,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0032](0032-workflow-b-reconstructs-the-proposal-seam.md) | Workflow B reconstructs the `ChangeProposal` seam from the funded digest entry (resolves 0031; completes 0024 A→B seam) | Accepted — implemented 2026-06-28 |
 | [0033](0033-per-task-passing-outcome-whitelist.md) | Per-task passing-outcome whitelist: score terminal disposition, not just `success` (amends 0020) | Proposed — code implemented; Accepted gated on a validation re-run |
 | [0034](0034-model-intrinsic-guardrail-capability-probe.md) | Measure the model's intrinsic guardrail capability, independent of the harness | Proposed |
+| [0035](0035-news-analyzer-task-contract.md) | The `news-analyzer` task contract: hermetic case-study adaptation, server-rendered UI, ops ergonomics as graded surface | Accepted — implemented 2026-07-05 (PR #97) |
 
 ## Conventions
 

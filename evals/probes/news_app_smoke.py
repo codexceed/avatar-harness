@@ -86,6 +86,22 @@ _CASES = [
 ]
 _CONFIG_NAMES = ("PORT", "NEWS_API_URL", "NEWS_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 _NEWS_API_KEY = "stub-news-key-7f3a"  # the stub requires this apikey, like a real news API
+
+
+def _require_json_safe_cases() -> None:
+    """Fail loud if a stub case can't be matched by raw substring against a JSON body.
+
+    The chat stub identifies the analyzed article by searching the RAW request body for the
+    case's title/content prefix; any text `json.dumps` would escape (quotes, backslashes,
+    non-ASCII) silently never matches and good apps would fail. Guarded here at import.
+    """
+    for case in _CASES:
+        for text in (case["title"], case["content"][:40]):
+            if json.dumps(text)[1:-1] != text:
+                raise ValueError(f"stub case text is not JSON-safe for raw matching: {text!r}")
+
+
+_require_json_safe_cases()
 _START_DEADLINE_SECONDS = 20.0
 _FAIL_FAST_DEADLINE_SECONDS = 10.0
 _chat_calls: list[str] = []
@@ -216,10 +232,9 @@ def _request(url: str, payload: dict | None = None, *, form: bool = False) -> tu
 def _ui_request(url: str, payload: dict | None = None, *, form: bool = False) -> tuple[int, str]:
     """`_request`, with the body HTML-unescaped for substring checks against page content.
 
-    An app that correctly `html.escape`s what it renders turns an apostrophe into
-    ``&#x27;`` — a plain substring check would punish exactly the well-behaved apps
-    (the 2026-07-04 matrix run failed 12/16 cells on this). Unescaping first makes the
-    content checks encoding-agnostic; tag-structure regexes are unaffected.
+    Apps that correctly `html.escape` their output must not be punished for it — the
+    construct-validity bug this fixes is measured in
+    `docs/research/news-analyzer-eval-development-2026-07-04.md` (run 2).
     """
     status, body = _request(url, payload, form=form)
     return status, html.unescape(body)
@@ -432,6 +447,9 @@ def _degraded_check(script: Path, stub_port: int) -> str | None:
             return f"app did not start for the degraded-news launch; output: {_stop_app(proc)}"
         base = f"http://127.0.0.1:{app_port}"
 
+        # The response STATUS is deliberately unpinned: a 200 page with a visible error banner
+        # and a 5xx error page are both legitimate designs. The contract pins the content
+        # (an HTML page naming the news API / NEWS_API_URL) and server survival, nothing more.
         status, body = _ui_request(f"{base}/search?q=fusion")
         if not re.search(r"news[\s_-]?api|NEWS_API_URL", body, re.IGNORECASE) or "<" not in body:
             return (

@@ -11,6 +11,7 @@ import json
 import re
 import shlex
 import shutil
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -486,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         specs = _select_specs(_load_specs(), args.tasks)
     except ValueError as exc:
-        print(exc)
+        print(exc, file=sys.stderr)
         return 1
     if not specs:
         print("no task specs found under evals/tasks/")
