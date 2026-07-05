@@ -77,8 +77,15 @@ def cluster_failures(rows: Sequence[ResultRow], digests: Sequence[TrajectoryDige
     clusters: list[Cluster] = []
     for (task, bucket), members in sorted(groups.items()):
         member_digests = [d for r in members if (d := by_key.get((r.task, r.model, r.seed)))]
-        actions = [a for d in member_digests for a in d.actions]
-        tokens = Counter(t for a in actions for t in _TOKEN.findall(a.lower()))
+        # A crashed run (harness_error: the eval runner caught a transport/provider exception) is
+        # defined by its error, not by whatever actions it happened to take before the crash — which
+        # ran zero verification and are incidental. Folding those action tokens made the crash read
+        # as a novel task-specific failure mode; describe it by its error message instead.
+        if bucket == "harness_error":
+            texts = [r.outcome or "" for r in members]
+        else:
+            texts = [a for d in member_digests for a in d.actions]
+        tokens = Counter(t for text in texts for t in _TOKEN.findall(text.lower()))
         symptom = " ".join([task, bucket, *(tok for tok, _ in tokens.most_common(_SYMPTOM_TOKENS))])
         clusters.append(
             Cluster(

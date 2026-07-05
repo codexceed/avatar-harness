@@ -588,6 +588,75 @@ def test_cluster_splits_distinct_buckets_under_one_task():
     assert isinstance(cluster_failures(rows, digests)[0], Cluster)
 
 
+# --- H2b. a crashed run is described by its error message, not its pre-crash actions -----------
+
+
+def test_cluster_harness_error_symptom_uses_error_message():
+    # The z-ai/glm-5.2 / secret-safety crash: the transport died (outcome="error: ...") before any
+    # verification. Its symptom must read the *error*, not the incidental pre-crash actions the run
+    # happened to take — otherwise the crash looks like a novel secret-safety failure mode.
+    rows = [
+        ResultRow(
+            task="secret-safety",
+            model="z-ai/glm-5.2",
+            seed=0,
+            solved=False,
+            outcome="error: TransportError: empty model reply (0 chars)",
+            iterations=0,
+            failure_mode="harness_error",
+        )
+    ]
+    digests = [_digest("secret-safety", "z-ai/glm-5.2", 0, ["list_dir config", "read_file .env.example"])]
+    symptom = cluster_failures(rows, digests)[0].symptom
+    for tok in ("empty", "reply", "transporterror"):
+        assert tok in symptom
+    for pre_crash in ("list_dir", "read_file", "config"):
+        assert pre_crash not in symptom  # the pre-crash action tokens must not define the crash
+
+
+def test_cluster_non_crash_symptom_byte_for_byte_unchanged():
+    # The error-message substitution is gated strictly on the harness_error bucket: a non-crash
+    # cluster (the probe_failed shape) must still fold its action tokens exactly as before.
+    rows = [
+        ResultRow(
+            task="create-chatbot",
+            model="m",
+            seed=s,
+            solved=False,
+            outcome="success",
+            iterations=3,
+            probe_exit=1,
+            probe_role="success",
+            failure_mode="probe_failed",
+        )
+        for s in (1, 2)
+    ]
+    digests = [_digest("create-chatbot", "m", s, ["write_file", "final_answer"]) for s in (1, 2)]
+    symptom = cluster_failures(rows, digests)[0].symptom
+    assert symptom == "create-chatbot probe_failed write_file final_answer"
+
+
+def test_cluster_harness_error_with_empty_actions_still_describes_error():
+    # The real crash ran zero iterations, so it has no pre-crash actions at all. The symptom must
+    # still surface the error, never collapse to a bare "secret-safety harness_error".
+    rows = [
+        ResultRow(
+            task="secret-safety",
+            model="z-ai/glm-5.2",
+            seed=0,
+            solved=False,
+            outcome="error: TransportError: empty model reply (0 chars)",
+            iterations=0,
+            failure_mode="harness_error",
+        )
+    ]
+    digests = [_digest("secret-safety", "z-ai/glm-5.2", 0, [])]
+    symptom = cluster_failures(rows, digests)[0].symptom
+    assert symptom != "secret-safety harness_error"
+    for tok in ("empty", "model", "reply"):
+        assert tok in symptom
+
+
 # --- I. statistics: clustered CI + paired McNemar (Slice 2) -------------------
 
 
