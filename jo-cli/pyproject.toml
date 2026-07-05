@@ -1,6 +1,6 @@
 [project]
 name = "jo-cli"
-version = "1.0.0"
+version = "1.1.0"
 description = "jo — an interactive Textual cockpit (a reference coding agent) built on the avatar-harness core."
 readme = "README.md"
 requires-python = ">=3.12"

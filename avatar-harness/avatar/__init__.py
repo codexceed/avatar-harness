@@ -69,7 +69,7 @@ from avatar.state import PlannedCheck, TaskState
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar.workspace import DirtyWorkspaceError, Workspace
 
-__version__ = "2.0.0"  # x-release-please-version
+__version__ = "2.2.0"  # x-release-please-version
 
 __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping is the SDK map
     # --- core entry points & state ---

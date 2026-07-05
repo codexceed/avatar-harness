@@ -8,9 +8,10 @@ error fed back to the model, never executed and never fatal.
 fakes that stand in for a real client in tests — are trivially testable.
 """
 
+import asyncio
 import json
 from abc import ABC, abstractmethod
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -175,6 +176,24 @@ class ModelClient(ABC):
             The validated decision for the current turn.
         """
         ...
+
+    async def adecide(self, context: ContextPacket) -> ModelDecision:
+        """Async, cancellable variant of `decide` — the runner's call site (ADR-0024).
+
+        The default runs the synchronous `decide` in a worker thread, so every existing
+        sync `ModelClient` keeps working unchanged — but a mid-call cancel cannot abort
+        the in-flight request (the thread runs on to completion). A client with a native
+        async transport (e.g. `OpenAIModelClient`) overrides this so that cancelling the
+        awaiting task raises `CancelledError` at the `await` and aborts the request at the
+        socket, leaving nothing running.
+
+        Args:
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        return await asyncio.to_thread(self.decide, context)
 
 
 # Kind-AWARE framing: one mission line per `task_kind`, injected into the template.
@@ -447,22 +466,51 @@ class OpenAIModelClient(ModelClient):
 
     Args:
         config: The harness configuration.
-        client: An injected OpenAI-compatible client, or `None` to build one lazily on
+        client: An injected sync OpenAI-compatible client, or `None` to build one lazily on
             first use — so construction needs no credentials; the optional `openai`
             extra and an API key are required only when `decide()` is first called.
         max_parse_retries: Number of retries on malformed model output.
+        async_client: An injected async OpenAI-compatible client (`AsyncOpenAI`), or `None`
+            to build one lazily on first `adecide()` — the runner's cancellable call site
+            (ADR-0024). Separate from `client` so the two transports stay independent.
     """
 
-    def __init__(self, config: HarnessConfig, client: Any = None, max_parse_retries: int = 2) -> None:
+    def __init__(
+        self,
+        config: HarnessConfig,
+        client: Any = None,
+        max_parse_retries: int = 2,
+        async_client: Any = None,
+    ) -> None:
         self.config = config
         self.max_parse_retries = max_parse_retries
-        # Built lazily on first decide() (see _ensure_client): credentials are an
-        # inference-time concern, so a Harness with the default model is constructible
-        # without an API key (and without the `openai` extra installed).
+        # Built lazily on first decide()/adecide() (see _ensure_client / _ensure_async_client):
+        # credentials are an inference-time concern, so a Harness with the default model is
+        # constructible without an API key (and without the `openai` extra installed). The sync
+        # and async clients are separate handles — the runner uses the async one (ADR-0024); the
+        # sync `decide` remains for non-async callers and is injectable for tests.
         self._client = client
+        self._async_client = async_client
+
+    _IMPORT_HINT = (
+        "OpenAIModelClient requires the optional 'openai' extra. "
+        "Install it with `pip install avatar-harness[openai]` (or `uv sync --extra openai`), "
+        "or inject a `client` / use a custom ModelClient instead."
+    )
+
+    def _timeout_kwargs(self) -> dict:
+        """The `timeout=` kwarg for client construction — empty when unset (ADR-0024).
+
+        Passing `timeout=None` to the SDK would mean *no* timeout (httpx), so an unset
+        `request_timeout` must omit the kwarg entirely to keep the SDK's own default.
+
+        Returns:
+            `{"timeout": <seconds>}` when `config.request_timeout` is set, else `{}`.
+        """
+        return {} if self.config.request_timeout is None else {"timeout": self.config.request_timeout}
 
     def _ensure_client(self) -> Any:
-        """Return the OpenAI-compatible client, constructing it on first use.
+        """Return the sync OpenAI-compatible client, constructing it on first use.
 
         Returns:
             The injected client, or one constructed from `config` on first call.
@@ -474,14 +522,34 @@ class OpenAIModelClient(ModelClient):
             try:
                 from openai import OpenAI  # noqa: PLC0415 — lazy: `openai` is an optional extra
             except ImportError as exc:  # openai not installed — it is an optional extra
-                raise ImportError(
-                    "OpenAIModelClient requires the optional 'openai' extra. "
-                    "Install it with `pip install avatar-harness[openai]` (or `uv sync --extra openai`), "
-                    "or inject a `client` / use a custom ModelClient instead."
-                ) from exc
+                raise ImportError(self._IMPORT_HINT) from exc
             # api_key=None lets the OpenAI client fall back to OPENAI_API_KEY in the env.
-            self._client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+            self._client = OpenAI(
+                api_key=self.config.api_key, base_url=self.config.base_url, **self._timeout_kwargs()
+            )
         return self._client
+
+    def _ensure_async_client(self) -> Any:
+        """Return the async OpenAI-compatible client, constructing it on first use (ADR-0024).
+
+        `AsyncOpenAI` is backed by `httpx.AsyncClient`, so cancelling the awaiting task
+        aborts the in-flight request at the socket.
+
+        Returns:
+            The injected async client, or one constructed from `config` on first call.
+
+        Raises:
+            ImportError: If none was injected and the optional `openai` extra is not installed.
+        """
+        if self._async_client is None:
+            try:
+                from openai import AsyncOpenAI  # noqa: PLC0415 — lazy: `openai` is an optional extra
+            except ImportError as exc:  # openai not installed — it is an optional extra
+                raise ImportError(self._IMPORT_HINT) from exc
+            self._async_client = AsyncOpenAI(
+                api_key=self.config.api_key, base_url=self.config.base_url, **self._timeout_kwargs()
+            )
+        return self._async_client
 
     def decide(self, context: ContextPacket) -> ModelDecision:
         """Call the endpoint and validate the reply, retrying on malformed output (§6).
@@ -502,92 +570,131 @@ class OpenAIModelClient(ModelClient):
             return self._decide_native(client, context)
         return self._decide_json(client, context)
 
-    def _decide_native(self, client: Any, context: ContextPacket) -> ModelDecision:
-        """One decision over the native tool-calling transport (ADR-0003 A).
+    async def adecide(self, context: ContextPacket) -> ModelDecision:
+        """Async, cancellable decision over the same transport as `decide` (ADR-0024).
 
-        The reply's first tool call maps onto the §6 union (`final_answer`/`ask_user`
-        are functions too). A content-only reply — an endpoint that ignored `tools=` —
-        falls back to the legacy `parse_decision` path, so "OpenAI-compatible" stays
-        compatible. Malformed attempts are retried in-conversation with valid §18
-        pairing (the call answered by a `role="tool"` message) and annotated onto the
-        decision's `retry_trace`.
+        Cancelling the awaiting task raises `CancelledError` at the in-flight `await`,
+        aborting the request at the socket — nothing is left running.
 
         Args:
-            client: The OpenAI-compatible client.
             context: The assembled context packet.
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output.
         """
-        messages: list[dict] = list(build_messages(context, native_tools=True))
-        tools = build_tool_schemas(context)
-        last_error: DecisionParseError | None = None
-        trace: list[DecisionRetryNote] = []
-        tally = _UsageTally()  # every attempt costs tokens; the decision reports the sum
-        for _ in range(self.max_parse_retries + 1):
-            response = client.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                tools=tools,
-                temperature=self.config.temperature,
-            )
-            tally.add(response)
-            message = response.choices[0].message
-            calls = getattr(message, "tool_calls", None)
-            if calls:
-                call = calls[0]  # the protocol is exactly one action per turn (§6)
-                try:
-                    decision = _decision_from_tool_call(call, thought=message.content or "")
-                except DecisionParseError as exc:
-                    last_error = exc
-                    raw = f"{call.function.name}({call.function.arguments or ''})"
-                    is_patch = call.function.name in ("str_replace", "write_file")
-                    trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=is_patch)))
-                    messages = [
-                        *messages,
-                        _assistant_call_message(message, call),
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.id,
-                            "content": (
-                                f"Invalid arguments ({exc}). Re-send the SAME intended "
-                                "action with valid arguments."
-                            ),
-                        },
-                    ]
-                    continue
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                decision.transport = "native"
-                return decision
-            raw = message.content or ""
+        client = self._ensure_async_client()
+        if self.config.native_tool_calls:
+            return await self._adecide_native(client, context)
+        return await self._adecide_json(client, context)
+
+    # --- transport loops: sync and async drivers share the per-response step helpers, so the
+    #     parse/retry/usage logic lives once; only the (awaited) `create` call differs (ADR-0024).
+
+    def _native_request(self, messages: list[dict], tools: list) -> dict:
+        """The `chat.completions.create` kwargs for one native-transport attempt.
+
+        Args:
+            messages: The conversation so far (grows by a pair on each retry).
+            tools: The tool schemas offered to the model.
+
+        Returns:
+            The keyword arguments for the create call.
+        """
+        return {
+            "model": self.config.model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": self.config.temperature,
+        }
+
+    def _step_native(
+        self,
+        response: Any,
+        messages: list[dict],
+        trace: list[DecisionRetryNote],
+        tally: _UsageTally,
+    ) -> tuple[ModelDecision | None, list[dict], DecisionParseError | None]:
+        """Process one native-transport response (pure; no I/O).
+
+        The reply's first tool call maps onto the §6 union (`final_answer`/`ask_user` are
+        functions too). A content-only reply — an endpoint that ignored `tools=` — falls
+        back to the legacy `parse_decision` path, so "OpenAI-compatible" stays compatible.
+        A malformed attempt is annotated onto `trace` and returned as `decision=None` with
+        the retry conversation (valid §18 pairing) folded into the returned `messages`.
+
+        Args:
+            response: The provider response for this attempt.
+            messages: The conversation that produced it.
+            trace: The retry-note accumulator (appended in place on a malformed attempt).
+            tally: The token-usage accumulator (added to in place).
+
+        Returns:
+            `(decision, messages, error)`: a validated decision (then `error` is `None`),
+            or `(None, retry_messages, error)` to retry.
+        """
+        tally.add(response)
+        message = response.choices[0].message
+        calls = getattr(message, "tool_calls", None)
+        if calls:
+            call = calls[0]  # the protocol is exactly one action per turn (§6)
             try:
-                decision = parse_decision(raw)  # endpoint ignored tools= — legacy fallback
+                decision = _decision_from_tool_call(call, thought=message.content or "")
             except DecisionParseError as exc:
-                last_error = exc
-                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
-                retry = (
-                    f"That was not a valid decision ({exc}). Call one of the provided tools "
-                    "— re-send the SAME intended action, do not switch to a different one."
-                )
+                raw = f"{call.function.name}({call.function.arguments or ''})"
+                is_patch = call.function.name in ("str_replace", "write_file")
+                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=is_patch)))
                 messages = [
                     *messages,
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": retry},
+                    _assistant_call_message(message, call),
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": (
+                            f"Invalid arguments ({exc}). Re-send the SAME intended "
+                            "action with valid arguments."
+                        ),
+                    },
                 ]
-                continue
+                return None, messages, exc
             decision.retry_trace = trace
             decision.usage = tally.total()
-            decision.transport = "json_fallback"  # native asked, endpoint answered in prose
-            return decision
+            decision.transport = "native"
+            return decision, messages, None
+        raw = message.content or ""
+        try:
+            decision = parse_decision(raw)  # endpoint ignored tools= — legacy fallback
+        except DecisionParseError as exc:
+            trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
+            retry = (
+                f"That was not a valid decision ({exc}). Call one of the provided tools "
+                "— re-send the SAME intended action, do not switch to a different one."
+            )
+            messages = [
+                *messages,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": retry},
+            ]
+            return None, messages, exc
+        decision.retry_trace = trace
+        decision.usage = tally.total()
+        decision.transport = "json_fallback"  # native asked, endpoint answered in prose
+        return decision, messages, None
+
+    def _raise_no_decision(self, last_error: DecisionParseError | None, tally: _UsageTally) -> NoReturn:
+        """Raise the terminal error when every attempt yielded malformed output.
+
+        Args:
+            last_error: The most recent parse error, if any.
+            tally: The token-usage accumulator (its sum is attached for billing).
+
+        Raises:
+            DecisionParseError: Always — wrapping the last parse error with the token tally.
+        """
         text = str(last_error) if last_error else "model returned no valid decision"
         raise DecisionParseError(text, usage=tally.total()) from last_error
 
-    def _decide_json(self, client: Any, context: ContextPacket) -> ModelDecision:
-        """One decision over the legacy single-JSON-object protocol (the escape hatch).
+    def _decide_native(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One decision over the native tool-calling transport — sync driver (ADR-0003 A).
 
         Args:
             client: The OpenAI-compatible client.
@@ -595,45 +702,139 @@ class OpenAIModelClient(ModelClient):
 
         Returns:
             The validated decision for the current turn.
-
-        Raises:
-            DecisionParseError: If every attempt yields malformed output.
         """
-        messages = build_messages(context)
+        messages: list[dict] = list(build_messages(context, native_tools=True))
+        tools = build_tool_schemas(context)
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()  # every attempt costs tokens; the decision reports the sum
         last_error: DecisionParseError | None = None
+        for _ in range(self.max_parse_retries + 1):
+            response = client.chat.completions.create(**self._native_request(messages, tools))
+            decision, messages, last_error = self._step_native(response, messages, trace, tally)
+            if decision is not None:
+                return decision
+        return self._raise_no_decision(last_error, tally)  # NoReturn — always raises
+
+    async def _adecide_native(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One decision over the native tool-calling transport — async driver (ADR-0024).
+
+        Args:
+            client: The async OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        messages: list[dict] = list(build_messages(context, native_tools=True))
+        tools = build_tool_schemas(context)
         trace: list[DecisionRetryNote] = []
         tally = _UsageTally()
+        last_error: DecisionParseError | None = None
         for _ in range(self.max_parse_retries + 1):
-            response = client.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=self.config.temperature,
-            )
-            tally.add(response)
-            raw = response.choices[0].message.content or ""
-            try:
-                decision = parse_decision(raw)
-            except DecisionParseError as exc:
-                last_error = exc
-                # Annotate, don't swallow: the runner records each note as evidence and
-                # journals it, so a failed (e.g. truncated-patch) attempt stays visible.
-                trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
-                retry = (
-                    f"That was not a valid decision ({exc}). Re-send the SAME intended "
-                    "action as one valid JSON decision — do not switch to a different action."
-                )
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": retry},
-                ]
-            else:
-                decision.retry_trace = trace
-                decision.usage = tally.total()
-                decision.transport = "json"  # native disabled (the legacy escape hatch)
+            response = await client.chat.completions.create(**self._native_request(messages, tools))
+            decision, messages, last_error = self._step_native(response, messages, trace, tally)
+            if decision is not None:
                 return decision
-        # The loop only exits without returning via the except branch, which always
-        # sets last_error; the fallback keeps this total without an (O-stripped) assert.
-        message = str(last_error) if last_error else "model returned no valid decision"
-        raise DecisionParseError(message, usage=tally.total()) from last_error
+        return self._raise_no_decision(last_error, tally)  # NoReturn — always raises
+
+    def _json_request(self, messages: list[dict]) -> dict:
+        """The `chat.completions.create` kwargs for one JSON-transport attempt.
+
+        Args:
+            messages: The conversation so far (grows by a pair on each retry).
+
+        Returns:
+            The keyword arguments for the create call.
+        """
+        return {
+            "model": self.config.model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "temperature": self.config.temperature,
+        }
+
+    def _step_json(
+        self,
+        response: Any,
+        messages: list[dict],
+        trace: list[DecisionRetryNote],
+        tally: _UsageTally,
+    ) -> tuple[ModelDecision | None, list[dict], DecisionParseError | None]:
+        """Process one JSON-transport response (pure; no I/O).
+
+        A malformed attempt is annotated onto `trace` (not swallowed — the runner records
+        each note as evidence and journals it, so a truncated-patch attempt stays visible)
+        and returned as `decision=None` with the retry conversation folded into `messages`.
+
+        Args:
+            response: The provider response for this attempt.
+            messages: The conversation that produced it.
+            trace: The retry-note accumulator (appended in place on a malformed attempt).
+            tally: The token-usage accumulator (added to in place).
+
+        Returns:
+            `(decision, messages, error)`: a validated decision (then `error` is `None`),
+            or `(None, retry_messages, error)` to retry.
+        """
+        tally.add(response)
+        raw = response.choices[0].message.content or ""
+        try:
+            decision = parse_decision(raw)
+        except DecisionParseError as exc:
+            trace.append(DecisionRetryNote(error=str(exc), raw=_excerpt(raw, patch=_carries_patch(raw))))
+            retry = (
+                f"That was not a valid decision ({exc}). Re-send the SAME intended "
+                "action as one valid JSON decision — do not switch to a different action."
+            )
+            messages = [
+                *messages,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": retry},
+            ]
+            return None, messages, exc
+        decision.retry_trace = trace
+        decision.usage = tally.total()
+        decision.transport = "json"  # native disabled (the legacy escape hatch)
+        return decision, messages, None
+
+    def _decide_json(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One decision over the legacy single-JSON-object protocol — sync driver.
+
+        Args:
+            client: The OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        messages: list[dict] = list(build_messages(context))
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        last_error: DecisionParseError | None = None
+        for _ in range(self.max_parse_retries + 1):
+            response = client.chat.completions.create(**self._json_request(messages))
+            decision, messages, last_error = self._step_json(response, messages, trace, tally)
+            if decision is not None:
+                return decision
+        return self._raise_no_decision(last_error, tally)  # NoReturn — always raises
+
+    async def _adecide_json(self, client: Any, context: ContextPacket) -> ModelDecision:
+        """One decision over the legacy single-JSON-object protocol — async driver (ADR-0024).
+
+        Args:
+            client: The async OpenAI-compatible client.
+            context: The assembled context packet.
+
+        Returns:
+            The validated decision for the current turn.
+        """
+        messages: list[dict] = list(build_messages(context))
+        trace: list[DecisionRetryNote] = []
+        tally = _UsageTally()
+        last_error: DecisionParseError | None = None
+        for _ in range(self.max_parse_retries + 1):
+            response = await client.chat.completions.create(**self._json_request(messages))
+            decision, messages, last_error = self._step_json(response, messages, trace, tally)
+            if decision is not None:
+                return decision
+        return self._raise_no_decision(last_error, tally)  # NoReturn — always raises
