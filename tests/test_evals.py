@@ -370,6 +370,53 @@ def test_probe_respects_env_vars(tmp_path):
     assert run_probe(cmd, tmp_path) == 3  # absent without the task env
 
 
+# --- E2. per-task probe timeout: a heavy functional probe outlives the 120 s default ----
+
+
+def test_taskspec_carries_probe_timeout(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('id = "x"\ngoal = "g"\nprobe_timeout_seconds = 360\n', encoding="utf-8")
+    assert load_task_spec(p).probe_timeout_seconds == 360
+
+
+def test_taskspec_probe_timeout_defaults_to_120(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('id = "x"\ngoal = "g"\n', encoding="utf-8")
+    assert load_task_spec(p).probe_timeout_seconds == 120
+
+
+def test_probe_timeout_is_configurable(tmp_path):
+    cmd = 'python -c "import time; time.sleep(3)"'
+    assert run_probe(cmd, tmp_path, timeout_seconds=1) == 124  # exceeded -> the timeout exit code
+    assert run_probe(cmd, tmp_path, timeout_seconds=15) == 0
+
+
+def test_run_task_passes_spec_probe_timeout_to_probe(tmp_path):
+    # The spec's `probe_timeout_seconds` must reach the probe subprocess: a 3 s probe under a
+    # 1 s per-task timeout scores 124, proving run_task threads the field (not the default).
+    frozen = tmp_path / "frozen" / "evals"
+    (frozen / "probes").mkdir(parents=True)
+    (frozen / "probes" / "slow.py").write_text("import time\ntime.sleep(3)\n", encoding="utf-8")
+    spec = TaskSpec(
+        id="slow-probe",
+        goal="g",
+        success_probe="python evals/probes/slow.py",
+        probe_timeout_seconds=1,
+    )
+    decisions = [ModelDecision(action=FinalAnswer(answer="done"))]
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    row = run_task(
+        spec,
+        config=HarnessConfig(),
+        model_client=ScriptedModel(decisions),
+        seed=0,
+        workspace_root=run_dir,
+        evals_root=frozen,
+    )
+    assert row.probe_exit == 124
+
+
 # --- F. run workspace in cwd + cleanup (#1, #4) -------------------------------
 
 
