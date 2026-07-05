@@ -1,0 +1,51 @@
+[
+  {
+    "id": "P-ORB",
+    "title": "Aurora Orb Lamp",
+    "description": "A glowing orb lamp for warm ambient light",
+    "cost": 40,
+    "inventory": 5
+  },
+  {
+    "id": "P-TEA",
+    "title": "Titanium Tea Kettle",
+    "description": "A featherweight kettle for loose-leaf tea",
+    "cost": 60,
+    "inventory": 2
+  },
+  {
+    "id": "P-CBL",
+    "title": "Braided Cable 2m",
+    "description": "A braided charging cable, two meters long",
+    "cost": 12,
+    "inventory": 10
+  },
+  {
+    "id": "P-MUG",
+    "title": "Thermal Mug",
+    "description": "A vacuum-insulated mug that keeps coffee hot for hours",
+    "cost": 18,
+    "inventory": 100
+  },
+  {
+    "id": "P-PEN",
+    "title": "Gel Pen Set",
+    "description": "A set of smooth-writing gel pens",
+    "cost": 9,
+    "inventory": 3
+  },
+  {
+    "id": "P-LMP",
+    "title": "Anglepoise Desk Lamp",
+    "description": "A classic articulated desk lamp in matte black",
+    "cost": 55,
+    "inventory": 7
+  },
+  {
+    "id": "P-COF",
+    "title": "Pour-Over Coffee Kit",
+    "description": "Everything needed for slow pour-over coffee at home",
+    "cost": 35,
+    "inventory": 4
+  }
+]

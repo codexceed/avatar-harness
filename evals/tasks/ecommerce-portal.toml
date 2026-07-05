@@ -1,0 +1,114 @@
+id = "ecommerce-portal"
+guards = "concurrency + ACID composition — atomic inventory reservation under contention, async order pipeline with retries against a slow flaky payment processor, cache/search consistency with stock, UI responsiveness under order load (hermetic adaptation: probe-owned payment stub enacts the 3-15s / 5% contract deterministically)"
+# Hermetic adaptations (ADR-0035): the payment processor's randomness (3-15 s latency, ~5%
+# transient failure) is a NARRATIVE contract about the environment — the probe's stub enacts a
+# deterministic schedule within it (keyed on the user_id echoed in the payment payload), so the
+# app designs for the contract while scoring stays exact. `user_id` form/JSON fields stand in
+# for auth. SQLite is the pinned store so ACID is real under ThreadingHTTPServer-level
+# concurrency ("database is locked" is the intended difficulty). The search cache is pinned to
+# an X-Cache header so the probe can warm a query before testing stock consistency; a fake
+# cache that recomputes and lies in the header passes the header check but still owes the
+# consistency invariants (known construct-validity limit). Every probe assertion is
+# schedule-invariant (aggregates, conservation ledgers, definitive outcomes) — never
+# "which user won the race" — with a sequential settle-then-drain step restoring an exact
+# final inventory/orders/metrics state after each concurrent wave.
+goal = """Build an ecommerce portal in a single file named `app.py`, using only the Python \
+standard library (`http.server` for the web server, `sqlite3` for storage, `urllib.request` \
+for outbound HTTP, and `threading`/`queue` as needed). Running `python app.py` must serve \
+HTTP on 127.0.0.1 at the port given by the `PORT` environment variable (default 8000).
+
+The portal sells products (unique `id`, `title`, `description`, `cost`, `inventory`). At \
+first startup, load the catalog from `products.json` in the working directory into a SQLite \
+database file `shop.db` (skip seeding when products are already present); all inventory, \
+cart, and order state lives in `shop.db` and survives restarts.
+
+Configuration: `PORT` (optional, default 8000) and `PAYMENT_API_URL` (required — the payment \
+processor's endpoint). Launched without `PAYMENT_API_URL`, the app must exit non-zero \
+immediately with an error naming the missing variable.
+
+Identity is simulated: every cart/order operation takes a `user_id` string parameter (form \
+field or JSON key). Each user has one cart.
+
+The order pipeline — the heart of the portal:
+
+- Adding to cart NEVER reserves inventory, and always succeeds for a known product \
+regardless of current stock — more users can hold an item in carts than stock exists; stock \
+is only checked at checkout.
+- Checkout atomically reserves inventory for the WHOLE cart in one transaction: either every \
+line's quantity is decremented from stock, or (if any line has insufficient stock) NOTHING \
+is reserved and the user gets a clear out-of-stock denial naming the offending product — no \
+partial reservation, no negative inventory, no oversell, ever, under any concurrency. A \
+successful checkout creates one order per cart line (status `pending`), empties the cart, \
+and must respond within 2 seconds regardless of payment-processor latency: order processing \
+happens in the background.
+- Background processing must run CONCURRENTLY (multiple payment calls in flight at once — a \
+single sequential worker cannot keep up). For each order, POST JSON \
+`{"order_id", "user_id", "product_id", "quantity", "amount"}` to `PAYMENT_API_URL`, where \
+`amount` is quantity times the product's cost. The processor is slow (a call may take 3-15 \
+seconds) and flaky (roughly 5% of calls fail transiently with HTTP 503). On 200, the order \
+becomes `completed`. On 503, RETRY the same order (at least one retry, at most 5 attempts \
+total); only after exhausting attempts mark it `failed` and restock its reserved units. \
+Order statuses are exactly: `pending`, `processing`, `completed`, `failed`, `cancelled`.
+- Cancellation is free: a `completed` order can be cancelled (status `cancelled`), which \
+restocks its units atomically; cancelling an order in any other state gets a clear 4xx / \
+error message. Restocked units must be immediately purchasable, including while heavy \
+checkout traffic is in flight.
+
+Search and its cache: search matches a case-insensitive substring of title or description \
+and must NEVER surface a product whose inventory is zero — including from the cache. Cache \
+search results per query; `GET /api/search` responses carry an `X-Cache: hit` or \
+`X-Cache: miss` header, and a repeated identical query (with no inventory change in between) \
+must become a hit. When a product's stock reaches zero it must vanish from all subsequent \
+search responses (cached or not), and reappear once restocking makes it positive again.
+
+The UI (server-rendered HTML with plain forms — no external assets, no JavaScript required):
+
+1. `GET /` — every in-stock product (title, cost, inventory) and a search form (a text \
+input named `q`, submitting via GET to `/search`).
+2. `GET /search?q=<query>` — the matching in-stock products, each with an add-to-cart form \
+POSTing `user_id` and `product_id` (e.g. a `user_id` text input plus a hidden `product_id`) \
+to `/cart/add`.
+3. `POST /cart/add` — add one unit to that user's cart; redirect to (or render) the cart.
+4. `GET /cart?user_id=<u>` — the user's cart lines with a checkout form POSTing `user_id` \
+to `/checkout`.
+5. `POST /checkout` — the atomic reservation above; on denial render a legible HTML page \
+naming the out-of-stock product; on success redirect to (or render) the orders page.
+6. `GET /orders?user_id=<u>` — the user's orders (product, quantity, status), each \
+`completed` order with a cancel form POSTing `user_id` and `order_id` to `/orders/cancel`.
+7. `POST /orders/cancel` — the free cancellation above.
+
+The JSON API (same store, same semantics; a missing or malformed body gets a 4xx JSON \
+error, never a crash):
+
+8.  `GET /api/products` — all catalog rows (even zero-stock), and \
+`GET /api/products/<id>` — one product object; objects carry at least `id`, `title`, \
+`description`, `cost`, `inventory` (current stock).
+9.  `GET /api/search?q=<query>` — the matching in-stock products only (same object shape), \
+with the `X-Cache` header.
+10. `POST /api/cart/add` — JSON `{"user_id", "product_id"}`.
+11. `POST /api/checkout` — JSON `{"user_id"}`; on success respond 200 or 201 with a JSON \
+body containing `order_ids` (the created orders); on out-of-stock denial respond 409 with a \
+JSON error naming the offending product.
+12. `GET /api/orders?user_id=<u>` — a JSON array of the user's orders, each with at least \
+`id`, `product_id`, `quantity`, `status`.
+13. `POST /api/orders/<id>/cancel` — JSON `{"user_id"}`.
+14. `GET /api/metrics` — sales metrics as JSON: `units_sold` (total quantity across \
+`completed` orders), `revenue` (the amount summed over those orders), and \
+`orders_by_status` (a status -> count map). Cancelled orders count under `cancelled` only.
+
+The UI must stay responsive while many orders are processing in the background: browsing \
+and search must keep answering promptly (well under 2 seconds) even with dozens of slow \
+payment calls in flight."""
+task_kind = "edit"
+fixture = "ecommerce-portal"
+success_probe = "python evals/probes/shop_portal_smoke.py app.py"
+# The probe waits out real concurrent waves (background processing with multi-second payment
+# holds, retries, a drain pass) — a good app needs ~2 min; give slack over the 120 s default.
+probe_timeout_seconds = 360
+
+[budgets]
+# The heaviest task in the suite: atomic multi-line reservation under contention, a concurrent
+# background pipeline with retries + restock, cache invalidation tied to stock transitions,
+# a 7-route UI and a 7-route JSON API over one store.
+max_iterations = 60
+max_wall_clock_seconds = 900
