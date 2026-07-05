@@ -247,22 +247,21 @@ TDD per the repo protocol: **propose the test list → maintainer approves → r
 - [ ] impl: cap in `tools/search.py`; align `evals/run.py` journal path with the workspace exclusion.
 - **Exit:** a large search can't balloon `ToolEnd.content`/the journal; `make check` clean.
 
-### Increment 1 — Layer-1 CLIs + `ChangeProposal` (the free foundation)
-- [ ] `test_distill_*` — digest from constructed events; size bound; deterministic; reuses `_journal_events`.
-- [ ] `test_triage_matches_known_C1_to_ADR_0022`; `test_triage_flags_novel`.
-- [ ] `test_score_route_impact_x_blast_radius`.
-- [ ] `test_changeproposal_roundtrips` (incl. `remediation_type` × `blast_radius`).
-- [ ] `test_validate_canary_ladder_runs_frozen_assets` (scripted/offline) + uses `evals.diff`.
-- [ ] impl `evals/{distill,triage,score,validate,proposal}.py`; held to the `evals/` gates (ADR-0013).
-- **Exit:** `python -m evals.distill|triage|score` run on `20260615T164950Z` → digests + "all C1 → ADR-0022, 0 novel"; `make check` clean.
+### Increment 1 — Layer-1 read-only foundation + `ChangeProposal` (the free core) ✅ built (15 tests)
+- [x] `distill` (`evals/distill.py`) — journal → `TrajectoryDigest` in a **single streaming pass** (ordered/capped actions, repeat/failure/`decision_error` counts, token curve; KB-bounded; `tool_end.content` never retained); a shared streaming reader `evals/journal_read.py` (`iter_events`/`row_events`) feeds both this and `run.py`.
+- [x] `triage` (`evals/triage.py`) — `parse_catalog` + `parse_adr_index` + `triage` (significant-token overlap → `novel | known→C1/ADR-0022`, only Proposed ADRs eligible); CLI.
+- [x] `ChangeProposal` (`evals/proposal.py`) — typed seam + `route()` (global/grader → ADR-only) + `score_impact()` + jsonl/markdown serialization. *Impact+routing live in `proposal.py`, not the solve-scoring `score.py`.*
+- [x] impl held to the `evals/` gates (ADR-0013); 15 offline tests in `tests/test_improvement_loop.py`.
+- **Exit (met):** `python -m evals.triage "<C1 symptom>"` against the **real** catalog/ADR index → `C1 → ADR-0022` (the dedup signal); a novel symptom → novel; `make check` clean. *`validate` moved to Increment 3 (it is the eval-spender — it belongs with Workflow B, not the free foundation).*
 
 ### Increment 2 — Workflow A `evals-to-proposals` (the analysis MVP)
 - [ ] `evals/workflows/evals_to_proposals.*` (`meta` + phases): ingest→triage (Layer-1) → fan-out 1 subagent/novel cluster → reconcile barrier → write `evals/proposals/<stamp>/` + append `failure-modes.md`.
 - [ ] dry-run against `20260615T164950Z`: 0 novel (proves dedup); a synthetic novel cluster fixture exercises the fan-out.
 - **Exit:** read-only, zero eval spend; produces a reviewable proposals dir; safe to run today.
 
-### Increment 3 — Workflow B `proposal-to-pr` (the spender) — **HITL-gated**
-- [ ] `evals/workflows/proposal_to_pr.*`: worktree → TDD subagent → `validate` (canary ladder, frozen) → confirm → open PR; bounded rework; Gate 1 (fund) + Gate 2 (merge).
+### Increment 3 — Workflow B `proposal-to-pr` + `validate` (the spender) — **HITL-gated**
+- [ ] `evals/validate.py` — the **canary ladder** (unit/local → 1-seed canary on affected models → full matrix on survival) against **frozen `evals/` assets**, verdict via `evals.diff`; `test_validate_canary_ladder_runs_frozen_assets` (scripted/offline). *Moved from Increment 1: it is the only eval-spender, so it lands with Workflow B.*
+- [ ] `evals/workflows/proposal_to_pr.*`: worktree → TDD subagent → `validate` → confirm → open PR; bounded rework; Gate 1 (fund) + Gate 2 (merge).
 - **Exit:** per funded proposal, a TDD'd, McNemar-validated PR; never auto-merges; grader-touching → ADR-route.
 
 ### Increment 4 — ADR-0011 substrate + train/test split (the unlock — later)
