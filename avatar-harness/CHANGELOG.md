@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.2.0](https://github.com/codexceed/avatar-harness/compare/v2.1.0...v2.2.0) (2026-06-23)
+
+
+### Features
+
+* **cli:** expose batch task kind ([#92](https://github.com/codexceed/avatar-harness/issues/92)) ([4f69e0f](https://github.com/codexceed/avatar-harness/commit/4f69e0f38328d7b51d98ab5ecfd69097ee351c31))
+
+
+### Bug Fixes
+
+* **model:** default request timeout to 30s so a silent endpoint errors fast ([#94](https://github.com/codexceed/avatar-harness/issues/94)) ([e4a4017](https://github.com/codexceed/avatar-harness/commit/e4a4017612f4cb8f054f4512671caafcd3ca584b))
+
+## [2.1.0](https://github.com/codexceed/avatar-harness/compare/v2.0.0...v2.1.0) (2026-06-17)
+
+
+### Features
+
+* **model:** cancellable async model calls via adecide (ADR-0024) ([#80](https://github.com/codexceed/avatar-harness/issues/80)) ([843895f](https://github.com/codexceed/avatar-harness/commit/843895f1f70b02559ddd6203874211d74de5a0a5))
+
 ## [2.0.0](https://github.com/codexceed/avatar-harness/compare/v1.2.0...v2.0.0) (2026-06-16)
 
 

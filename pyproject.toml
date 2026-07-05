@@ -36,11 +36,12 @@ dev = [
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-# Eval fixtures are deliberately-imperfect sample repos the agent operates on (a buggy
-# function, a secret file) — input data, not code we maintain. Don't lint or format them.
-# `notebooks/` holds generated artifacts (regenerated from `scripts/build_eval_notebook.py`),
-# so their code cells track the generator, not ruff — excluded to avoid perpetual reformat drift.
-extend-exclude = ["evals/fixtures", "notebooks"]
+# Eval fixtures and research-experiment fixtures are deliberately-imperfect sample repos the
+# agent operates on (a buggy function, a secret file) — input data, not code we maintain.
+# Don't lint or format them. `notebooks/` holds generated artifacts (regenerated from
+# `scripts/build_eval_notebook.py`), so their code cells track the generator, not ruff —
+# excluded to avoid perpetual reformat drift.
+extend-exclude = ["evals/fixtures", "notebooks", "docs/research/2026-06-22-verification-authority"]
 
 [tool.ruff.lint]
 select = [
