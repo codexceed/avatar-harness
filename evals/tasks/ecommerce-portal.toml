@@ -12,6 +12,9 @@ guards = "concurrency + ACID composition — atomic inventory reservation under 
 # schedule-invariant (aggregates, conservation ledgers, definitive outcomes) — never
 # "which user won the race" — with a sequential settle-then-drain step restoring an exact
 # final inventory/orders/metrics state after each concurrent wave.
+# Baseline + probe-fairness validation: docs/research/ecommerce-portal-first-baseline-2026-07-05.md
+# (3-seed matrix — the task is the suite's sole discriminator; all failures are genuine probe_exit=1
+# functional rejections, not scoring artifacts).
 goal = """Build an ecommerce portal in a single file named `app.py`, using only the Python \
 standard library (`http.server` for the web server, `sqlite3` for storage, `urllib.request` \
 for outbound HTTP, and `threading`/`queue` as needed). Running `python app.py` must serve \
