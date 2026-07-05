@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project status
 
 **In active development — TDD, phased.** The MVP cockpit (through Phase 3.2) is shipped (v1.0.x), plus post-MVP dogfood hardening. Current focus is the **eval-driven improvement loop** (Phase 4 — eval harness + observability), where agent changes iterate against measured data. Durable crash-resume (3.3) is **deferred, not next**: it's a contained increment on the already-built event journal, to be pulled forward only when an eval run's per-trajectory crash cost is a *measured* problem (e.g. long autonomous tasks in Eval-2) — not built ahead of that friction. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
@@ -19,6 +17,7 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 | `CHANGELOG.md` | The *what shipped* — generated automatically by release-please from Conventional Commits. Do not hand-edit. | Seeing what changed in a release. |
 | `docs/research/` | Findings from **formally executed research work** — eval baselines/matrices, failure-mode catalogs, trajectory analyses, experiment write-ups. Evidence-linked + reproducible. | Recording the results of an explicit experiment/eval run; sourcing an empirical claim for a write-up. |
 | `jo-cli/ARCHITECTURE.md` + `jo-cli/CLAUDE.md` | Package-local docs for the interactive cockpit (the standalone `jo-cli` package, a consumer of the core): its component graph, the two planes, and the goal/approval/plan/render flows. | Cockpit-local work — editing `jo-cli/` (the TUI shell, modals, the `jo` launcher). |
+| `evals/improvement-loop-design.md` + `evals/CLAUDE.md` | The evals-driven improvement loop (ADR-0024): two human-gated workflows over a deterministic core — motivation, component breakdown, flow diagrams, execution checklist; `evals/CLAUDE.md` holds the package-local principles. | Building or running the eval→proposal→PR loop, or any work under `evals/`. |
 
 > `DECISIONS.md` is a **frozen historical archive** (decisions through 2026-06-11); it is no longer appended to. New design decisions are ADRs; new changes are the changelog.
 

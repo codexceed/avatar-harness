@@ -10,6 +10,11 @@ from avatar.workspace import path_is_sensitive
 
 _READ_PHASES = frozenset({"investigating", "editing", "verifying"})
 
+# Cap the model-visible (and journaled) search output so a large match set can't balloon
+# `ToolEnd.content` — the 875 MB journal blowup where `search_repo` recursed over a growing
+# `journal.jsonl` (ADR-0023, increment 0). Mirrors the `model_client._excerpt` marker.
+_MAX_SEARCH_OUTPUT_CHARS = 50_000
+
 
 class SearchRepoInput(BaseModel):
     """Input for `search_repo`: the ripgrep query pattern."""
@@ -55,11 +60,19 @@ def _search_repo(args: SearchRepoInput, deps: RunDeps) -> ToolResult:
         for line in lines
         if not path_is_sensitive((p := line.split(":", 1)[0]), globs) and not ws.is_ignored(p)
     ]
+    content = "\n".join(kept)
+    truncated = len(content) > _MAX_SEARCH_OUTPUT_CHARS
+    if truncated:
+        full = len(content)
+        content = (
+            content[:_MAX_SEARCH_OUTPUT_CHARS]
+            + f"\n… [truncated: {_MAX_SEARCH_OUTPUT_CHARS}/{full} chars shown]"
+        )
     return ToolResult(
         tool_name="search_repo",
         success=True,
-        content="\n".join(kept),
-        summary=f"{len(kept)} match(es) for {args.query!r}",
+        content=content,
+        summary=f"{len(kept)} match(es) for {args.query!r}" + (" (truncated)" if truncated else ""),
     )
 
 

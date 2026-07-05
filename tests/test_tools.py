@@ -105,6 +105,28 @@ def test_search_repo_searches_tree_when_stdin_is_a_pipe(tmp_path):
     assert "TREE-MATCH" in proc.stdout, proc.stdout + proc.stderr
 
 
+def test_search_repo_caps_large_output_with_marker(tmp_path):
+    # A search matching a large volume must be capped with a loud truncation marker, so a
+    # huge result can't balloon ToolEnd.content (and thus the journal) — the 875 MB blowup
+    # where search_repo recursed over a growing journal.jsonl (2026-06-15).
+    big = "\n".join(f"match_{i} " + "x" * 200 for i in range(2000))  # ~420 KB of matches
+    (tmp_path / "big.py").write_text(big + "\n", encoding="utf-8")
+    result = _runtime(tmp_path).execute("search_repo", {"query": "match_"})
+    assert result.success
+    assert "[truncated:" in result.content
+    assert len(result.content) <= 60_000  # capped far below the unbounded ~420 KB
+    assert "truncated" in result.summary
+
+
+def test_search_repo_small_output_not_truncated(tmp_path):
+    # A normal-sized result is returned verbatim — no marker, no "truncated" note.
+    (tmp_path / "a.py").write_text("def login():\n    pass\n", encoding="utf-8")
+    result = _runtime(tmp_path).execute("search_repo", {"query": "login"})
+    assert result.success
+    assert "[truncated:" not in result.content
+    assert "truncated" not in result.summary
+
+
 def test_list_files_matches_glob(tmp_path):
     (tmp_path / "a.py").write_text("", encoding="utf-8")
     (tmp_path / "b.txt").write_text("", encoding="utf-8")
