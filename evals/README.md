@@ -44,7 +44,10 @@ make eval-matrix
 make eval-matrix SEEDS=3 CONCURRENCY=4                       # any knob is overridable
 make eval-matrix MATRIX_MODELS="minimax/minimax-m3,z-ai/glm-5.2"  # swap the model set
 
-# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
+# A subset of tasks (comma-separated ids; an unknown id errors, never silently skips):
+make eval TASKS="news-analyzer,secret-safety" SEEDS=1
+
+# make passthroughs: MODELS=, TASKS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
 make eval MODELS="openai/gpt-5.1" SEEDS=1 NO_CLEANUP=1
 
 # Or invoke the module directly:
@@ -52,7 +55,7 @@ uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
 
 > **`make eval-matrix`** pins the four models we track for regressions
-> (`minimax/minimax-m3,z-ai/glm-5.1,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
+> (`minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
 > `CONCURRENCY=8`, `NO_CLEANUP=1`. It delegates to `eval` via target-specific variables, so a
 > command-line `SEEDS=`/`CONCURRENCY=`/`MODELS=` (or `MATRIX_MODELS=` for the model set) still wins.
 
@@ -65,6 +68,7 @@ does **not** (it mocks the network — see *Probes*).
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--models a,b,c` | `AVATAR_MODEL` | Comma-separated model ids to run as a matrix. |
+| `--tasks a,b` | every spec in `tasks/` | Comma-separated task ids to run (suite order is kept). An unknown id is an error — a typo must never silently shrink an expensive run. |
 | `--seeds N` | `3` | Repetitions per task (see *Seeds & temperature*). |
 | `--temperature T` | `0.7` | Sampling temperature; `>0` makes each seed an independent draw. Pass `0` for a deterministic run. |
 | `--workspace PATH` | `./eval_run_<timestamp>` | Where scratch repos are created. |
@@ -283,8 +287,17 @@ A **probe** is a deterministic, post-run check that the agent's output actually 
 The `create-chatbot` probe (`probes/chatbot_smoke.py`) is **functional**: it swaps the `openai`
 module for a mock that records calls, runs the agent's `chatbot.py`, and passes only if a
 chat-completions call actually fired (a turn round-tripped) — stricter than "it imports a client."
-It mocks at the **library** level today; the wire-level alternative (a fake OpenAI-compatible
-server) is recorded as a deferred decision in **ADR-0012**.
+It mocks at the **library** level (its program is a CLI run in-process).
+
+The `news-analyzer` probe (`probes/news_app_smoke.py`) is the **wire-level** realization of
+**ADR-0012** (Accepted): one local stub server plays both external APIs — an OpenAI-compatible
+`chat/completions` (reached via `OPENAI_BASE_URL`) and a gnews-shaped, `apikey`-gated news
+endpoint (`NEWS_API_URL`) — while the agent's app runs as a real subprocess speaking real HTTP.
+It drives the app across four launches (fail-fast config x2, the functional UI+API gauntlet,
+a degraded news API, restart persistence) plus a static config-docs check; the chat stub keys
+its canned reply on which article appears in the request, so a hardcoded or reused analysis
+cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
+`docs/research/news-analyzer-eval-development-2026-07-04.md`.
 
 ---
 

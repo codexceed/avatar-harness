@@ -104,6 +104,7 @@ A deterministic, model-agnostic eval harness lives under [`evals/`](evals/README
 ```bash
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6" SEEDS=3   # score the task suite (per-model pass@1/pass^k)
 make eval MODELS="..." CONCURRENCY=4   # run matrix cells in parallel (default 1, sequential)
+make eval TASKS="news-analyzer" SEEDS=1   # run a subset of tasks by id
 make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl   # regression-diff (clustered CI + McNemar)
 ```
 
