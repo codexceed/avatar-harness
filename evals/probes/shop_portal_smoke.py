@@ -349,21 +349,37 @@ def _checkout(base: str, user: str, *, via_ui: bool = False) -> tuple[int, str]:
 
 
 def _await_terminal(base: str, users: list[str], deadline_seconds: float) -> str | None:
-    """Poll until every user's every order reaches a terminal status; return a failure reason."""
+    """Poll until every user's every order reaches a terminal status; return a failure reason.
+
+    This is a *barrier*, not a latency assertion (those live in `_responsiveness_check`): it
+    must be robust to the connection pressure it creates. A single poll that fails to connect
+    is retried on the next round rather than aborting — so a transient timeout during a
+    30-order settle burst is not mistaken for a stalled pipeline. Only two things fail the
+    barrier: orders that never reach a terminal status by the deadline (a genuine stall /
+    sequential worker), or a poll that keeps returning a broken (non-array) body to the end.
+    A small inter-request pause keeps the poll from saturating the app's accept queue.
+    """
     deadline = time.monotonic() + deadline_seconds
     pending: set[str] = set(users)
+    last_error: dict[str, str] = {}
     while pending and time.monotonic() < deadline:
         for user in list(pending):
             rows = _orders(base, user)
             if rows is None:
-                return f"GET /api/orders?user_id={user} did not return a JSON array of orders"
-            if all(str(r.get("status")) in _TERMINAL for r in rows):
+                last_error[user] = "did not return a JSON array of orders"
+            elif all(str(r.get("status")) in _TERMINAL for r in rows):
                 pending.discard(user)
+                last_error.pop(user, None)
+            time.sleep(0.01)  # a burst of zero-delay connections saturates a plain HTTP server
         if pending:
             time.sleep(0.25)
     if pending:
+        stuck = sorted(pending)[:5]
+        broken = [u for u in stuck if u in last_error]
+        if broken:
+            return f"GET /api/orders?user_id={broken[0]} {last_error[broken[0]]}"
         return (
-            f"orders for {sorted(pending)[:5]} never reached a terminal status within "
+            f"orders for {stuck} never reached a terminal status within "
             f"{deadline_seconds:.0f}s — background processing looks stalled or sequential"
         )
     return None
