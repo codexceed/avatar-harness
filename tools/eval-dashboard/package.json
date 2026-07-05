@@ -1,0 +1,20 @@
+{
+  "name": "eval-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype interactive dashboard for AI eval-harness results (Observable Framework).",
+  "scripts": {
+    "dev": "observable preview",
+    "build": "observable build",
+    "clean": "rm -rf dist src/.observablehq/cache",
+    "dev:results": "npm run clean && observable preview",
+    "build:results": "npm run clean && observable build"
+  },
+  "dependencies": {
+    "@observablehq/framework": "^1.13.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
