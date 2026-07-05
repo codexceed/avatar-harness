@@ -159,7 +159,12 @@ def run_task(
         # — so a no-leak guard plus a give-up `incomplete` run does not score solved.
         reached_success = state.outcome == "success"
         probe_exit = (
-            run_probe(_resolve_probe(spec.success_probe, root), repo, env=spec.env)
+            run_probe(
+                _resolve_probe(spec.success_probe, root),
+                repo,
+                env=spec.env,
+                timeout_seconds=spec.probe_timeout_seconds,
+            )
             if spec.success_probe
             else None
         )

@@ -272,6 +272,7 @@ goal = "Create a runnable …"          # required: the prompt the agent receive
 task_kind = "edit"                    # edit | investigate | test_only
 fixture = "empty"                     # "empty" (bare repo) or a dir name under evals/fixtures/
 success_probe = "python evals/probes/chatbot_smoke.py chatbot.py"   # deterministic grader
+probe_timeout_seconds = 360           # optional (default 120): kill the probe after this long
 
 [budgets]                             # override harness budgets for this task
 max_iterations = 30

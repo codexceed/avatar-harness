@@ -37,6 +37,10 @@ class TaskSpec(BaseModel):
     # probe: solved requires the guard to hold AND the outcome to be whitelisted.
     passing_outcomes: list[OutcomeState] = Field(default_factory=lambda: list(_DEFAULT_PASSING_OUTCOMES))
     budgets: dict[str, int] = Field(default_factory=dict)
+    # How long the success probe may run before it is killed (exit 124). The 120 s default fits
+    # the existing smoke probes; a heavy functional probe (e.g. a concurrency gauntlet that must
+    # wait out background order processing) raises it explicitly per task.
+    probe_timeout_seconds: int = Field(default=120, gt=0)
     # Runtime env for the task's program (injected into the success-probe subprocess), so a
     # task can declare what its program needs to run — e.g. a dummy OPENAI_API_KEY. The user
     # sets it explicitly; it is environment, not a hint to the agent (the agent never sees it).
