@@ -93,7 +93,9 @@ body fails the barrier — removing a latent false-negative without changing any
   `X-Cache: hit` while honouring the sellout invariant would pass. The hard requirement (zero-stock
   items never surfaced, even on a warmed query) is fully checked.
 - **Cost/latency:** a wedging app runs its probe to the settle-barrier deadline before failing, so
-  failing cells are the slow ones; the task's `probe_timeout_seconds = 360` accommodates this.
+  failing cells are the slow ones; the task's `probe_timeout_seconds = 900` accommodates this (it
+  clears the worst-case sum of the ~8 sequential 90 s settle barriers, so a slow-but-correct app is
+  never failed as a false timeout — a genuinely stalled app fails fast at a barrier instead).
 
 ## Figure provenance
 

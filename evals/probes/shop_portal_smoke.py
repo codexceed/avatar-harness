@@ -164,7 +164,8 @@ class _StubHandler(BaseHTTPRequestHandler):
             try:
                 payload = json.loads(raw.decode("utf-8", errors="replace"))
             except json.JSONDecodeError:
-                _LEDGER.payload_errors.append(f"non-JSON payment body: {raw[:120]!r}")
+                with _LEDGER.lock:  # same guard record() uses for payload_errors
+                    _LEDGER.payload_errors.append(f"non-JSON payment body: {raw[:120]!r}")
                 self._reply(400, {"status": "bad_request"})
                 return
             attempt = _LEDGER.record(payload)

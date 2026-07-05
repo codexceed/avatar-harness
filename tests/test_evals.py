@@ -1867,7 +1867,9 @@ def test_shop_portal_probe_counter_examples(tmp_path):
     cmd = f"python {_PROBES / 'shop_portal_smoke.py'} app.py"
     cases = [
         # 1. Reservation not atomic (check+decrement outside one IMMEDIATE txn): the 20-way
-        #    wave oversells / drives stock negative.
+        #    wave oversells / drives stock negative. This is the ONE timing-race-dependent case:
+        #    the injected `time.sleep(0.02)` widens the check→decrement window so the oversell
+        #    is reliably observed — do NOT narrow it, or the counter-example goes flaky.
         ("naive_reserve", _ATOMIC_RESERVE_MARKER, "time.sleep(0.02)"),
         # 2. No retry on a transient 503: the first-attempt-failing orders end `failed`.
         ("no_retry", _RETRY_BUDGET_MARKER, "for attempt in range(1):  #"),

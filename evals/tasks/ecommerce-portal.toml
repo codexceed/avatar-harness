@@ -106,8 +106,11 @@ task_kind = "edit"
 fixture = "ecommerce-portal"
 success_probe = "python evals/probes/shop_portal_smoke.py app.py"
 # The probe waits out real concurrent waves (background processing with multi-second payment
-# holds, retries, a drain pass) — a good app needs ~2 min; give slack over the 120 s default.
-probe_timeout_seconds = 360
+# holds, retries, a drain pass) — a good app needs ~2 min. But it runs ~8 sequential settle
+# barriers each with a 90 s deadline, so a slow-but-correct app's worst case can sum past a
+# tight bound; allow generous slack (a genuinely stalled app fails fast AT a barrier, never
+# here) so this timeout can't turn a correct app into a false timeout. Over the 120 s default.
+probe_timeout_seconds = 900
 
 [budgets]
 # The heaviest task in the suite: atomic multi-line reservation under contention, a concurrent

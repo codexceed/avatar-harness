@@ -13,9 +13,10 @@ Two deliberate choices vs. the notebook's heatmap cell:
   * **Colormap is perceptually-uniform and colorblind-safe** (`viridis`), not the notebook's
     `RdYlGn` — a red↔green diverging map is the canonical CVD-unsafe choice, and pass rate is
     ordered [0,1] data that wants a sequential map, not a diverging one.
-  * **Output is byte-stable** — `svg.hashsalt` is pinned, glyphs embed as paths, and the SVG
-    ``Date`` metadata is stripped, so re-running on unchanged input produces an identical file
-    (git shows no diff). This is what makes the figure safe to commit next to the note.
+  * **Output is byte-stable** — `svg.hashsalt` is pinned, glyphs embed as paths, the SVG
+    ``Date`` metadata is stripped, and trailing whitespace is removed (matplotlib pads every
+    path-data line, which would otherwise fail ``git diff --check``); re-running on unchanged
+    input produces an identical file. This is what makes the figure safe to commit next to the note.
 
 Usage:
     uv run python scripts/eval_heatmap.py [RESULTS.jsonl] [-o OUT.svg] [--title TITLE]
@@ -145,6 +146,13 @@ def render(frame: pd.DataFrame, title: str, out: Path) -> Path:
     # `metadata={"Date": None}` strips the wall-clock stamp the SVG writer would embed.
     fig.savefig(out, format="svg", facecolor="white", metadata={"Date": None})
     plt.close(fig)
+    # matplotlib ends every SVG path-data line with a trailing space; strip trailing
+    # whitespace (safe — the newline still separates path tokens) so the committed figure
+    # passes `git diff --check`. Deterministic, so the file stays byte-stable across runs.
+    out.write_text(
+        "".join(f"{line.rstrip()}\n" for line in out.read_text(encoding="utf-8").splitlines()),
+        encoding="utf-8",
+    )
     return out
 
 
