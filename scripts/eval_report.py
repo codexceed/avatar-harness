@@ -84,10 +84,16 @@ def solved_matrix(rows: Sequence[ResultRow]) -> str:
     for r in rows:
         cell[(r.model, r.task)].append(r.solved)
 
+    by_task: dict[str, list[ResultRow]] = defaultdict(list)
+    for r in rows:
+        by_task[r.task].append(r)
+
     width = max(14, *(len(t) for t in tasks)) + 1
-    lines = [_rule("SOLVED MATRIX — solved / seeds, per (model, task)")]
+    lines = [_rule("SOLVED MATRIX — solved / seeds, per (model, task); % = per-task pass@1")]
     header = f"{'model':<22}" + "".join(f"{t:>{width}}" for t in tasks)
+    rate = f"{'pass@1':<22}" + "".join(f"{f'{pass_at_1(by_task[t]):.0%}':>{width}}" for t in tasks)
     lines.append(header)
+    lines.append(rate)
     for model in models:
         cells = []
         for t in tasks:
