@@ -51,6 +51,7 @@ For `edit` tasks the harness auto-detects how to verify the work (CI / manifests
 
 ```bash
 uv run avatar "where does the agent loop terminate, and what sets outcome=success?"
+uv run avatar --task-kind edit "fix the failing test and verify the result"
 make run TASK="explain how str_replace anchors edits"   # via the Makefile
 ```
 
@@ -79,6 +80,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 
 | Flag | Command | Default | Meaning |
 | --- | --- | --- | --- |
+| `--task-kind {edit,investigate,test_only}` | `avatar` | `investigate` | Selects the verification contract for this one-shot task. |
 | `--auto` | `jo` | off | Keep the strict verification gate (default: conversational — verify runs + reports, you decide). |
 | `--log PATH` | both | `events/<session_id>.jsonl` | Where to write the append-only JSONL event log. |
 | `--allow-dirty` | both | off | Run despite uncommitted **tracked** changes in the workspace. |
@@ -104,6 +106,7 @@ A deterministic, model-agnostic eval harness lives under [`evals/`](evals/README
 ```bash
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6" SEEDS=3   # score the task suite (per-model pass@1/pass^k)
 make eval MODELS="..." CONCURRENCY=4   # run matrix cells in parallel (default 1, sequential)
+make eval TASKS="news-analyzer" SEEDS=1   # run a subset of tasks by id
 make eval-diff BASELINE=evals/results/A.jsonl CANDIDATE=evals/results/B.jsonl   # regression-diff (clustered CI + McNemar)
 ```
 

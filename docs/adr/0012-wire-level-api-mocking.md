@@ -1,6 +1,11 @@
 # ADR 0012 — Wire-level API mocking for eval probes (mock the endpoint, not the client library)
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented 2026-07-05 by the `news-analyzer` probe
+  (`evals/probes/news_app_smoke.py`, PR #97): one local stub server plays both external APIs
+  (an OpenAI-compatible `chat/completions` reached via `OPENAI_BASE_URL`, and a gnews-shaped,
+  `apikey`-gated news endpoint via `NEWS_API_URL`); the app under test runs as a real
+  subprocess speaking real HTTP. `chatbot_smoke.py` retains library-level mocking (its
+  program is a CLI, not a server — the layer is chosen per probe as fits the task).
 - **Date:** 2026-06-14
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8)

@@ -240,12 +240,11 @@ sequenceDiagram
 
 TDD per the repo protocol: **propose the test list → maintainer approves → red → green → record.** Built behind `evals/` + one guarded `src/` guardrail; the only `src/` engine touch is Increment 0.
 
-### Increment 0 — `search_repo` guardrail (small, standalone, unblocks clean inputs)
-- [ ] `test_search_repo_caps_large_output_with_marker` — output capped (~50 KB) with the `… [truncated: shown/total chars shown]` marker.
-- [ ] `test_search_summary_notes_truncation`.
-- [ ] `test_eval_journal_excluded_from_search` — the eval journal path is covered by `_journal_ignores` (the regression that would have caught 875 MB).
-- [ ] impl: cap in `tools/search.py`; align `evals/run.py` journal path with the workspace exclusion.
-- **Exit:** a large search can't balloon `ToolEnd.content`/the journal; `make check` clean.
+### Increment 0 — `search_repo` guardrail (small, standalone, unblocks clean inputs) ✅ built (PR #75)
+- [x] `test_search_repo_caps_large_output_with_marker` — output capped (~50 KB) with the `… [truncated: shown/total chars shown]` marker. *Also asserts the `(truncated)` summary note (the planned `test_search_summary_notes_truncation` was folded into this test rather than kept standalone).*
+- [x] `test_eval_journal_excluded_from_search` — the eval journal path is covered by `_journal_ignores` (the regression that would have caught 875 MB).
+- [x] impl: `_MAX_SEARCH_OUTPUT_CHARS = 50_000` cap in `avatar/tools/search.py`; `evals/run.py` journal path aligned with the workspace exclusion.
+- **Exit (met):** a large search can't balloon `ToolEnd.content`/the journal; `make check` clean.
 
 ### Increment 1 — Layer-1 read-only foundation + `ChangeProposal` (the free core) ✅ built (15 tests)
 - [x] `distill` (`evals/distill.py`) — journal → `TrajectoryDigest` in a **single streaming pass** (ordered/capped actions, repeat/failure/`decision_error` counts, token curve; KB-bounded; `tool_end.content` never retained); a shared streaming reader `evals/journal_read.py` (`iter_events`/`row_events`) feeds both this and `run.py`.
@@ -259,10 +258,10 @@ TDD per the repo protocol: **propose the test list → maintainer approves → r
 - [x] **2b · Workflow A script (`evals/workflows/evals_to_proposals.js`):** the Layer-2 `meta`+phases orchestration — `Triage` (shell out to `evals.cluster`) → `Analyze` (one judge subagent per cluster: confirm novel vs known) → `Propose` (one subagent per novel mode → a brief, code-free issue+fix entry) → `Reconcile` (barrier: dedupe/order, write the digest `evals/proposals/<stamp>/proposals.md` + append `failure-modes.md`). **Per ADR-0031 the output is the human digest, not per-`<id>.md` `ChangeProposal` artifacts** (structured emission deferred until Workflow B).
 - **Exit (deterministic spine met):** `python -m evals.cluster` reports clusters + prefilter verdicts, read-only / zero spend. *Running the full workflow (the subagent fan-out) is an explicit opt-in step via the `Workflow` tool — it spends Claude tokens (no eval spend) and is not exercised by `make`/CI.*
 
-### Increment 3 — Workflow B `proposal-to-pr` + `validate` (the spender) — **HITL-gated**
-- [ ] `evals/validate.py` — the **canary ladder** (unit/local → 1-seed canary on affected models → full matrix on survival) against **frozen `evals/` assets**, verdict via `evals.diff`; `test_validate_canary_ladder_runs_frozen_assets` (scripted/offline). *Moved from Increment 1: it is the only eval-spender, so it lands with Workflow B.*
-- [ ] `evals/workflows/proposal_to_pr.*`: worktree → TDD subagent → `validate` → confirm → open PR; bounded rework; Gate 1 (fund) + Gate 2 (merge).
-- **Exit:** per funded proposal, a TDD'd, McNemar-validated PR; never auto-merges; grader-touching → ADR-route.
+### Increment 3 — Workflow B `proposal-to-pr` + `validate` (the spender) — **HITL-gated** ✅ built (8 tests)
+- [x] `evals/validate.py` — the **canary ladder** (`run_ladder`: unit/local → 1-seed canary on affected models → full matrix on survival), each rung graded against **frozen `evals/` assets** (`frozen_assets` restores `tasks`/`probes`/`fixtures` via `git archive` from a trusted ref — a candidate can't grade itself against a spec it edited). The matrix verdict is **global**: paired McNemar (`evals.stats`) + a **per-model agnosticism** check (the canary uses a cheap raw flip-count, not McNemar — 1 seed has no power). 7 offline ladder/frozen-asset tests inject scripted stage runners; `run.py` gained an `evals_root` so `run_task` grades against the frozen copy (+1 test). *`validate` moved here from Increment 1: it is the only eval-spender.*
+- [x] `evals/workflows/proposal_to_pr.js`: Scope (reconstruct the typed `ChangeProposal` from the funded **digest entry** — the ADR-0031 seam, see ADR-0032 — and **route on blast-radius**) → worktree → TDD subagent → `python -m evals.validate` (frozen) → open PR; bounded rework then ADR-escalation; Gate 1 (fund) + Gate 2 (merge) stay human. *Orchestration shell (Layer-2), like Workflow A: run on demand, not unit-tested; the determinism lives in `validate.py`.*
+- **Exit (met):** `make check` clean with the ladder + frozen-asset tests green; per funded proposal the workflow produces a TDD'd, McNemar-validated PR, never auto-merges, and routes a global/grader-touching change to an ADR. *A live end-to-end run spends eval budget and is left to a human-funded invocation (Gate 1).*
 
 ### Increment 4 — ADR-0011 substrate + train/test split (the unlock — later)
 - [ ] D1 protected oracle paths · D2 fingerprinting · D3 held-out FAIL_TO_PASS/PASS_TO_PASS · D4 calibration · dev/held-out task split.

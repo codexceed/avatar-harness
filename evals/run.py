@@ -11,6 +11,7 @@ import json
 import re
 import shlex
 import shutil
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,35 +36,41 @@ _DEFAULT_SEEDS = 3
 _DEFAULT_TEMPERATURE = 0.7
 
 
-def _fixture_path(name: str) -> Path | None:
+def _fixture_path(name: str, evals_root: Path = _EVALS_ROOT) -> Path | None:
     """Resolve a fixture name to its directory, or `None` for the bare 'empty' fixture.
 
     Args:
         name: The fixture name from the spec.
+        evals_root: The ``evals`` directory to resolve fixtures under; defaults to this repo's, but
+            `validate` passes a frozen copy restored from a trusted ref (ADR-0024).
 
     Returns:
         The fixture directory, or `None` when it is 'empty' / absent (a bare repo).
     """
     if name == "empty":
         return None
-    candidate = _EVALS_ROOT / "fixtures" / name
+    candidate = evals_root / "fixtures" / name
     return candidate if candidate.exists() else None
 
 
-def _resolve_probe(command: str) -> str:
-    """Make a repo-relative ``evals/...`` probe-script path absolute against the repo root.
+def _resolve_probe(command: str, evals_root: Path = _EVALS_ROOT) -> str:
+    """Make a repo-relative ``evals/...`` probe-script path absolute against the assets root.
 
     The probe runs with the scratch repo as cwd (so it inspects the agent's output), but the
-    probe script itself lives in this repo — so its path must be absolute.
+    probe script itself lives under ``evals/`` — so its path must be absolute.
 
     Args:
         command: The probe command from the spec.
+        evals_root: The ``evals`` directory the probe scripts live under; defaults to this repo's,
+            but `validate` passes a frozen copy so a candidate can't grade against an edited probe.
 
     Returns:
-        The command with any leading ``evals/...`` path made absolute.
+        The command with any leading ``evals/...`` path made absolute (against ``evals_root``'s
+        parent, so ``evals/probes/x.py`` resolves to ``<evals_root>/probes/x.py``).
     """
+    base = evals_root.parent
     parts = shlex.split(command)
-    return " ".join(str(_REPO_ROOT / p) if p.startswith("evals/") else p for p in parts)
+    return " ".join(str(base / p) if p.startswith("evals/") else p for p in parts)
 
 
 def _slug(model: str) -> str:
@@ -101,6 +108,7 @@ def run_task(
     model_client: ModelClient | None = None,
     seed: int = 0,
     workspace_root: Path | None = None,
+    evals_root: Path | None = None,
 ) -> ResultRow:
     """Run one task hermetically and score it.
 
@@ -112,12 +120,16 @@ def run_task(
         seed: The seed index (recorded on the row; varies the matrix, not the engine).
         workspace_root: The run workspace to provision the scratch repo under; `None` uses
             the system temp dir.
+        evals_root: The ``evals`` directory to resolve fixtures + probe scripts under; `None` uses
+            this repo's. `validate` passes a frozen copy restored from a trusted ref so the candidate
+            harness is graded against an untouched grading surface (ADR-0024 / ADR-0011 D1+D2).
 
     Returns:
         The scored `ResultRow` (its `workspace` field points at the scratch repo).
     """
+    root = evals_root or _EVALS_ROOT
     label = f"{_slug(config.model)}__{spec.id}__seed{seed}__"
-    repo = provision(_fixture_path(spec.fixture), parent=workspace_root, label=label)
+    repo = provision(_fixture_path(spec.fixture, root), parent=workspace_root, label=label)
     # Errors after provisioning still produce a row that carries the scratch path, so it maps to
     # its files and the cleanup contract holds (provision-stage failures propagate to the caller).
     try:
@@ -147,13 +159,21 @@ def run_task(
         # — so a no-leak guard plus a give-up `incomplete` run does not score solved.
         reached_success = state.outcome == "success"
         probe_exit = (
-            run_probe(_resolve_probe(spec.success_probe), repo, env=spec.env) if spec.success_probe else None
+            run_probe(_resolve_probe(spec.success_probe, root), repo, env=spec.env)
+            if spec.success_probe
+            else None
         )
         row = ResultRow(
             task=spec.id,
             model=cfg.model,
             seed=seed,
-            solved=is_solved(reached_success, probe_exit, probe_is_guard=spec.probe_role == "guard"),
+            solved=is_solved(
+                reached_success,
+                probe_exit,
+                probe_is_guard=spec.probe_role == "guard",
+                outcome=state.outcome,
+                passing_outcomes=spec.passing_outcomes,
+            ),
             outcome=state.outcome,
             iterations=state.iterations,
             prompt_tokens=state.prompt_tokens,
@@ -190,6 +210,33 @@ def _load_specs() -> list[TaskSpec]:
         The loaded specs.
     """
     return [load_task_spec(p) for p in sorted((_EVALS_ROOT / "tasks").glob("*.toml"))]
+
+
+def _select_specs(specs: list[TaskSpec], tasks: str | None) -> list[TaskSpec]:
+    """Narrow the suite to the comma-separated task ids in ``tasks`` (`None` = all).
+
+    Selection keeps suite (filename) order regardless of argument order, so a filtered
+    results artifact stays deterministically ordered like the full matrix.
+
+    Args:
+        specs: The full loaded suite.
+        tasks: Comma-separated task ids, or `None` to select everything.
+
+    Returns:
+        The selected specs, in suite order.
+
+    Raises:
+        ValueError: When an id names no spec — a typo must fail loud, never silently
+            shrink (or empty) an expensive run.
+    """
+    if tasks is None:
+        return specs
+    wanted = {t.strip() for t in tasks.split(",") if t.strip()}
+    known = {s.id for s in specs}
+    unknown = sorted(wanted - known)
+    if unknown:
+        raise ValueError(f"unknown task(s): {', '.join(unknown)} — available: {', '.join(sorted(known))}")
+    return [s for s in specs if s.id in wanted]
 
 
 def _run_one(model: str, cfg: HarnessConfig, spec: TaskSpec, seed: int, run_workspace: Path) -> ResultRow:
@@ -395,14 +442,20 @@ def main(argv: list[str] | None = None) -> int:
     """Run the task suite across a model matrix, write results, print a summary.
 
     Args:
-        argv: CLI args (``--models``, ``--seeds``, ``--workspace``, ``--no-cleanup``); `None`
-            uses ``sys.argv``.
+        argv: CLI args (``--models``, ``--tasks``, ``--seeds``, ``--workspace``,
+            ``--no-cleanup``); `None` uses ``sys.argv``.
 
     Returns:
         Process exit code (0 on success, 1 when no specs are found).
     """
     parser = argparse.ArgumentParser(prog="evals", description="Run the Eval-0 task suite.")
     parser.add_argument("--models", default=None, help="comma-separated model ids; default = config model")
+    parser.add_argument(
+        "--tasks",
+        default=None,
+        help="comma-separated task ids to run (default: every spec under evals/tasks/); "
+        "an unknown id is an error, never a silent skip",
+    )
     parser.add_argument("--seeds", type=int, default=_DEFAULT_SEEDS, help="seeds per task")
     parser.add_argument(
         "--temperature",
@@ -431,7 +484,11 @@ def main(argv: list[str] | None = None) -> int:
 
     base = HarnessConfig().model_copy(update={"temperature": args.temperature})
     models = [m.strip() for m in args.models.split(",")] if args.models else [base.model]
-    specs = _load_specs()
+    try:
+        specs = _select_specs(_load_specs(), args.tasks)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     if not specs:
         print("no task specs found under evals/tasks/")
         return 1

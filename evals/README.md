@@ -44,7 +44,10 @@ make eval-matrix
 make eval-matrix SEEDS=3 CONCURRENCY=4                       # any knob is overridable
 make eval-matrix MATRIX_MODELS="minimax/minimax-m3,z-ai/glm-5.2"  # swap the model set
 
-# make passthroughs: MODELS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
+# A subset of tasks (comma-separated ids; an unknown id errors, never silently skips):
+make eval TASKS="news-analyzer,secret-safety" SEEDS=1
+
+# make passthroughs: MODELS=, TASKS=, SEEDS=, TEMPERATURE=, WORKSPACE=, CONCURRENCY=, NO_CLEANUP=1 (keep output)
 make eval MODELS="openai/gpt-5.1" SEEDS=1 NO_CLEANUP=1
 
 # Or invoke the module directly:
@@ -52,7 +55,7 @@ uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
 
 > **`make eval-matrix`** pins the four models we track for regressions
-> (`minimax/minimax-m3,z-ai/glm-5.1,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
+> (`minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
 > `CONCURRENCY=8`, `NO_CLEANUP=1`. It delegates to `eval` via target-specific variables, so a
 > command-line `SEEDS=`/`CONCURRENCY=`/`MODELS=` (or `MATRIX_MODELS=` for the model set) still wins.
 
@@ -65,6 +68,7 @@ does **not** (it mocks the network — see *Probes*).
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--models a,b,c` | `AVATAR_MODEL` | Comma-separated model ids to run as a matrix. |
+| `--tasks a,b` | every spec in `tasks/` | Comma-separated task ids to run (suite order is kept). An unknown id is an error — a typo must never silently shrink an expensive run. |
 | `--seeds N` | `3` | Repetitions per task (see *Seeds & temperature*). |
 | `--temperature T` | `0.7` | Sampling temperature; `>0` makes each seed an independent draw. Pass `0` for a deterministic run. |
 | `--workspace PATH` | `./eval_run_<timestamp>` | Where scratch repos are created. |
@@ -200,9 +204,61 @@ per issue: what's wrong · the fix · size · risk), then one self-contained ent
 If every failure maps to an already-known mode, the workflow writes nothing and says so — that is a
 valid, healthy outcome (the loop's job is to surface what's *new*).
 
-> **Note:** this workflow currently emits only the human digest. The structured, machine-readable
-> hand-off (`ChangeProposal`, `evals/proposal.py`) to a future PR-building workflow ("Workflow B")
-> is intentionally deferred until that consumer exists.
+> **Note:** this workflow emits only the human digest. The structured `ChangeProposal`
+> (`evals/proposal.py`) is reconstructed by Workflow B from the funded digest entry (ADR-0024 §seam;
+> ADR-0031) — Workflow A's job stays read-only and human-facing.
+
+---
+
+## From a funded proposal to a validated PR (`proposal-to-pr`)
+
+Once you've read the digest and decided to build an entry (**Gate 1 — funding**), the
+**`proposal-to-pr`** workflow turns that one proposal into a TDD'd, statistically-validated PR. It is
+the **only** part of the loop that spends eval budget, which is why it runs per-funded-proposal and
+**never merges** (Gate 2 — review + merge — stays human).
+
+```
+Workflow({ scriptPath: "evals/workflows/proposal_to_pr.js",
+           args: { digest: "evals/proposals/<stamp>/proposals.md", entry: 1,
+                   baseline: "evals/results/<stamp>.jsonl", trusted_ref: "main" } })
+```
+
+> **`trusted_ref` must be a ref where the loop *and* the grading assets already live.** It is both
+> the base the candidate worktree is branched from and the ref `validate` freezes `tasks`/`probes`/
+> `fixtures` from. It defaults to `main` — correct once the loop is merged there. **While the loop
+> still lives only on a feature branch, pass that branch** (`trusted_ref: "<branch>"`), or the
+> worktree won't contain `evals/cluster.py`/`validate.py` and — because the PR is opened against the
+> repo default branch — the resulting PR diffs the whole branch delta, not just the fix.
+>
+> **`local_only: true`** stops the ladder at the **local rung** (the TDD tests + `make check` the
+> Build phase already ran) and skips the canary/matrix rungs — **zero eval spend**. Use it for a
+> guided/dry pass, to prove the Scope→Build path before funding matrix spend, or for a proposal whose
+> own verification is inherently local (a triage/tooling fix with no agent-behaviour signal, e.g. the
+> crash-triage-label fix, whose "how we'd verify" is unit tests + replay). It only ever *reduces*
+> spend, never adds it.
+
+What it does:
+
+1. **Scope** — reconstructs the typed `ChangeProposal` from the funded entry and **routes on
+   blast-radius**: a *global* or *grader-touching* change is drafted as an **ADR-proposal PR** (zero
+   eval spend) for a human to decide — never auto-built.
+2. **Build** — a fresh git worktree; a TDD subagent drives the fix to local green (`make check`).
+3. **Validate** — the deterministic **canary ladder** (`python -m evals.validate`): unit/local →
+   1-seed canary on the affected models → full matrix, each graded against the grading surface
+   (specs · probes · fixtures) **frozen from a trusted ref** so a candidate can't grade itself
+   against a spec it just edited. The verdict is **global**: paired McNemar + per-model agnosticism.
+4. **Open PR** — cites the baseline rows, the digest entry, and the validation verdict so a reviewer
+   can confirm "solved, not gamed." A stubborn proposal that won't validate within the rework cap is
+   **escalated to the ADR route**, not merged.
+
+You can also run the ladder directly against any candidate worktree:
+
+```bash
+uv run python -m evals.validate --baseline evals/results/<stamp>.jsonl \
+  --worktree . --trusted-ref main \
+  --affected-models gemini,sonnet --target-tasks secret-safety \
+  --models gpt-5.1,sonnet,gemini --seeds 5
+```
 
 ---
 
@@ -245,8 +301,17 @@ A **probe** is a deterministic, post-run check that the agent's output actually 
 The `create-chatbot` probe (`probes/chatbot_smoke.py`) is **functional**: it swaps the `openai`
 module for a mock that records calls, runs the agent's `chatbot.py`, and passes only if a
 chat-completions call actually fired (a turn round-tripped) — stricter than "it imports a client."
-It mocks at the **library** level today; the wire-level alternative (a fake OpenAI-compatible
-server) is recorded as a deferred decision in **ADR-0012**.
+It mocks at the **library** level (its program is a CLI run in-process).
+
+The `news-analyzer` probe (`probes/news_app_smoke.py`) is the **wire-level** realization of
+**ADR-0012** (Accepted): one local stub server plays both external APIs — an OpenAI-compatible
+`chat/completions` (reached via `OPENAI_BASE_URL`) and a gnews-shaped, `apikey`-gated news
+endpoint (`NEWS_API_URL`) — while the agent's app runs as a real subprocess speaking real HTTP.
+It drives the app across four launches (fail-fast config x2, the functional UI+API gauntlet,
+a degraded news API, restart persistence) plus a static config-docs check; the chat stub keys
+its canned reply on which article appears in the request, so a hardcoded or reused analysis
+cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
+`docs/research/news-analyzer-eval-development-2026-07-04.md`.
 
 ---
 
