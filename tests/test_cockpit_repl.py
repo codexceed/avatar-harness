@@ -8,6 +8,7 @@ never imports the TUI. Tested headlessly with Textual's `Pilot` over a real `Rep
 (ScriptedModel + a tmp git repo).
 """
 
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ from pydantic import BaseModel
 from avatar.config import HarnessConfig
 from avatar.harness import Harness
 from avatar.intent import ModeClassifier
-from avatar.model_client import FinalAnswer, ModelDecision, ToolCall
+from avatar.model_client import FinalAnswer, ModelClient, ModelDecision, ToolCall
 from avatar.session_state import ReplSession
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
 from avatar.tools.edit import str_replace
@@ -242,6 +243,95 @@ async def test_goal_error_renders_instead_of_crashing(git_repo):
         assert "DirtyWorkspaceError" in joined  # surfaced to the human...
         assert not app.query_one("#prompt").disabled  # ...and the REPL is still usable
     # reaching here at all means the app survived the failed goal
+
+
+class _RaisingModel(ModelClient):
+    """A model whose decide() raises — simulates an auth/network failure surfaced mid-run."""
+
+    def decide(self, context: object) -> ModelDecision:
+        raise RuntimeError("missing AVATAR_API_KEY")
+
+
+async def test_ctrl_c_quits_after_goal_fails_mid_run(git_repo):
+    # A goal that fails *inside* the run (e.g. a missing API key surfaced from the model
+    # client) left its per-goal Session non-terminal; ctrl+c then kept trying to cancel a
+    # dead run and never quit. After a finished goal there is no live run → ctrl+c must quit.
+    config = HarnessConfig(workspace_root=str(git_repo))
+    harness = Harness(config=config, model=_RaisingModel(), tools=_read_registry())
+    repl = ReplSession(harness)
+    app = CockpitApp(repl=repl)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain things")
+        await _settle(app, pilot)
+        assert "goal failed" in "\n".join(app.rendered).lower()  # the failure surfaced...
+        assert app._session is None  # ...leaving no crashed session for ctrl+c to stick on
+        exited: list[bool] = []
+        app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert exited  # ctrl+c quits instead of silently cancelling a dead run
+
+
+class _BlockingModel(ModelClient):
+    """A model whose async call blocks until cancelled — a busy, in-flight run (ADR-0024)."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+
+    def decide(self, context: object) -> ModelDecision:
+        raise AssertionError("the runner's call site is adecide")
+
+    async def adecide(self, context: object) -> ModelDecision:
+        self.entered.set()
+        await asyncio.sleep(60)  # block in-flight until the run task is cancelled
+        raise AssertionError("the call should have been cancelled")  # pragma: no cover
+
+
+def _blocking_app(git_repo, model: _BlockingModel) -> CockpitApp:
+    harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=model, tools=_read_registry())
+    return CockpitApp(repl=ReplSession(harness))
+
+
+async def test_ctrl_c_interrupts_a_busy_run_instantly(git_repo):
+    # ADR-0024 cockpit race: ctrl+c during an in-flight model call hard-cancels the run task
+    # (which aborts the async call at the socket), freeing the UI at once — no force-quit, no
+    # waiting on a busy agent. The cancelled run records cleanly and leaves no live run.
+    model = _BlockingModel()
+    app = _blocking_app(git_repo, model)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain things")
+        await asyncio.wait_for(model.entered.wait(), timeout=5)  # the run is in the model call
+        await pilot.pause()
+        assert app.query_one("#prompt").disabled  # the UI is busy
+        assert app._run_task is not None
+
+        app.action_cancel()  # ctrl+c → instant interrupt
+        await _settle(app, pilot)
+
+        assert app._run_task is None  # the run is over...
+        assert not app.query_one("#prompt").disabled  # ...and the UI freed immediately
+        assert any("cancel" in line.lower() for line in app.rendered)  # surfaced as history
+
+
+async def test_terminate_signal_cancels_run_and_quits(git_repo):
+    # An external SIGINT/SIGTERM (kill) is turned into a graceful shutdown: cancel any
+    # in-flight run, then quit. (The handler is invoked directly — headless run_test never
+    # installs real process-wide signal handlers.)
+    model = _BlockingModel()
+    app = _blocking_app(git_repo, model)
+    async with app.run_test() as pilot:
+        await _type_and_send(pilot, app, "explain things")
+        await asyncio.wait_for(model.entered.wait(), timeout=5)
+        await pilot.pause()
+        run_task = app._run_task
+        exited: list[bool] = []
+        app.exit = lambda *a, **k: exited.append(True)  # type: ignore[method-assign,assignment]
+
+        app._on_terminate_signal()
+        await pilot.pause()
+
+        assert run_task is not None and run_task.cancelled()  # the in-flight run was cancelled
+        assert exited  # and the app quit
 
 
 def test_jo_cli_threads_allow_dirty(git_repo, monkeypatch):

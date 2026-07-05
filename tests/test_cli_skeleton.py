@@ -85,6 +85,17 @@ def test_main_reports_via_artifact(git_repo, capsys):
     assert "calc.py" in out
 
 
+def test_main_task_kind_flag_selects_edit_contract(git_repo, capsys):
+    """The batch CLI can select edit verification without an SDK-only call."""
+    test_cmd = 'python -c "import calc; assert calc.add(2, 3) == 5"'
+    config = HarnessConfig(workspace_root=str(git_repo), test_command=test_cmd, lint_command="")
+
+    code = main(["fix add()", "--task-kind", "edit"], config=config, model_client=_edit_model())
+
+    assert code == 0
+    assert "Status: success" in capsys.readouterr().out
+
+
 def test_main_friendly_error_on_dirty_workspace(git_repo, capsys, monkeypatch):
     # A dirty tree must produce a clear message + hint, not a raw traceback.
     (git_repo / "calc.py").write_text("def add(a, b):\n    return 0\n", encoding="utf-8")

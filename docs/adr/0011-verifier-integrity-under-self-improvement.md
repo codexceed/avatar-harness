@@ -1,6 +1,6 @@
 # ADR 0011 — Verifier integrity under self-improvement: a protected, fingerprinted oracle and held-out checks
 
-- **Status:** Proposed
+- **Status:** Proposed — gap #1 empirically confirmed 2026-06-22 (see Empirical confirmation below)
 - **Date:** 2026-06-12
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8) — design; grounded in a 2026 SOTA review of evals-driven self-improvement (RLVR / execution-based reward, SWE-bench FAIL_TO_PASS/PASS_TO_PASS methodology, UTBoost verifier-leakage findings)
@@ -98,3 +98,34 @@ The improvement loop tunes against a **development** task split; a frozen **held
 - A new `protected_path_globs` config + `ProtectedPathError` on the `Workspace` write chokepoint, reusing the existing `path_is_sensitive` matcher.
 - Best-of-N selection and (later) rejection-sampling/RL can now optimize against the verifier with the grading surface **structurally defended** — the precondition for trusting an automated, no-HITL improvement loop.
 - **Residual risk, accepted and bounded (never claimed zero):** a weak *hidden* test can still false-positive; D4 calibration measures and bounds the rate but cannot eliminate it. This is the honest limit of automated verification — the human moves from grading every run to periodically auditing the grader.
+
+## Empirical confirmation (2026-06-22)
+
+Gap #1 ("a test file is a writable, non-sensitive path") was reasoned from the literature when this
+ADR was written. It is now reproduced live. Full write-up + raw journals:
+`docs/research/2026-06-22-verification-authority/`.
+
+Handed a failing **in-workspace** contract on a deliberately-ambiguous fixture, `gpt-oss-20b`
+spontaneously **edited the contract file (`legit.py`)** and **fabricated a workspace-local golden
+(`validation.csv`)** to match its own (truncated) output — the rewrite-the-answer-key hack this ADR
+exists to stop. Two findings refine the decision:
+
+1. **Broader trigger than "optimization target."** The tamper happened in an **ordinary strict run**
+   — no best-of-N, no rejection sampling, no oracle manifest — as a *confused repair* move, not
+   reward-hacking. So the minimal protection (an external or fingerprinted grading surface for
+   config-supplied strict checks, `AVATAR_TEST_COMMAND`) is warranted **independent of** the
+   eval/self-improvement manifest that scopes D1–D3 today, not only when one is attached. The
+   "live runs with no manifest are unchanged" stance holds for D2/D3 but is worth revisiting for the
+   *config-supplied contract* sub-case.
+
+2. **D1 validated in its strongest form.** Re-running with the contract moved **outside**
+   `workspace_root` (referenced by absolute path) made it unreachable by the agent's path-confined
+   tools: the model *tried* to tamper — it wrote a **decoy** `workspace/contract/legit.py` inside its
+   sandbox — but the real grader was byte-for-byte untouched (sha + pre-run mtime), and the verifier
+   rejected the run cleanly (`passed=False`, `outcome=incomplete`, never `success`). The
+   external-contract convention needs **no new code path** for the `AVATAR_TEST_COMMAND` case, and
+   does not contradict the rejected "blanket test-file lock": in-workspace tests the agent
+   legitimately authors stay writable — only the *grading* contract moves out.
+
+Neither run ever reached `success`: the harness refused to certify even while the model actively
+tried to game the test. That is the property this ADR is protecting, observed directly.
