@@ -81,9 +81,29 @@ Non-solved buckets (journal-refined): `probe_failed` 32, `budget_exhausted` 9, `
 probe_failed=5/harness_error=5/budget_exhausted=5; `qwen` probe_failed=4/harness_error=4/loop=3;
 `glm` probe_failed=4/budget=2; `deepseek` probe_failed=2/budget=2; `codex` probe_failed=2.
 
-Cost (mean tokens/run): `gpt-oss` 169k, `deepseek` 156k, `qwen` 106k, `minimax` 92k, `glm` 80k,
-`codex` 48k, `gemma` 27k. **Total 20.3M tokens across 210 runs.** Note `gpt-5.3-codex` is both the
-most capable *and* among the cheapest — capability here is not bought with tokens.
+### Cost — dollars and latency, not tokens
+
+Token *count* is a poor cost proxy: per-token prices vary ~90x. Applying OpenRouter list prices
+(`evals/pricing.json`) and the agent-loop wall-clock (the `wall_clock_seconds` field):
+
+| model | tok/run | $/run | $/solved | median wall-clock |
+| --- | --- | --- | --- | --- |
+| gpt-5.3-codex | 48k | $0.138 | **$0.148** | **17s** (fastest) |
+| deepseek-v4-pro | 156k | $0.074 | $0.086 | 88s (slowest) |
+| glm-5.2 | 80k | $0.054 | $0.067 | 45s |
+| minimax-m3 | 92k | $0.046 | $0.058 | 35s |
+| qwen3.6-27b | 106k | $0.045 | $0.071 | 65s |
+| gpt-oss-120b | 169k | $0.006 | **$0.009** | 21s |
+| gemma-4-31b-it | 27k | $0.004 | $0.007 | 71s |
+
+**Total: 20.3M tokens ≈ $11.01 across 210 runs** (codex alone $4.14). The headline correction to a
+token-count reading: `gpt-5.3-codex` uses the *fewest tokens* but is the *most expensive in dollars*
+(completion at $14/M vs gpt-oss's $0.15/M — ~90x), so capability is **not** cheap here — you pay ~16x
+gpt-oss's `$/solved` for +0.23 pass@1. And the three cost axes disagree: codex is $-expensive but
+*time-cheap* (17s), deepseek is $-moderate but *slowest* (88s), gpt-oss is cheap on both. `$/solved`
+(amortizing failed-run spend across successes) is the decision metric. Prices + latency flow from
+`evals/pricing.json` + `wall_clock_seconds` into both `scripts/eval_report.py` and the dashboard
+identically (`evals/cost.py`).
 
 ## Caveats
 
