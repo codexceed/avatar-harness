@@ -115,6 +115,9 @@ class Session:
             `resolve_approval` arrives within it, the call is auto-denied so a run can't hang
             forever inside the gate (the wall-clock budget can't preempt an awaited approval).
             `None` (default) waits indefinitely — the right shape for a human at a REPL.
+        amendment_policy: The unattended disposition for an `alter_verification` amendment
+            (ADR-0039). `"deny"` (default) keeps ADR-0016's deny-only posture; `"approve"` lets
+            an autonomous run self-ratify that one action (never any other `ask`).
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only DI of the run's collaborators + approval-mode seams
@@ -127,6 +130,7 @@ class Session:
         grants: list[ApprovalGrant] | None = None,
         unattended: bool = False,
         approval_timeout: float | None = None,
+        amendment_policy: str = "deny",
     ) -> None:
         self.runner = runner
         self.state = state
@@ -137,6 +141,9 @@ class Session:
         self._grants: list[ApprovalGrant] = grants if grants is not None else []
         self._unattended = unattended
         self._approval_timeout = approval_timeout
+        # ADR-0039: an unattended run auto-denies every `ask` EXCEPT — when this is "approve" —
+        # `alter_verification`, the one non-destructive action an autonomous run may self-ratify.
+        self._amendment_policy = amendment_policy
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
@@ -224,9 +231,15 @@ class Session:
                 input=tool_input,
             )
         )
-        # Unattended (batch/eval/autonomous): no human will resolve this — deny now rather than
-        # deadlock awaiting a `resolve_approval` that never comes. The deny stays observable.
+        # Unattended (batch/eval/autonomous): no human will resolve this — dispose now rather than
+        # deadlock awaiting a `resolve_approval` that never comes. Default deny (ADR-0016); the one
+        # scoped exception is an `alter_verification` amendment under `amendment_policy="approve"`
+        # (ADR-0039) — self-ratified because the immutable floor + held-out grading keep it honest.
+        # Scoped by TOOL NAME, never tier: `run_command` (also tier 3) always denies here.
         if self._unattended:
+            if tool == "alter_verification" and self._amendment_policy == "approve":
+                self._auto_approve(approval_id)
+                return True
             self._auto_deny(approval_id)
             return False
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
@@ -254,6 +267,20 @@ class Session:
         """
         self.bus.publish_nowait(
             ApprovalResolved(task_id=self.state.task_id, approval_id=approval_id, allowed=False, via="auto")
+        )
+
+    def _auto_approve(self, approval_id: str) -> None:
+        """Record a no-human auto-approve (ADR-0039 scoped amendment disposition).
+
+        Only reached for `alter_verification` under `amendment_policy="approve"` in an
+        unattended run — the operator granted this scoped autonomy, and the amendment's
+        goalpost move is bounded by the immutable floor and measured by the held-out oracle.
+
+        Args:
+            approval_id: The pending approval being allowed without a human decision.
+        """
+        self.bus.publish_nowait(
+            ApprovalResolved(task_id=self.state.task_id, approval_id=approval_id, allowed=True, via="auto")
         )
 
     def _tier_of(self, tool: str) -> int:

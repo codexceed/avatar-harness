@@ -46,7 +46,7 @@ from avatar.model_client import (
 )
 from avatar.permission import PermissionPolicy
 from avatar.planner import VerificationPlanner
-from avatar.state import CommandRecord, DecisionRecord, TaskState
+from avatar.state import CommandRecord, DecisionRecord, PlannedCheck, TaskState
 from avatar.tools.base import (
     ToolDefinition,
     ToolRegistry,
@@ -547,6 +547,10 @@ class AgentRunner:
         self._publish(ToolStart(task_id=state.task_id, call_id=call_id, tool=action.name, input=action.input))
         result = await asyncio.to_thread(runtime.execute, action.name, action.input)
         self._apply_tool_result(state, result)
+        if action.name == "alter_verification" and result.success:
+            # The gate approved it (attended human, or ADR-0039 scoped auto-approve) and the tool
+            # buffered the new checks — apply the amendment to the frozen plan, floor preserved.
+            self._apply_amendment(state)
         record.outcome = result.summary if result.success else (result.error or "failed")
         self.emitter.emit(
             "tool_execution_end",
@@ -644,24 +648,58 @@ class AgentRunner:
             state: The task state whose empty frozen plan may gain the floor.
             ws: The run-scoped workspace the proposal excerpts and the verifier runs in.
         """
-        if state.task_kind != "edit" or state.verification_plan != [] or not state.files_modified:
+        if state.task_kind != "edit" or not state.files_modified or state.smoke_floor_attempted:
             return
-        if state.smoke_floor_attempted:
+        plan = state.verification_plan or []
+        # Greenfield = tiers 1-3 found nothing (empty plan) OR the model declared the whole contract
+        # (ADR-0037). A real detected/cited contract (any non-declared check) is never floored.
+        if plan and not all(c.kind == "declared" for c in plan):
             return
         state.smoke_floor_attempted = True
         check = await asyncio.to_thread(self.planner.propose_smoke_check, ws, sorted(state.files_modified))
         if check is None:
             return
-        floor = [check]
-        state.set_smoke_floor(floor)
-        self.deps.verification_plan = floor  # mirror, as _freeze_plan does
+        if not plan:
+            # Decline case (ADR-0014): the model declared nothing — the smoke floor is the contract.
+            state.set_smoke_floor([check])
+        else:
+            # Declared case (ADR-0037): the floor is the immutable anchor beneath the declared contract,
+            # so a later (gated) amendment can never weaken `success` below "it compiles/parses".
+            state.append_verification_floor(
+                PlannedCheck(name="floor", command=check.command, kind="floor", provenance=check.provenance)
+            )
+        self.deps.verification_plan = state.verification_plan  # mirror, as _freeze_plan does
         state.add_feedback(
-            f"greenfield smoke floor: `{check.command}` [{check.provenance}]", kind="verification_plan"
+            f"greenfield floor: `{check.command}` [{check.provenance}]", kind="verification_plan"
         )
         # Both channels, exactly as _freeze_plan: the legacy emitter AND the typed sink, so a
-        # journaled/cockpit run records the floor as the rubric — not the earlier empty plan.
-        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in floor])
-        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=floor))
+        # journaled/cockpit run records the full rubric (declared + floor), not the earlier plan.
+        rubric = state.verification_plan or []
+        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in rubric])
+        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=rubric))
+
+    def _apply_amendment(self, state: TaskState) -> None:
+        """Apply an approved `alter_verification`: rewrite the declared contract, floor preserved (ADR-0037).
+
+        Reached only after the gated tool executed — i.e. the gate approved it (an attended human,
+        or the ADR-0039 scoped auto-approve). The immutable floor is never touched; the amended
+        rubric is re-journaled on both channels so the goalpost change is auditable.
+
+        Args:
+            state: The task state whose frozen declared contract is rewritten in place.
+        """
+        new_checks = self.deps.declared_contract
+        if not new_checks or state.verification_plan is None:
+            return
+        state.amend_declared_contract(list(new_checks))
+        self.deps.verification_plan = state.verification_plan  # mirror, as _freeze_plan does
+        rubric = state.verification_plan or []
+        state.add_feedback(
+            "verification contract amended: " + "; ".join(f"`{c.command}`" for c in rubric),
+            kind="verification_plan",
+        )
+        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in rubric])
+        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=rubric))
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).

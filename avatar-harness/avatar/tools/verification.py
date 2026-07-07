@@ -32,33 +32,44 @@ class DeclareVerificationInput(BaseModel):
     checks: list[DeclaredCheckInput] = Field(description="One or more executing verification checks.")
 
 
-def _declare_verification(args: DeclareVerificationInput, deps: RunDeps) -> ToolResult:
-    if not args.checks:
-        return ToolResult(
-            tool_name="declare_verification",
-            success=False,
-            error="declare at least one verification check (an executing test/lint command)",
-        )
-    vacuous = [c.command for c in args.checks if vacuous_declared_check(c.command)]
+class AlterVerificationInput(BaseModel):
+    """Input for `alter_verification`: the replacement checks plus why the old ones are obsolete."""
+
+    checks: list[DeclaredCheckInput] = Field(description="The replacement executing verification checks.")
+    rationale: str = Field(description="Why the current contract is obsolete given the code as built.")
+
+
+def _validate_checks(checks: list[DeclaredCheckInput]) -> tuple[list[PlannedCheck], str]:
+    """Validate declared/amended checks and build their `PlannedCheck`s (ADR-0037).
+
+    Args:
+        checks: The model-supplied checks to validate.
+
+    Returns:
+        `(planned, "")` on success, or `([], error)` with a model-correctable message.
+    """
+    if not checks:
+        return [], "declare at least one verification check (an executing test/lint command)"
+    vacuous = [c.command for c in checks if vacuous_declared_check(c.command)]
     if vacuous:
-        # Model-correctable (§10): a no-op check proves nothing; the model re-declares a real one.
-        return ToolResult(
-            tool_name="declare_verification",
-            success=False,
-            error=(
-                f"these declared checks are vacuous (they don't run the code): {vacuous}. "
-                "Declare commands that execute what you built and fail (non-zero exit) if it is broken."
-            ),
+        # Model-correctable (§10): a no-op check proves nothing; the model supplies a real one.
+        return [], (
+            f"these checks are vacuous (they don't run the code): {vacuous}. "
+            "Use commands that execute what you built and fail (non-zero exit) if it is broken."
         )
-    checks = [
+    planned = [
         PlannedCheck(
-            name=f"declared_{i + 1}",
-            command=c.command,
-            kind="declared",
-            provenance="model-declared",
+            name=f"declared_{i + 1}", command=c.command, kind="declared", provenance="model-declared"
         )
-        for i, c in enumerate(args.checks)
+        for i, c in enumerate(checks)
     ]
+    return planned, ""
+
+
+def _declare_verification(args: DeclareVerificationInput, deps: RunDeps) -> ToolResult:
+    checks, error = _validate_checks(args.checks)
+    if error:
+        return ToolResult(tool_name="declare_verification", success=False, error=error)
     deps.declared_contract = checks
     rubric = "; ".join(f"`{c.command}`" for c in checks)
     return ToolResult(
@@ -66,6 +77,23 @@ def _declare_verification(args: DeclareVerificationInput, deps: RunDeps) -> Tool
         success=True,
         content=f"declared {len(checks)} verification check(s): {rubric}",
         summary=f"declared {len(checks)} check(s)",
+    )
+
+
+def _alter_verification(args: AlterVerificationInput, deps: RunDeps) -> ToolResult:
+    # The permission gate has already disposed of the amendment (attended human / ADR-0039
+    # auto-approve / auto-deny) before this handler runs; here we only validate and buffer the
+    # replacement, which the runner folds into the frozen plan (floor preserved).
+    checks, error = _validate_checks(args.checks)
+    if error:
+        return ToolResult(tool_name="alter_verification", success=False, error=error)
+    deps.declared_contract = checks
+    rubric = "; ".join(f"`{c.command}`" for c in checks)
+    return ToolResult(
+        tool_name="alter_verification",
+        success=True,
+        content=f"amended contract to {len(checks)} check(s): {rubric} — {args.rationale}",
+        summary=f"amended to {len(checks)} check(s)",
     )
 
 
@@ -80,4 +108,19 @@ declare_verification = ToolDefinition(
     handler=_declare_verification,
     phases=_DECLARE_PHASES,
     permission_tier=0,
+)
+
+
+alter_verification = ToolDefinition(
+    name="alter_verification",
+    description=(
+        "Amend the verification contract you declared, when a check has become obsolete as the "
+        "design evolved (NOT to dodge a real failure). Supply the replacement checks and a rationale. "
+        "This is gated: a human approves it, or an autonomous run applies its configured policy. The "
+        "immutable floor beneath your contract cannot be amended away."
+    ),
+    input_model=AlterVerificationInput,
+    handler=_alter_verification,
+    phases=_DECLARE_PHASES,
+    permission_tier=3,
 )

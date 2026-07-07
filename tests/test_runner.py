@@ -788,3 +788,29 @@ def test_freeze_stays_empty_when_no_declared_contract(tmp_path):
     state = TaskState(goal="build a thing", task_kind="edit")
     runner._freeze_plan(state, runner.deps.workspace)
     assert state.verification_plan == []
+
+
+async def test_immutable_floor_bound_alongside_declared_contract(tmp_path):
+    # ADR-0037: a greenfield edit WITH a declared contract still gets the immutable floor bound
+    # alongside it (not replacing it), so success = floor ∧ declared.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    runner = _runner(tmp_path, _edit_registry(), [], planner=_smoke_planner("python -m py_compile a.py"))
+    state = TaskState(goal="build", task_kind="edit", files_modified={"a.py"})
+    state.freeze_verification_plan(
+        [PlannedCheck(name="declared_1", command="pytest", kind="declared", provenance="model-declared")]
+    )
+    await runner._maybe_add_smoke_floor(state, runner.deps.workspace)
+    assert [c.kind for c in (state.verification_plan or [])] == ["declared", "floor"]
+    assert any(c.kind == "floor" and "py_compile" in c.command for c in (state.verification_plan or []))
+
+
+async def test_no_floor_when_real_detected_contract(tmp_path):
+    # A real detected/cited contract (kind='test') is never floored — the floor is greenfield-only.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    runner = _runner(tmp_path, _edit_registry(), [], planner=_smoke_planner("python -m py_compile a.py"))
+    state = TaskState(goal="fix", task_kind="edit", files_modified={"a.py"})
+    state.freeze_verification_plan(
+        [PlannedCheck(name="tests", command="pytest", kind="test", provenance="ci:.github/x.yml")]
+    )
+    await runner._maybe_add_smoke_floor(state, runner.deps.workspace)
+    assert [c.kind for c in (state.verification_plan or [])] == ["test"]  # untouched, no floor

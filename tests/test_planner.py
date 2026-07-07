@@ -433,3 +433,38 @@ def test_vacuous_declared_check_flags_noops():
     assert not vacuous_declared_check("python -m pytest test_x.py")
     assert not vacuous_declared_check("ruff check .")
     assert not vacuous_declared_check("uv run pytest")  # unwrapped to pytest
+
+
+def _declared(command: str) -> PlannedCheck:
+    return PlannedCheck(name="declared_1", command=command, kind="declared", provenance="model-declared")
+
+
+def _floor(command: str) -> PlannedCheck:
+    return PlannedCheck(name="floor", command=command, kind="floor", provenance="model-smoke")
+
+
+def test_append_verification_floor_is_idempotent_and_preserves_declared():
+    # ADR-0037: the immutable floor is appended beneath the declared contract, once.
+    state = TaskState(goal="g", task_kind="edit")
+    state.freeze_verification_plan([_declared("pytest")])
+    state.append_verification_floor(_floor("python -m py_compile x.py"))
+    assert [c.kind for c in (state.verification_plan or [])] == ["declared", "floor"]
+    state.append_verification_floor(_floor("ruff check ."))  # a second attempt is a no-op
+    assert sum(1 for c in (state.verification_plan or []) if c.kind == "floor") == 1
+
+
+def test_amend_declared_contract_preserves_the_floor():
+    # ADR-0037: an amendment rewrites the declared checks but can NEVER touch the immutable floor.
+    state = TaskState(goal="g", task_kind="edit")
+    state.freeze_verification_plan([_declared("pytest")])
+    state.append_verification_floor(_floor("python -m py_compile x.py"))
+    state.amend_declared_contract([_declared("pytest -k new")])
+    assert [c.kind for c in (state.verification_plan or [])] == ["declared", "floor"]
+    assert any("py_compile" in c.command for c in (state.verification_plan or []))  # floor survived
+    assert any(c.command == "pytest -k new" for c in (state.verification_plan or []))  # declared replaced
+
+
+def test_amend_before_freeze_raises():
+    state = TaskState(goal="g", task_kind="edit")
+    with pytest.raises(RuntimeError):
+        state.amend_declared_contract([_declared("pytest")])

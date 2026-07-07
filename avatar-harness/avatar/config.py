@@ -5,6 +5,8 @@ Loaded from defaults, then overridden by environment variables (prefix
 threaded through ``RunDeps`` (§8) — never read from globals.
 """
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -57,6 +59,11 @@ class HarnessConfig(BaseSettings):
     # hang inside the gate (the wall-clock budget can't preempt an awaited approval). `None` (the
     # default) waits indefinitely — correct for a human at a REPL; an unattended run never blocks.
     approval_timeout_seconds: float | None = None
+
+    # Unattended disposition for an `alter_verification` amendment (ADR-0039). "deny" (default)
+    # keeps ADR-0016's deny-only posture; "approve" lets an autonomous run self-ratify a contract
+    # amendment — scoped to that one action, and only safe paired with held-out eval grading.
+    autonomous_amendment_policy: Literal["deny", "approve"] = "deny"
 
     # Verification commands — the OVERRIDE tier of plan resolution (§12, ADR-0007).
     # A non-empty value always wins: the user's stated contract is never overridden.

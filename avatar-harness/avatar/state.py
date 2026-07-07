@@ -196,6 +196,45 @@ class TaskState(BaseModel):
             raise RuntimeError("smoke floor applies only to an empty frozen plan")
         self.verification_plan = list(checks)
 
+    def append_verification_floor(self, check: PlannedCheck) -> None:
+        """Append the immutable non-vacuity floor beneath a model-declared contract (ADR-0037).
+
+        The floor is a harness-authored check the model can never declare or amend; it is
+        appended (`kind="floor"`) to the frozen plan so `success` always requires it *in
+        addition* to whatever the model declared. Applied at most once — a plan that already
+        carries a floor is left untouched.
+
+        Args:
+            check: The floor check to append (`kind="floor"`).
+
+        Raises:
+            RuntimeError: When no plan is frozen yet.
+        """
+        if self.verification_plan is None:
+            raise RuntimeError("cannot bind a floor before the plan is frozen")
+        if any(c.kind == "floor" for c in self.verification_plan):
+            return
+        self.verification_plan = [*self.verification_plan, check]
+
+    def amend_declared_contract(self, checks: list[PlannedCheck]) -> None:
+        """Replace the model-declared checks in the frozen plan, preserving the floor (ADR-0037).
+
+        The one sanctioned mid-run rewrite of a declared contract, applied by the runner only
+        after a gated `alter_verification` is approved. Entries whose kind is not `"declared"`
+        (the immutable floor, any detected checks) are preserved — the model can move its own
+        goalposts, never the harness's floor.
+
+        Args:
+            checks: The new declared checks (`kind="declared"`) replacing the old ones.
+
+        Raises:
+            RuntimeError: When there is no frozen plan to amend.
+        """
+        if self.verification_plan is None:
+            raise RuntimeError("cannot amend before the plan is frozen")
+        preserved = [c for c in self.verification_plan if c.kind != "declared"]
+        self.verification_plan = [*checks, *preserved]
+
     def block(self, reason: str) -> None:
         """Terminal: the task needs human input (§5 ask_user in a non-interactive run).
 

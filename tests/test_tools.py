@@ -28,8 +28,10 @@ from avatar.tools.edit import (
 from avatar.tools.filesystem import list_files, read_file
 from avatar.tools.search import search_repo
 from avatar.tools.verification import (
+    AlterVerificationInput,
     DeclaredCheckInput,
     DeclareVerificationInput,
+    alter_verification,
     declare_verification,
 )
 from avatar.workspace import Workspace
@@ -734,3 +736,28 @@ def test_declare_verification_registered_in_investigating_and_editing_tier0():
     tool = reg.get("declare_verification")
     assert tool is not None and tool.permission_tier == 0
     assert {"investigating", "editing"} <= set(tool.phases)
+
+
+def test_alter_verification_is_gated_tier3_and_buffers_replacement(tmp_path):
+    # The amendment tool is tier 3 so it routes through the approval gate (ADR-0038); its handler
+    # (reached only post-approval) validates and buffers the replacement for the runner to apply.
+    tool = default_registry().get("alter_verification")
+    assert tool is not None and tool.permission_tier == 3
+    deps = _declare_deps(tmp_path)
+    res = alter_verification.handler(
+        AlterVerificationInput(
+            checks=[DeclaredCheckInput(command="python -m pytest test_y.py")],
+            rationale="the row-collapse behavior changed by design",
+        ),
+        deps,
+    )
+    assert res.success
+    assert deps.declared_contract and deps.declared_contract[0].command == "python -m pytest test_y.py"
+
+
+def test_alter_verification_rejects_vacuous_replacement(tmp_path):
+    deps = _declare_deps(tmp_path)
+    res = alter_verification.handler(
+        AlterVerificationInput(checks=[DeclaredCheckInput(command="true")], rationale="x"), deps
+    )
+    assert res.success is False and "vacuous" in (res.error or "")
