@@ -312,7 +312,7 @@ It drives the app across four launches (fail-fast config x2, the functional UI+A
 a degraded news API, restart persistence) plus a static config-docs check; the chat stub keys
 its canned reply on which article appears in the request, so a hardcoded or reused analysis
 cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
-`docs/research/news-analyzer-eval-development-2026-07-04.md`.
+`docs/research/2026-07-04-news-analyzer-eval-development.md`.
 
 ---
 

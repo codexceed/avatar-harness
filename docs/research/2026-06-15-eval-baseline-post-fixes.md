@@ -1,7 +1,7 @@
 # Eval-0 corrected baseline — 2026-06-15 (post ADR-0019 / 0020 / 0021)
 
 The frontier-trio Eval-0 matrix re-run **after** the four fixes that the morning baseline
-([`eval-baseline-2026-06-15.md`](eval-baseline-2026-06-15.md)) surfaced. This is the first run
+([`2026-06-15-eval-baseline.md`](2026-06-15-eval-baseline.md)) surfaced. This is the first run
 where every cell is a *trustworthy* number: the model matrix runs end-to-end, the scorer
 measures the thing it claims to, and the denylist holds. It supersedes the morning baseline's
 headline numbers (which were contaminated by a tool-schema bug and an over-generous probe).

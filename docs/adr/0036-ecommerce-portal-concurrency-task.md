@@ -1,6 +1,6 @@
 # ADR 0036 — `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented 2026-07-05 (PR #99); construct validity confirmed by the 2026-07-05 7-model landscape run (see *Validation* below).
 - **Date:** 2026-07-05
 - **Deciders:** Sarthak Joshi
 - **Related:** ADR-0004 (eval harness — the probe is the deterministic grader); ADR-0020 (probe roles — this is a `success` probe); the `news-analyzer` task (7cf1e6e) established the hermetic-adaptation pattern (probe-owned stubs, pinned server-rendered UI, golden + counter-example probe validation) that this task extends to concurrency.
@@ -37,3 +37,12 @@ Probe validity is established the `news-analyzer` way, in `tests/test_evals.py`:
 - `probe_timeout_seconds` is new grading-surface schema; like all grader changes it rides the frozen-asset validation path (ADR-0024).
 - The probe's counter-example tests add ~45 s to `make test`.
 - The exact-ledger design means any future edit to the fixture catalog or probe phase plan must recompute the expected constants together (they are cross-derived; the probe docstring carries the phase→ledger map).
+
+## Validation (2026-07-05 landscape run)
+
+The task shipped (PR #99) and was exercised in the first wide capability×reliability sweep — 7 models × 6 tasks × 5 seeds (`docs/research/2026-07-05-llm-landscape.md`; artifact `evals/results/20260705T173314Z.jsonl`, heatmap `docs/research/assets/20260705T173314Z-solved-heatmap.svg`). The data vindicates the load-bearing choices:
+
+- **It is the suite's sole hard discriminator.** `pass@1 = 34 %` (12/35), against 63–100 % for the other five tasks — the only task nobody solves reliably. Best is **3/5** (`gpt-5.3-codex`, `deepseek-v4-pro` — the joint leaders); the mid-tier lands the occasional seed (`minimax` 2/5, `glm` 2/5, `gemma`/`qwen` 1/5) and `gpt-oss-120b` scores **0/5** while burning the full 60-iteration budget on two seeds. This is exactly the frontier-separating signal the task was added to provide.
+- **It discriminates on capability, not grader noise.** Of the 23 non-solved runs, only **4** are `harness_error` — transport flakes concentrated on the two weakest models (`qwen` 3, `gemma` 1), never the probe. The other 19 are genuine capability failures: the schedule-invariant assertions (Decision §2) rejecting real oversells / broken retries / stale sold-out caches / synchronous checkouts, or the app exhausting the wall/iteration budget still-broken. The "randomness lives in the probe's deterministic stub" design (Decision §1) held — no flakiness is attributable to the task itself.
+- **The heavy budgets are binding, not over-provisioned.** Every model that engages the task deeply — `deepseek`, `minimax`, `glm` — runs to the 900 s wall on nearly every seed, and one solved `qwen` run took 51 of 60 iterations. The 60-iter / 900 s-wall / 360 s-probe budgets (and the new `probe_timeout_seconds`, Decision §6) were a true enabler: a correct app scores comfortably within them (`gpt-5.3-codex` solves in 146–213 s), while a wrong one exhausts them.
+- **A known construct limit, now observed.** For the wall-bound models, wall-clock — not a probe verdict — is the terminator, so their `pass@1` cannot separate "wrong design" from "correct-but-too-slow." `codex`'s sub-4-minute solves show a correct async pipeline finishes well under budget; scoring a wall-halted app not-solved is still valid (it is genuinely not-yet-correct at halt), but future budget tuning should watch this boundary.

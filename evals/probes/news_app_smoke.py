@@ -234,7 +234,7 @@ def _ui_request(url: str, payload: dict | None = None, *, form: bool = False) ->
 
     Apps that correctly `html.escape` their output must not be punished for it — the
     construct-validity bug this fixes is measured in
-    `docs/research/news-analyzer-eval-development-2026-07-04.md` (run 2).
+    `docs/research/2026-07-04-news-analyzer-eval-development.md` (run 2).
     """
     status, body = _request(url, payload, form=form)
     return status, html.unescape(body)
