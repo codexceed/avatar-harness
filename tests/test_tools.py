@@ -27,6 +27,11 @@ from avatar.tools.edit import (
 )
 from avatar.tools.filesystem import list_files, read_file
 from avatar.tools.search import search_repo
+from avatar.tools.verification import (
+    DeclaredCheckInput,
+    DeclareVerificationInput,
+    declare_verification,
+)
 from avatar.workspace import Workspace
 
 
@@ -684,3 +689,48 @@ def test_delete_file_registered_and_editing_phase_tier1():
     assert (
         next(t for t in reg.admitted_for("editing", "edit") if t.name == "delete_file").permission_tier == 1
     )
+
+
+# --- declare_verification (ADR-0037) -----------------------------------------
+
+
+def _declare_deps(tmp_path) -> RunDeps:
+    return RunDeps(workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken())
+
+
+def test_declare_verification_buffers_valid_checks(tmp_path):
+    # A real declared check is buffered onto RunDeps as a `declared`/`model-declared` PlannedCheck
+    # for the runner to fold into the frozen plan (tools never touch TaskState).
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(checks=[DeclaredCheckInput(command="python -m pytest test_x.py")]), deps
+    )
+    assert res.success
+    assert deps.declared_contract is not None and len(deps.declared_contract) == 1
+    check = deps.declared_contract[0]
+    assert check.kind == "declared" and check.provenance == "model-declared"
+    assert check.command == "python -m pytest test_x.py"
+
+
+def test_declare_verification_rejects_vacuous_check(tmp_path):
+    # A no-op command (`true`, `echo …`) proves nothing; it's model-correctable, and nothing buffers.
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(checks=[DeclaredCheckInput(command="true")]), deps
+    )
+    assert res.success is False and "vacuous" in (res.error or "")
+    assert deps.declared_contract is None
+
+
+def test_declare_verification_requires_at_least_one_check(tmp_path):
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(DeclareVerificationInput(checks=[]), deps)
+    assert res.success is False
+    assert deps.declared_contract is None
+
+
+def test_declare_verification_registered_in_investigating_and_editing_tier0():
+    reg = default_registry()
+    tool = reg.get("declare_verification")
+    assert tool is not None and tool.permission_tier == 0
+    assert {"investigating", "editing"} <= set(tool.phases)

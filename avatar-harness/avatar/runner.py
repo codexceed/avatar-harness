@@ -472,6 +472,11 @@ class AgentRunner:
         if state.verification_plan is not None or state.task_kind == "investigate":
             return
         plan = self.planner.resolve(ws)
+        # Greenfield edit with nothing detected or cited: the model's declared contract (ADR-0037)
+        # becomes the frozen plan, if it declared one. Tiers 1-3 always win — a real detected/cited
+        # contract is never displaced by a self-declared one; the smoke floor still covers a decline.
+        if not plan and state.task_kind == "edit" and self.deps.declared_contract:
+            plan = list(self.deps.declared_contract)
         state.freeze_verification_plan(plan)
         self.deps.verification_plan = plan  # mirrored so run_tests/run_linter ride the contract
         rubric = "; ".join(f"{c.name}: `{c.command}` [{c.provenance}]" for c in plan) or "none discovered"

@@ -62,14 +62,18 @@ class PlannedCheck(BaseModel):
 
     The unit of the per-session verification plan. `provenance` names the artifact
     the command was resolved from (`config:AVATAR_TEST_COMMAND`, `ci:.github/...`,
-    `Makefile:test`, `llm:<cited path>`, `model-smoke`), so every run's rubric is
-    auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored check the
-    harness still runs itself, resolved at verification time rather than frozen up front.
+    `Makefile:test`, `llm:<cited path>`, `model-smoke`, `model-declared`), so every
+    run's rubric is auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored
+    check the harness still runs itself, resolved at verification time rather than frozen up
+    front. `declared` is a greenfield model-declared contract (ADR-0037): a real executing
+    check the model authors up front (mandatory for greenfield edits), frozen like tiers 1-3
+    but semi-frozen — amendable only through a gated action. `floor` is the immutable
+    non-vacuity anchor beneath a declared contract; the model can never amend it away.
     """
 
     name: str
     command: str
-    kind: Literal["test", "lint", "smoke"]
+    kind: Literal["test", "lint", "smoke", "declared", "floor"]
     provenance: str
 
 

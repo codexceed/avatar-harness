@@ -545,6 +545,32 @@ def effective_invocation(command: str) -> tuple[str, list[str]]:
     return "", []
 
 
+# Programs that don't exercise the project's code — a declared verification check built on one is
+# vacuous (it passes without proving anything). Rejected at declaration so a model-declared contract
+# (ADR-0037) can't be a no-op the model asserts passes. NOT exhaustive: the immutable floor (a check
+# the model can't author or amend) is the real anti-vacuity anchor; this only blocks the obvious.
+_VACUOUS_PROGRAMS = frozenset({"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["})
+
+
+def vacuous_declared_check(command: str) -> bool:
+    """Whether a model-declared verification command is vacuous (proves nothing — ADR-0037).
+
+    A check is vacuous when it is empty or its effective program (after unwrapping
+    env/`sudo`/`uv run`/`npx`/`python -m`) does not run the project's code — e.g. `true`,
+    `echo ok`, `:`. Such a command exits 0 regardless of the artifact, so it can't be a real
+    contract. This is a *lower bound* guard, not proof of adequacy: the immutable floor beneath
+    the declared contract is what ultimately anchors non-vacuity.
+
+    Args:
+        command: The declared check command to validate.
+
+    Returns:
+        `True` when the command is vacuous and must be rejected.
+    """
+    program, _args = effective_invocation(command)
+    return not program or program in _VACUOUS_PROGRAMS
+
+
 def _first_positional(args: list[str]) -> str:
     """The first non-flag argument (the sub-command/target position), or `""`.
 

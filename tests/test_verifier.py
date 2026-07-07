@@ -131,6 +131,32 @@ def test_edit_gate_gives_smoke_specific_hint_on_failing_floor(git_repo):
     assert "smoke check failed" in (report.recommended_next_action or "")
 
 
+def test_edit_gate_passes_with_declared_contract(git_repo):
+    # A greenfield model-declared contract (ADR-0037) is a required, positive-signal check:
+    # a passing declared command gates success exactly like a detected one.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [PlannedCheck(name="declared_1", command=_PASS, kind="declared", provenance="model-declared")]
+    )
+    report = Verifier(HarnessConfig()).verify(state, ws)
+    assert report.passed
+    assert any(c.name == "declared_1" and c.status == "pass" for c in report.checks)
+
+
+def test_edit_gate_fails_on_failing_declared_contract(git_repo):
+    # A failing declared check vetoes success — the harness runs it and reads the real exit code,
+    # so the model can't self-certify past a contract it declared.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [PlannedCheck(name="declared_1", command=_FAIL, kind="declared", provenance="model-declared")]
+    )
+    report = Verifier(HarnessConfig()).verify(state, ws)
+    assert report.passed is False
+    assert any(c.name == "declared_1" and c.status == "fail" for c in report.checks)
+
+
 def test_edit_gate_passes_on_clean_lint_when_no_test_target(git_repo):
     ws = Workspace(git_repo)
     state = _edit(ws)

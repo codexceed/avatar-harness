@@ -14,7 +14,7 @@ import pytest
 
 from avatar.config import HarnessConfig
 from avatar.event_types import VerificationPlanFrozen, dump_event, parse_event
-from avatar.planner import VerificationPlanner
+from avatar.planner import VerificationPlanner, vacuous_declared_check
 from avatar.state import PlannedCheck, TaskState
 from avatar.workspace import Workspace
 
@@ -421,3 +421,15 @@ def test_set_smoke_floor_rejected_before_freeze():
     state = TaskState(goal="g", task_kind="edit")  # plan is None (unfrozen)
     with pytest.raises(RuntimeError):
         state.set_smoke_floor([_smoke()])
+
+
+def test_vacuous_declared_check_flags_noops():
+    # The non-vacuity guard (ADR-0037) rejects commands that don't run the project's code,
+    # after unwrapping env/uv/npx/python -m wrappers; real check runners pass.
+    assert vacuous_declared_check("")
+    assert vacuous_declared_check("true")
+    assert vacuous_declared_check("echo done")
+    assert vacuous_declared_check(":")
+    assert not vacuous_declared_check("python -m pytest test_x.py")
+    assert not vacuous_declared_check("ruff check .")
+    assert not vacuous_declared_check("uv run pytest")  # unwrapped to pytest

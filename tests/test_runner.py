@@ -763,3 +763,28 @@ def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
     report = result.verifier_results[-1]
     assert report.passed is True
     assert any(c.name == "smoke" and c.status == "pass" for c in report.checks)
+
+
+# --- declared verification contract fold-in (ADR-0037) -----------------------
+
+
+def test_freeze_folds_in_declared_contract_when_greenfield(tmp_path):
+    # Greenfield edit (tiers 1-3 resolve nothing) with a model-declared contract on deps → the
+    # frozen plan IS the declared contract. Tiers 1-3 always win, but here there are none.
+    runner = _runner(tmp_path, _edit_registry(), [], planner=_smoke_planner(None))
+    declared = [
+        PlannedCheck(name="declared_1", command="pytest -q", kind="declared", provenance="model-declared")
+    ]
+    runner.deps.declared_contract = declared
+    state = TaskState(goal="build a thing", task_kind="edit")
+    runner._freeze_plan(state, runner.deps.workspace)
+    assert state.verification_plan == declared
+    assert runner.deps.verification_plan == declared  # mirrored for run_tests
+
+
+def test_freeze_stays_empty_when_no_declared_contract(tmp_path):
+    # Greenfield edit, model declined to declare → empty frozen plan; the smoke floor covers it.
+    runner = _runner(tmp_path, _edit_registry(), [], planner=_smoke_planner(None))
+    state = TaskState(goal="build a thing", task_kind="edit")
+    runner._freeze_plan(state, runner.deps.workspace)
+    assert state.verification_plan == []
