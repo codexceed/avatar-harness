@@ -17,8 +17,10 @@ from collections.abc import Callable, Iterator
 from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
+from textual.events import Key
+from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Input, RichLog, Static
+from textual.widgets import RichLog, Static, TextArea
 
 from avatar import (
     AgentEnd,
@@ -40,32 +42,79 @@ from avatar import (
 from jo.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
 
 
-class HistoryInput(Input):
-    """An `Input` that recalls previously submitted prompts with the ↑/↓ arrows.
+class HistoryInput(TextArea):
+    """A multi-line prompt that submits on Enter and recalls history at its edges.
 
-    The cockpit calls `remember` on every submit to append the line (de-duplicated
-    against the most recent entry). `↑` walks toward older entries, `↓` toward newer;
-    stepping past the newest restores the draft that was in progress before browsing
-    began. History is in-memory for the sitting — the journal stays the durable record.
+    Multi-line by subclassing Textual's `TextArea`: Enter submits the whole buffer (posting
+    a `HistoryInput.Submitted` message), while `Ctrl+J` / `Shift+Enter` / `Alt+Enter` insert a
+    newline. `Ctrl+J` is literally LF and is distinct from Enter on every terminal; the shift/alt
+    variants only reach us under the enhanced (kitty) keyboard protocol, so they're conveniences
+    layered on the universal `Ctrl+J` path.
 
-    Up/down are unbound on Textual's single-line `Input`, so binding them here is
-    additive (Textual merges `BINDINGS` across the MRO) and steals nothing.
+    History recall is edge-gated so it doesn't fight cursor movement in a multi-line draft: `↑`
+    recalls an older prompt only when the cursor is on the first line, `↓` a newer one only on the
+    last line; anywhere in between the arrows move the cursor. The cockpit calls `remember` on every
+    submit to append the line (de-duplicated against the most recent entry). Stepping past the newest
+    entry restores the draft that was in progress before browsing began. History is in-memory for the
+    sitting — the journal stays the durable record.
 
     Args:
         placeholder: The greyed-out prompt shown while the field is empty.
         id: The widget id (the cockpit queries `#prompt`).
     """
 
-    BINDINGS = [  # noqa: RUF012 — Textual's binding-list contract
-        Binding("up", "history_prev", show=False),
-        Binding("down", "history_next", show=False),
-    ]
+    class Submitted(Message):
+        """Posted on Enter to hand the buffer to the cockpit (a `TextArea` has no `Submitted`).
+
+        Carries `.value` so the cockpit's submit handler reads it exactly like the old
+        `Input.Submitted.value`.
+
+        Args:
+            text_area: The `HistoryInput` that produced the submission.
+            value: The full (possibly multi-line) buffer text.
+        """
+
+        def __init__(self, text_area: "HistoryInput", value: str) -> None:
+            self.value = value
+            self.input = text_area
+            super().__init__()
 
     def __init__(self, *, placeholder: str = "", id: str | None = None) -> None:
-        super().__init__(placeholder=placeholder, id=id)
+        super().__init__(text="", placeholder=placeholder, id=id, show_line_numbers=False, soft_wrap=True)
         self._history: list[str] = []
         self._cursor: int | None = None  # None ⇒ not browsing; else an index into _history
         self._draft = ""  # the in-progress line, stashed when browsing starts
+
+    async def _on_key(self, event: Key) -> None:
+        """Route keys: Enter submits, Ctrl+J/Shift+Enter/Alt+Enter newline, edge-gated ↑/↓ history.
+
+        Any other key falls through to `TextArea`'s default editing/cursor handling.
+
+        Args:
+            event: The Textual `Key` event for the pressed key.
+        """
+        key = event.key
+        if key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self, self.text))
+            return
+        if key in ("ctrl+j", "shift+enter", "alt+enter"):
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        if key == "up" and self._history and self.cursor_at_first_line:
+            event.stop()
+            event.prevent_default()
+            self.action_history_prev()
+            return
+        if key == "down" and self._history and self.cursor_at_last_line:
+            event.stop()
+            event.prevent_default()
+            self.action_history_next()
+            return
+        await super()._on_key(event)
 
     def remember(self, text: str) -> None:
         """Append a submitted prompt to history and reset the browse cursor.
@@ -79,18 +128,18 @@ class HistoryInput(Input):
         self._draft = ""
 
     def action_history_prev(self) -> None:
-        """↑ — recall the previous (older) submitted prompt, stashing the draft first."""
+        """↑ at the top edge — recall the previous (older) prompt, stashing the draft first."""
         if not self._history:
             return
         if self._cursor is None:  # entering history: remember what was being typed
-            self._draft = self.value
+            self._draft = self.text
             self._cursor = len(self._history)
         if self._cursor > 0:
             self._cursor -= 1
             self._recall(self._history[self._cursor])
 
     def action_history_next(self) -> None:
-        """↓ — move toward newer prompts; past the newest restores the stashed draft."""
+        """↓ at the bottom edge — move toward newer prompts; past the newest restores the draft."""
         if self._cursor is None:
             return
         self._cursor += 1
@@ -101,13 +150,13 @@ class HistoryInput(Input):
             self._recall(self._history[self._cursor])
 
     def _recall(self, text: str) -> None:
-        """Replace the field with `text` and park the cursor at its end.
+        """Replace the buffer with `text` and park the cursor at its end.
 
         Args:
             text: The recalled line to show.
         """
-        self.value = text
-        self.cursor_position = len(text)
+        self.text = text
+        self.move_cursor(self.document.end)
 
 
 class CockpitApp(App):
@@ -133,7 +182,7 @@ class CockpitApp(App):
 
     CSS = """
     #status { dock: top; height: 1; background: $boost; color: $text; }
-    #prompt { dock: bottom; }
+    #prompt { dock: bottom; height: auto; max-height: 8; border: none; padding: 0; }
     #transcript { height: 1fr; }
     """
 
@@ -164,7 +213,10 @@ class CockpitApp(App):
         """
         yield Static(self._status_text(), id="status")
         yield RichLog(id="transcript", highlight=False, markup=False, wrap=True)
-        yield HistoryInput(placeholder="Ask, or describe a change…", id="prompt")
+        yield HistoryInput(
+            placeholder="Ask, or describe a change… (Enter to send · Shift+Enter for newline)",
+            id="prompt",
+        )
 
     def on_mount(self) -> None:
         """Observe mode: drain the fixed stream; drive mode waits for input. Install signal handlers."""
@@ -232,7 +284,7 @@ class CockpitApp(App):
             self.outcome = None
             self.verdict = None
             self.phase = "investigating"
-            self.query_one("#prompt", Input).disabled = True  # a run is active
+            self.query_one("#prompt", HistoryInput).disabled = True  # a run is active
         elif isinstance(event, PhaseChanged):
             self.phase = event.new
         elif isinstance(event, VerificationEnd):
@@ -241,7 +293,7 @@ class CockpitApp(App):
             self._prompt_approval(event)  # announce → modal → resolve_approval (control plane)
         elif isinstance(event, AgentEnd):
             self.outcome = event.outcome
-            self.query_one("#prompt", Input).disabled = False  # ready for the next goal
+            self.query_one("#prompt", HistoryInput).disabled = False  # ready for the next goal
         self.query_one("#status", Static).update(self._status_text())
         self._write(self._format(event))
 
@@ -371,15 +423,15 @@ class CockpitApp(App):
             line += f" · verify: {'✓' if self.verdict else '⚠ failed'}"
         return line
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_history_input_submitted(self, event: HistoryInput.Submitted) -> None:
         """Route a submitted prompt: drive the REPL (drive mode) or the observe-mode callback.
 
         Args:
-            event: The Textual `Input.Submitted` message carrying the prompt text.
+            event: The `HistoryInput.Submitted` message carrying the (possibly multi-line) text.
         """
         text = event.value.strip()
         prompt = self.query_one("#prompt", HistoryInput)
-        prompt.value = ""
+        prompt.text = ""
         if not text:
             return
         prompt.remember(text)  # ↑/↓ recall — record the submitted line for this sitting
@@ -410,7 +462,7 @@ class CockpitApp(App):
             # Disable input synchronously: classification runs before AgentStart (whose
             # handler used to be the only disabler), and that window let a second goal
             # start and race the first (PR-#32 review). Re-enabled in _run_goal's finally.
-            self.query_one("#prompt", Input).disabled = True
+            self.query_one("#prompt", HistoryInput).disabled = True
             self.run_worker(self._run_goal(text), exclusive=False)
 
     def _handle_meta(self, text: str) -> None:
@@ -476,7 +528,7 @@ class CockpitApp(App):
             # lingering reference made ctrl+c keep trying to cancel a dead run instead of
             # quitting; clearing it lets action_cancel fall through to exit.
             self._session = None
-            self.query_one("#prompt", Input).disabled = False  # the REPL stays usable
+            self.query_one("#prompt", HistoryInput).disabled = False  # the REPL stays usable
             self.query_one("#status", Static).update(self._status_text())
 
     async def _run_plan_goal(self, text: str) -> None:
