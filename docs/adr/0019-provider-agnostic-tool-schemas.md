@@ -3,7 +3,7 @@
 - **Status:** Accepted — implemented 2026-06-15
 - **Date:** 2026-06-15
 - **Deciders:** Sarthak Joshi
-- **Related:** ADR-0001 (native tool calling; OpenAI-style `tools=` schemas); `HARNESS_DESIGN.md` §10 (tool definitions), §9 (`ContextBuilder` emits `input_model.model_json_schema()`). Surfaced by the first live Eval-0 baseline (`docs/research/eval-baseline-2026-06-15.md`, Finding 1).
+- **Related:** ADR-0001 (native tool calling; OpenAI-style `tools=` schemas); `HARNESS_DESIGN.md` §10 (tool definitions), §9 (`ContextBuilder` emits `input_model.model_json_schema()`). Surfaced by the first live Eval-0 baseline (`docs/research/2026-06-15-eval-baseline.md`, Finding 1).
 
 ## Context
 

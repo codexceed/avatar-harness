@@ -9,7 +9,7 @@
 > - **`#1`–`#7`** = the original *candidate articles* (e.g. `#1` "model proposes, harness disposes", `#5` "the verifier is the scorer").
 > - **`T1`–`T5`** = *prospective targets* on the self-improvement ladder (`T1` verifier integrity, `T2` scaffold-not-model, `T3` what-pass@1-hides, `T4` capstone, `T5` oscillation warm-up).
 > - **"Tier-1/2/3" / "T1 metrics"** = a *separate, unrelated* idea — the provenance tier of a number (Tier-1 = harness-native aggregate metric). **Not** article T1.
-> - Evidence base for the empirical posts lives in [`research/failure-modes.md`](research/failure-modes.md), [`research/eval-baseline-2026-06-15.md`](research/eval-baseline-2026-06-15.md), and the corrected [`research/eval-baseline-2026-06-15-post-fixes.md`](research/eval-baseline-2026-06-15-post-fixes.md).
+> - Evidence base for the empirical posts lives in [`research/failure-modes.md`](research/failure-modes.md), [`research/2026-06-15-eval-baseline.md`](research/2026-06-15-eval-baseline.md), and the corrected [`research/2026-06-15-eval-baseline-post-fixes.md`](research/2026-06-15-eval-baseline-post-fixes.md).
 
 ## Locked roadmap (Codex-cross-validated, 2026-06-16)
 
@@ -359,7 +359,7 @@ it would have been dissected publicly. So:
 4. **Comparison** (vs. Pi / opencode / Aider). Highest risk: claims about *other people's* systems; one stale detail and the thread is about your error, not your idea. Keep out of headlines; verify against their current source first.
 
 **Platform ladder (earn your way up):**
-- **Phase 0 — now, ~zero risk:** ship *artifacts* on the **personal/project blog + GitHub**. The repo, ADRs, `research/failure-modes.md`, and `research/eval-baseline-2026-06-15.md` are already publishable-grade and near-impossible to nitpick. Surface them with low-key **X threads**. Goal: establish an empirical, mechanism-first voice and a citable trail.
+- **Phase 0 — now, ~zero risk:** ship *artifacts* on the **personal/project blog + GitHub**. The repo, ADRs, `research/failure-modes.md`, and `research/2026-06-15-eval-baseline.md` are already publishable-grade and near-impossible to nitpick. Surface them with low-key **X threads**. Goal: establish an empirical, mechanism-first voice and a citable trail.
 - **Phase 1 — after 2–3 solid artifact/empirical posts:** take the *single strongest, most-verified* empirical piece to **Hacker News** (the failure-mode catalog or the Eval-0 table — concrete, reproducible, non-promotional). One at a time; let it stand on evidence.
 - **Phase 2 — after the eval methodology is mature:** **Latent Space / AI-Engineer orbit** for `#5`/`#3` and cost-per-solved; **Hugging Face** once a result file/dataset is the artifact.
 - **Phase 3 — after a *real experiment* (the oracle-gaming demo, T1/A.4):** **LessWrong / Alignment Forum**. That audience is the least forgiving of hand-waving — bring an experiment, not an argument.

@@ -7,7 +7,7 @@
 - **Related:** ADR-0004 (eval harness); ADR-0012 (wire-level mocking — this task is its first
   implementation); ADR-0020 (probe roles); `evals/tasks/news-analyzer.toml`;
   `evals/probes/news_app_smoke.py`;
-  `docs/research/news-analyzer-eval-development-2026-07-04.md` (the development-run evidence)
+  `docs/research/2026-07-04-news-analyzer-eval-development.md` (the development-run evidence)
 
 ## Context
 
