@@ -51,7 +51,12 @@ jo --auto          # keep the strict verification gate (default: conversational)
 - **Approval prompts** for `run_command` and sensitive-path calls.
 - **Conversational by default** — verification runs and is reported, but the reply isn't
   gated on it (you're the terminal authority); `--auto` keeps the strict gate.
-- **Prompt history** — `↑`/`↓` recall the prompts you submitted this sitting.
+- **Multi-line prompts** — the input box composes across lines: **Enter** sends, **Shift+Enter**
+  (or **Ctrl+J**, which works in every terminal) inserts a newline. The box grows as you type,
+  then scrolls.
+- **Prompt history** — `↑`/`↓` recall the prompts you submitted this sitting; recall is
+  **edge-gated**, so in a multi-line draft the arrows only reach history from the first/last line
+  and otherwise just move the cursor.
 - **`Ctrl+C`** copies the current selection if one is active, else interrupts the in-flight
   run — **instantly**, even mid model call (it aborts the request and frees the cockpit) —
   else quits. An external `SIGINT`/`SIGTERM` (`kill`) shuts down gracefully. To copy with your

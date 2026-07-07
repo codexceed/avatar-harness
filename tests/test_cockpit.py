@@ -138,16 +138,18 @@ async def test_history_skips_consecutive_duplicates():
     assert inp._history == ["same goal"]
 
 
-async def test_ctrl_j_inserts_newline_and_enter_submits_multiline():
-    # Enter submits; Ctrl+J inserts a newline. A goal composed across two lines reaches the
-    # callback intact (with its embedded newline), and the field clears afterward.
+@pytest.mark.parametrize("newline_key", ["ctrl+j", "shift+enter", "alt+enter"])
+async def test_newline_key_inserts_newline_and_enter_submits_multiline(newline_key):
+    # Enter submits; each of Ctrl+J / Shift+Enter / Alt+Enter inserts a newline (they share one
+    # handler branch). A goal composed across two lines reaches the callback intact (with its
+    # embedded newline), and the field clears afterward.
     seen: list[str] = []
     app = CockpitApp(ReplaySession([]), on_submit=seen.append)
     async with app.run_test() as pilot:
         inp = app.query_one("#prompt", HistoryInput)
         inp.focus()
         await pilot.press("a")
-        await pilot.press("ctrl+j")  # newline, not submit
+        await pilot.press(newline_key)  # newline, not submit
         await pilot.press("b")
         await pilot.pause()
         assert inp.text == "a\nb"  # the buffer spans two lines
@@ -174,6 +176,29 @@ async def test_arrows_move_cursor_midbuffer_and_recall_only_at_edges():
         assert inp.cursor_at_first_line  # cursor climbed to line 1
         await pilot.press("up")  # now on the first line → recall the older prompt
         assert inp.text == "old goal"
+
+
+async def test_down_arrow_moves_cursor_midbuffer_and_recalls_only_at_last_line():
+    # Symmetric to the ↑ test: in a multi-line draft, ↓ moves the cursor between lines; only when
+    # the cursor is already on the last line does ↓ step forward through history.
+    app = CockpitApp(ReplaySession([]), on_submit=lambda _t: None)
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        for line in ("first goal", "second goal"):  # seed two history entries
+            inp.text = line
+            await pilot.press("enter")
+            await pilot.pause()
+        await pilot.press("up")  # browse back into history…
+        await pilot.press("up")  # …to the oldest entry
+        assert inp.text == "first goal"
+        inp.text = "l1\nl2"  # compose a fresh two-line draft while browsing
+        inp.move_cursor(inp.document.start)  # cursor on the first line
+        await pilot.press("down")  # not the last line → move the cursor, don't advance history
+        assert inp.text == "l1\nl2"  # draft untouched
+        assert inp.cursor_at_last_line  # cursor descended to line 2
+        await pilot.press("down")  # now on the last line → step forward to the newer prompt
+        assert inp.text == "second goal"
 
 
 async def test_whitespace_only_submit_is_a_noop():

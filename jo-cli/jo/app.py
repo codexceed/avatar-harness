@@ -67,7 +67,7 @@ class HistoryInput(TextArea):
         """Posted on Enter to hand the buffer to the cockpit (a `TextArea` has no `Submitted`).
 
         Carries `.value` so the cockpit's submit handler reads it exactly like the old
-        `Input.Submitted.value`.
+        `Input.Submitted.value`; `.text_area` is the sender (Textual `Message` convention).
 
         Args:
             text_area: The `HistoryInput` that produced the submission.
@@ -76,7 +76,7 @@ class HistoryInput(TextArea):
 
         def __init__(self, text_area: "HistoryInput", value: str) -> None:
             self.value = value
-            self.input = text_area
+            self.text_area = text_area
             super().__init__()
 
     def __init__(self, *, placeholder: str = "", id: str | None = None) -> None:
