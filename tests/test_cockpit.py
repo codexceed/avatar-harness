@@ -13,8 +13,6 @@ import pytest
 
 pytest.importorskip("textual")  # the cockpit lives behind the optional [textual] extra
 
-from textual.widgets import Input
-
 from avatar.event_types import (
     AgentEnd,
     AgentStart,
@@ -88,12 +86,12 @@ async def test_input_submit_invokes_callback():
     seen: list[str] = []
     app = CockpitApp(ReplaySession([]), on_submit=seen.append)
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", HistoryInput)
         inp.focus()
-        inp.value = "explain the loop"
+        inp.text = "explain the loop"
         await pilot.press("enter")
         await pilot.pause()
-        assert app.query_one("#prompt", Input).value == ""  # input cleared after submit
+        assert app.query_one("#prompt", HistoryInput).text == ""  # input cleared after submit
     assert seen == ["explain the loop"]  # the prompt reached the submit callback once
 
 
@@ -106,20 +104,20 @@ async def test_up_arrow_recalls_prompt_history():
         inp = app.query_one("#prompt", HistoryInput)
         inp.focus()
         for line in ("first goal", "second goal"):
-            inp.value = line
+            inp.text = line
             await pilot.press("enter")
             await pilot.pause()
-        inp.value = "draft"  # a fresh, unsubmitted line
+        inp.text = "draft"  # a fresh, unsubmitted line
         await pilot.press("up")
-        assert inp.value == "second goal"  # newest first
+        assert inp.text == "second goal"  # newest first
         await pilot.press("up")
-        assert inp.value == "first goal"  # then older
+        assert inp.text == "first goal"  # then older
         await pilot.press("up")
-        assert inp.value == "first goal"  # clamped at the oldest entry
+        assert inp.text == "first goal"  # clamped at the oldest entry
         await pilot.press("down")
-        assert inp.value == "second goal"
+        assert inp.text == "second goal"
         await pilot.press("down")
-        assert inp.value == "draft"  # past the newest → the stashed draft returns
+        assert inp.text == "draft"  # past the newest → the stashed draft returns
     assert seen == ["first goal", "second goal"]
 
 
@@ -130,14 +128,91 @@ async def test_history_skips_consecutive_duplicates():
         inp = app.query_one("#prompt", HistoryInput)
         inp.focus()
         for _ in range(3):
-            inp.value = "same goal"
+            inp.text = "same goal"
             await pilot.press("enter")
             await pilot.pause()
         await pilot.press("up")
-        assert inp.value == "same goal"
+        assert inp.text == "same goal"
         await pilot.press("up")
-        assert inp.value == "same goal"  # only one entry — no duplicate stack to walk
+        assert inp.text == "same goal"  # only one entry — no duplicate stack to walk
     assert inp._history == ["same goal"]
+
+
+@pytest.mark.parametrize("newline_key", ["ctrl+j", "shift+enter", "alt+enter"])
+async def test_newline_key_inserts_newline_and_enter_submits_multiline(newline_key):
+    # Enter submits; each of Ctrl+J / Shift+Enter / Alt+Enter inserts a newline (they share one
+    # handler branch). A goal composed across two lines reaches the callback intact (with its
+    # embedded newline), and the field clears afterward.
+    seen: list[str] = []
+    app = CockpitApp(ReplaySession([]), on_submit=seen.append)
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        await pilot.press("a")
+        await pilot.press(newline_key)  # newline, not submit
+        await pilot.press("b")
+        await pilot.pause()
+        assert inp.text == "a\nb"  # the buffer spans two lines
+        await pilot.press("enter")  # now submit the whole block
+        await pilot.pause()
+        assert inp.text == ""  # cleared after submit
+    assert seen == ["a\nb"]  # the multi-line goal reached the callback intact
+
+
+async def test_arrows_move_cursor_midbuffer_and_recall_only_at_edges():
+    # In a multi-line draft, ↑ moves the cursor between lines; only when the cursor is already
+    # on the first line does ↑ recall history instead (so multi-line editing isn't hijacked).
+    app = CockpitApp(ReplaySession([]), on_submit=lambda _t: None)
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        inp.text = "old goal"  # seed one history entry
+        await pilot.press("enter")
+        await pilot.pause()
+        inp.text = "l1\nl2"  # a fresh two-line draft
+        inp.move_cursor(inp.document.end)  # cursor on the last line
+        await pilot.press("up")  # not the first line → move the cursor, don't recall
+        assert inp.text == "l1\nl2"  # draft untouched
+        assert inp.cursor_at_first_line  # cursor climbed to line 1
+        await pilot.press("up")  # now on the first line → recall the older prompt
+        assert inp.text == "old goal"
+
+
+async def test_down_arrow_moves_cursor_midbuffer_and_recalls_only_at_last_line():
+    # Symmetric to the ↑ test: in a multi-line draft, ↓ moves the cursor between lines; only when
+    # the cursor is already on the last line does ↓ step forward through history.
+    app = CockpitApp(ReplaySession([]), on_submit=lambda _t: None)
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        for line in ("first goal", "second goal"):  # seed two history entries
+            inp.text = line
+            await pilot.press("enter")
+            await pilot.pause()
+        await pilot.press("up")  # browse back into history…
+        await pilot.press("up")  # …to the oldest entry
+        assert inp.text == "first goal"
+        inp.text = "l1\nl2"  # compose a fresh two-line draft while browsing
+        inp.move_cursor(inp.document.start)  # cursor on the first line
+        await pilot.press("down")  # not the last line → move the cursor, don't advance history
+        assert inp.text == "l1\nl2"  # draft untouched
+        assert inp.cursor_at_last_line  # cursor descended to line 2
+        await pilot.press("down")  # now on the last line → step forward to the newer prompt
+        assert inp.text == "second goal"
+
+
+async def test_whitespace_only_submit_is_a_noop():
+    # A buffer that strips to empty (blank lines / spaces) must not launch a goal.
+    seen: list[str] = []
+    app = CockpitApp(ReplaySession([]), on_submit=seen.append)
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", HistoryInput)
+        inp.focus()
+        inp.text = "  \n  "
+        await pilot.press("enter")
+        await pilot.pause()
+        assert inp.text == ""  # field still clears
+    assert seen == []  # ...but nothing was submitted
 
 
 async def test_ctrl_c_copies_active_selection_instead_of_quitting():
@@ -283,7 +358,7 @@ async def test_agent_end_marks_run_complete():
     app = CockpitApp(ReplaySession(events))
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        assert app.query_one("#prompt", Input).disabled is False  # re-enabled for the next goal
+        assert app.query_one("#prompt", HistoryInput).disabled is False  # re-enabled for the next goal
         assert "success" in app._status_text()
     assert app.outcome == "success"
 

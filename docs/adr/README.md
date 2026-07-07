@@ -42,6 +42,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0034](0034-model-intrinsic-guardrail-capability-probe.md) | Measure the model's intrinsic guardrail capability, independent of the harness | Proposed |
 | [0035](0035-news-analyzer-task-contract.md) | The `news-analyzer` task contract: hermetic case-study adaptation, server-rendered UI, ops ergonomics as graded surface | Accepted — implemented 2026-07-05 (PR #97) |
 | [0036](0036-ecommerce-portal-concurrency-task.md) | `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions | Accepted — implemented 2026-07-05 (PR #99); validated by the 7-model landscape run |
+| [0037](0037-multiline-prompt-input.md) | Multi-line prompt input: a `TextArea` with edge-gated history and a universal `Ctrl+J` newline (`Shift/Alt+Enter` as kitty-only conveniences) | Accepted — implemented 2026-07-07 (PR #105) |
 
 ## Conventions
 
