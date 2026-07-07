@@ -472,7 +472,7 @@ class AgentRunner:
         if state.verification_plan is not None or state.task_kind == "investigate":
             return
         plan = self.planner.resolve(ws)
-        # Greenfield edit with nothing detected or cited: the model's declared contract (ADR-0037)
+        # Greenfield edit with nothing detected or cited: the model's declared contract (ADR-0038)
         # becomes the frozen plan, if it declared one. Tiers 1-3 always win — a real detected/cited
         # contract is never displaced by a self-declared one; the smoke floor still covers a decline.
         if not plan and state.task_kind == "edit" and self.deps.declared_contract:
@@ -652,7 +652,7 @@ class AgentRunner:
             return
         plan = state.verification_plan or []
         # Greenfield = tiers 1-3 found nothing (empty plan) OR the model declared the whole contract
-        # (ADR-0037). A real detected/cited contract (any non-declared check) is never floored.
+        # (ADR-0038). A real detected/cited contract (any non-declared check) is never floored.
         if plan and not all(c.kind == "declared" for c in plan):
             return
         state.smoke_floor_attempted = True
@@ -663,7 +663,7 @@ class AgentRunner:
             # Decline case (ADR-0014): the model declared nothing — the smoke floor is the contract.
             state.set_smoke_floor([check])
         else:
-            # Declared case (ADR-0037): the floor is the immutable anchor beneath the declared contract,
+            # Declared case (ADR-0038): the floor is the immutable anchor beneath the declared contract,
             # so a later (gated) amendment can never weaken `success` below "it compiles/parses".
             state.append_verification_floor(
                 PlannedCheck(name="floor", command=check.command, kind="floor", provenance=check.provenance)
@@ -679,7 +679,7 @@ class AgentRunner:
         self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=rubric))
 
     def _apply_amendment(self, state: TaskState) -> None:
-        """Apply an approved `alter_verification`: rewrite the declared contract, floor preserved (ADR-0037).
+        """Apply an approved `alter_verification`: rewrite the declared contract, floor preserved (ADR-0038).
 
         Reached only after the gated tool executed — i.e. the gate approved it (an attended human,
         or the ADR-0039 scoped auto-approve). The immutable floor is never touched; the amended

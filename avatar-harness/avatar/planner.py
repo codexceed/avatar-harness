@@ -547,13 +547,13 @@ def effective_invocation(command: str) -> tuple[str, list[str]]:
 
 # Programs that don't exercise the project's code — a declared verification check built on one is
 # vacuous (it passes without proving anything). Rejected at declaration so a model-declared contract
-# (ADR-0037) can't be a no-op the model asserts passes. NOT exhaustive: the immutable floor (a check
+# (ADR-0038) can't be a no-op the model asserts passes. NOT exhaustive: the immutable floor (a check
 # the model can't author or amend) is the real anti-vacuity anchor; this only blocks the obvious.
 _VACUOUS_PROGRAMS = frozenset({"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["})
 
 
 def vacuous_declared_check(command: str) -> bool:
-    """Whether a model-declared verification command is vacuous (proves nothing — ADR-0037).
+    """Whether a model-declared verification command is vacuous (proves nothing — ADR-0038).
 
     A check is vacuous when it is empty or its effective program (after unwrapping
     env/`sudo`/`uv run`/`npx`/`python -m`) does not run the project's code — e.g. `true`,

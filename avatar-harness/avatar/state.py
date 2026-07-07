@@ -65,7 +65,7 @@ class PlannedCheck(BaseModel):
     `Makefile:test`, `llm:<cited path>`, `model-smoke`, `model-declared`), so every
     run's rubric is auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored
     check the harness still runs itself, resolved at verification time rather than frozen up
-    front. `declared` is a greenfield model-declared contract (ADR-0037): a real executing
+    front. `declared` is a greenfield model-declared contract (ADR-0038): a real executing
     check the model authors up front (mandatory for greenfield edits), frozen like tiers 1-3
     but semi-frozen — amendable only through a gated action. `floor` is the immutable
     non-vacuity anchor beneath a declared contract; the model can never amend it away.
@@ -197,7 +197,7 @@ class TaskState(BaseModel):
         self.verification_plan = list(checks)
 
     def append_verification_floor(self, check: PlannedCheck) -> None:
-        """Append the immutable non-vacuity floor beneath a model-declared contract (ADR-0037).
+        """Append the immutable non-vacuity floor beneath a model-declared contract (ADR-0038).
 
         The floor is a harness-authored check the model can never declare or amend; it is
         appended (`kind="floor"`) to the frozen plan so `success` always requires it *in
@@ -217,7 +217,7 @@ class TaskState(BaseModel):
         self.verification_plan = [*self.verification_plan, check]
 
     def amend_declared_contract(self, checks: list[PlannedCheck]) -> None:
-        """Replace the model-declared checks in the frozen plan, preserving the floor (ADR-0037).
+        """Replace the model-declared checks in the frozen plan, preserving the floor (ADR-0038).
 
         The one sanctioned mid-run rewrite of a declared contract, applied by the runner only
         after a gated `alter_verification` is approved. Entries whose kind is not `"declared"`

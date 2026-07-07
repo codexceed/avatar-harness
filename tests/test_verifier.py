@@ -132,7 +132,7 @@ def test_edit_gate_gives_smoke_specific_hint_on_failing_floor(git_repo):
 
 
 def test_edit_gate_passes_with_declared_contract(git_repo):
-    # A greenfield model-declared contract (ADR-0037) is a required, positive-signal check:
+    # A greenfield model-declared contract (ADR-0038) is a required, positive-signal check:
     # a passing declared command gates success exactly like a detected one.
     ws = Workspace(git_repo)
     state = _edit(ws)

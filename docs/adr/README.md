@@ -42,9 +42,9 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0034](0034-model-intrinsic-guardrail-capability-probe.md) | Measure the model's intrinsic guardrail capability, independent of the harness | Proposed |
 | [0035](0035-news-analyzer-task-contract.md) | The `news-analyzer` task contract: hermetic case-study adaptation, server-rendered UI, ops ergonomics as graded surface | Accepted — implemented 2026-07-05 (PR #97) |
 | [0036](0036-ecommerce-portal-concurrency-task.md) | `ecommerce-portal`: a concurrency/ACID eval task scored by schedule-invariant assertions | Accepted — implemented 2026-07-05 (PR #99); validated by the 7-model landscape run |
-| [0037](0037-model-declared-semi-frozen-verification-contract.md) | Model-declared semi-frozen verification contract + immutable floor (supersedes greenfield disposition of 0014) | Proposed |
-| [0038](0038-scoped-autonomous-amendment-disposition.md) | Scoped autonomous amendment disposition: config-gated auto-approve of contract amendments only (extends 0016) | Proposed |
-| [0039](0039-held-out-verified-vs-self-reported-success.md) | Held-out-verified vs self-reported success; wire the ADR-0011 D3 held-out oracle | Proposed |
+| [0038](0038-model-declared-semi-frozen-verification-contract.md) | Model-declared semi-frozen verification contract + immutable floor (supersedes greenfield disposition of 0014) | Proposed |
+| [0039](0039-scoped-autonomous-amendment-disposition.md) | Scoped autonomous amendment disposition: config-gated auto-approve of contract amendments only (extends 0016) | Proposed |
+| [0040](0040-held-out-verified-vs-self-reported-success.md) | Held-out-verified vs self-reported success; wire the ADR-0011 D3 held-out oracle | Proposed |
 
 ## Conventions
 

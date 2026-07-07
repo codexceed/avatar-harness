@@ -693,7 +693,7 @@ def test_delete_file_registered_and_editing_phase_tier1():
     )
 
 
-# --- declare_verification (ADR-0037) -----------------------------------------
+# --- declare_verification (ADR-0038) -----------------------------------------
 
 
 def _declare_deps(tmp_path) -> RunDeps:
@@ -739,7 +739,7 @@ def test_declare_verification_registered_in_investigating_and_editing_tier0():
 
 
 def test_alter_verification_is_gated_tier3_and_buffers_replacement(tmp_path):
-    # The amendment tool is tier 3 so it routes through the approval gate (ADR-0038); its handler
+    # The amendment tool is tier 3 so it routes through the approval gate (ADR-0039); its handler
     # (reached only post-approval) validates and buffers the replacement for the runner to apply.
     tool = default_registry().get("alter_verification")
     assert tool is not None and tool.permission_tier == 3

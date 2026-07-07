@@ -424,7 +424,7 @@ def test_set_smoke_floor_rejected_before_freeze():
 
 
 def test_vacuous_declared_check_flags_noops():
-    # The non-vacuity guard (ADR-0037) rejects commands that don't run the project's code,
+    # The non-vacuity guard (ADR-0038) rejects commands that don't run the project's code,
     # after unwrapping env/uv/npx/python -m wrappers; real check runners pass.
     assert vacuous_declared_check("")
     assert vacuous_declared_check("true")
@@ -444,7 +444,7 @@ def _floor(command: str) -> PlannedCheck:
 
 
 def test_append_verification_floor_is_idempotent_and_preserves_declared():
-    # ADR-0037: the immutable floor is appended beneath the declared contract, once.
+    # ADR-0038: the immutable floor is appended beneath the declared contract, once.
     state = TaskState(goal="g", task_kind="edit")
     state.freeze_verification_plan([_declared("pytest")])
     state.append_verification_floor(_floor("python -m py_compile x.py"))
@@ -454,7 +454,7 @@ def test_append_verification_floor_is_idempotent_and_preserves_declared():
 
 
 def test_amend_declared_contract_preserves_the_floor():
-    # ADR-0037: an amendment rewrites the declared checks but can NEVER touch the immutable floor.
+    # ADR-0038: an amendment rewrites the declared checks but can NEVER touch the immutable floor.
     state = TaskState(goal="g", task_kind="edit")
     state.freeze_verification_plan([_declared("pytest")])
     state.append_verification_floor(_floor("python -m py_compile x.py"))

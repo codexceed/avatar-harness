@@ -1,4 +1,4 @@
-"""Verification-contract tools: `declare_verification` (§10, ADR-0037).
+"""Verification-contract tools: `declare_verification` (§10, ADR-0038).
 
 Greenfield edit tasks declare nothing the planner can detect or cite, so the model authors
 its own **real** verification contract — executing checks the harness still runs itself and
@@ -20,7 +20,7 @@ _DECLARE_PHASES = frozenset({"investigating", "editing"})
 
 
 class DeclaredCheckInput(BaseModel):
-    """One check in a model-declared verification contract (ADR-0037)."""
+    """One check in a model-declared verification contract (ADR-0038)."""
 
     command: str = Field(description="A shell command that runs the code and exits non-zero if broken.")
     kind: str = Field(default="test", description="'test' or 'lint' — the slot this check fills.")
@@ -40,7 +40,7 @@ class AlterVerificationInput(BaseModel):
 
 
 def _validate_checks(checks: list[DeclaredCheckInput]) -> tuple[list[PlannedCheck], str]:
-    """Validate declared/amended checks and build their `PlannedCheck`s (ADR-0037).
+    """Validate declared/amended checks and build their `PlannedCheck`s (ADR-0038).
 
     Args:
         checks: The model-supplied checks to validate.

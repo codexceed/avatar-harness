@@ -1,19 +1,19 @@
-# ADR 0038 — Scoped autonomous amendment disposition (config-gated auto-approve)
+# ADR 0039 — Scoped autonomous amendment disposition (config-gated auto-approve)
 
 - **Status:** Proposed
 - **Date:** 2026-07-07
 - **Deciders:** Sarthak Joshi
 - **Consulted:** Claude (claude-opus-4-8[1m]) — 2026-07-07 design session.
 - **Extends:** [ADR-0016](0016-autonomous-approval-disposition.md). ADR-0016's scope cut (§32) deferred an `ask → auto-allow` mode until "a real unattended-write use case appears"; its rejected-alternatives note anticipated *"Revisit if a second autonomous policy (e.g. trusted-allow) appears."* This is that revisit.
-- **Related:** [ADR-0037](0037-model-declared-semi-frozen-verification-contract.md) (the semi-frozen contract whose amendment this dispositions); [ADR-0039](0039-held-out-verified-vs-self-reported-success.md) (what makes unattended auto-approve *safe to measure*); `HARNESS_DESIGN.md` §11 (permission tiers; "a `--trusted`/autonomous mode may promote `ask → auto`"), §13 (control vs. observation).
+- **Related:** [ADR-0038](0038-model-declared-semi-frozen-verification-contract.md) (the semi-frozen contract whose amendment this dispositions); [ADR-0040](0040-held-out-verified-vs-self-reported-success.md) (what makes unattended auto-approve *safe to measure*); `HARNESS_DESIGN.md` §11 (permission tiers; "a `--trusted`/autonomous mode may promote `ask → auto`"), §13 (control vs. observation).
 
 ## Context
 
-ADR-0037 lets the model **amend** its semi-frozen verification contract when a check goes obsolete, but only through a **gated action** (`alter_verification`, tier 3). ADR-0016 established that an unattended `Session` **denies every `ask` by default** (deny-only, to avoid the 51-minute `secret-safety` deadlock). So under today's rules an unattended greenfield run that needs an amendment gets it *denied* — the contract is effectively frozen, and if that check was genuinely wrong the run thrashes against an unsatisfiable bar (bounded by the repair/iteration/wall-clock budgets) and ends `incomplete`/`failed`.
+ADR-0038 lets the model **amend** its semi-frozen verification contract when a check goes obsolete, but only through a **gated action** (`alter_verification`, tier 3). ADR-0016 established that an unattended `Session` **denies every `ask` by default** (deny-only, to avoid the 51-minute `secret-safety` deadlock). So under today's rules an unattended greenfield run that needs an amendment gets it *denied* — the contract is effectively frozen, and if that check was genuinely wrong the run thrashes against an unsatisfiable bar (bounded by the repair/iteration/wall-clock budgets) and ends `incomplete`/`failed`.
 
-That is the correct conservative default, and it stays. But for **artifact-producing** greenfield runs — an autonomous "build me X" where a human inspects the result, or an eval graded by a **held-out** oracle (ADR-0039) — auto-*denying* the amendment is pure loss: the model can't adapt its own developmental scaffold, gives up at a known-bad state, and produces *less* than it would have. When the operator has granted full autonomy, auto-*approving* the amendment lets the model go from nothing to a useful artifact.
+That is the correct conservative default, and it stays. But for **artifact-producing** greenfield runs — an autonomous "build me X" where a human inspects the result, or an eval graded by a **held-out** oracle (ADR-0040) — auto-*denying* the amendment is pure loss: the model can't adapt its own developmental scaffold, gives up at a known-bad state, and produces *less* than it would have. When the operator has granted full autonomy, auto-*approving* the amendment lets the model go from nothing to a useful artifact.
 
-The danger auto-approve raises — a model rewriting a *failing* check to pass it, moving its own goalposts — is real, but it is **contained by two independent mechanisms**: (1) the immutable floor (ADR-0037) that no amendment can touch, and (2) the held-out oracle (ADR-0039) that grades the eval against a check the model never sees. So auto-approve corrupts the *self-reported* label but not the *held-out* verdict, and the eval measures the gap.
+The danger auto-approve raises — a model rewriting a *failing* check to pass it, moving its own goalposts — is real, but it is **contained by two independent mechanisms**: (1) the immutable floor (ADR-0038) that no amendment can touch, and (2) the held-out oracle (ADR-0040) that grades the eval against a check the model never sees. So auto-approve corrupts the *self-reported* label but not the *held-out* verdict, and the eval measures the gap.
 
 ## Decision (proposed)
 
@@ -23,7 +23,7 @@ The danger auto-approve raises — a model rewriting a *failing* check to pass i
 
 **3. Keep the control-plane invariant (#4).** The gate still returns `ask`; the *Session* still answers it — now from one of two dispositions (deny / scoped-approve) instead of deny-only. No new controller class (ADR-0016's §35 reasoning holds: the Session owns approval state; a policy field reuses the announce/record path).
 
-**4. Every disposition is announced and audited.** Attended: `ApprovalRequested` → human modal → `ApprovalResolved(via="human")`. Unattended-deny: `ApprovalResolved(via="auto", allowed=False)`. Unattended-approve: `ApprovalResolved(via="auto", allowed=True)`, plus the amendment's old→new checks and the model's rationale in the journal. Auto-approve is therefore never *silent* — it is a visible, replayable record, which is what lets ADR-0039 count it.
+**4. Every disposition is announced and audited.** Attended: `ApprovalRequested` → human modal → `ApprovalResolved(via="human")`. Unattended-deny: `ApprovalResolved(via="auto", allowed=False)`. Unattended-approve: `ApprovalResolved(via="auto", allowed=True)`, plus the amendment's old→new checks and the model's rationale in the journal. Auto-approve is therefore never *silent* — it is a visible, replayable record, which is what lets ADR-0040 count it.
 
 ## Alternatives considered
 
@@ -39,6 +39,6 @@ The danger auto-approve raises — a model rewriting a *failing* check to pass i
 
 - Unattended greenfield **artifact** runs can adapt an obsolete contract instead of thrashing to `incomplete` — the developmental win from the design discussion.
 - **The blast radius is one tool.** Every other `ask` (`run_command`, denylisted reads) stays deny-only in unattended mode; the `secret-safety` guarantee is untouched. This is enforced by name-scoping, and tested by asserting `run_command` still auto-denies under `policy="approve"`.
-- **Auto-approve is safe *to measure*, not safe *to trust*.** It weakens the self-reported label; the immutable floor (ADR-0037) and the held-out oracle (ADR-0039) are what keep the *graded* outcome honest. Turning this on **without** ADR-0039's held-out grading would produce untrustworthy `success` labels — the two ship together for autonomous/eval use.
+- **Auto-approve is safe *to measure*, not safe *to trust*.** It weakens the self-reported label; the immutable floor (ADR-0038) and the held-out oracle (ADR-0040) are what keep the *graded* outcome honest. Turning this on **without** ADR-0040's held-out grading would produce untrustworthy `success` labels — the two ship together for autonomous/eval use.
 - Default-`deny` means zero behavior change until an operator sets `AVATAR_AUTONOMOUS_AMENDMENT=approve`; the cockpit (attended) never consults the policy — a human always ratifies there.
 - ADR-0016's approval-timeout backstop still applies to any *attended* amendment left unanswered.

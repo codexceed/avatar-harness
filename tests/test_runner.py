@@ -765,7 +765,7 @@ def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
     assert any(c.name == "smoke" and c.status == "pass" for c in report.checks)
 
 
-# --- declared verification contract fold-in (ADR-0037) -----------------------
+# --- declared verification contract fold-in (ADR-0038) -----------------------
 
 
 def test_freeze_folds_in_declared_contract_when_greenfield(tmp_path):
@@ -791,7 +791,7 @@ def test_freeze_stays_empty_when_no_declared_contract(tmp_path):
 
 
 async def test_immutable_floor_bound_alongside_declared_contract(tmp_path):
-    # ADR-0037: a greenfield edit WITH a declared contract still gets the immutable floor bound
+    # ADR-0038: a greenfield edit WITH a declared contract still gets the immutable floor bound
     # alongside it (not replacing it), so success = floor ∧ declared.
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     runner = _runner(tmp_path, _edit_registry(), [], planner=_smoke_planner("python -m py_compile a.py"))
