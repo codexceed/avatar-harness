@@ -74,6 +74,28 @@ async def test_approval_modal_shows_exact_command_up_front():
         assert modal.query_one("#approval_command", Static).display is not False  # shown, not toggled
 
 
+async def test_approval_modal_renders_amendment_legibly():
+    # An alter_verification amendment (ADR-0038/0039) shows the rationale + proposed checks — not a
+    # raw args dict — so a human can tell a genuine design change from a real failure papered over.
+    host = _Host(
+        ApprovalModal(
+            tool="alter_verification",
+            reason="tier 3",
+            tool_input={
+                "checks": [{"command": "python -m pytest test_y.py", "kind": "test"}],
+                "rationale": "the row-collapse behavior changed by design",
+            },
+        )
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        modal = cast(ApprovalModal, host.screen)
+        text = modal._command_text()
+        assert "row-collapse behavior changed by design" in text  # the obsolescence rationale
+        assert "python -m pytest test_y.py" in text  # the proposed replacement check
+        assert "immutable floor" in text  # the un-amendable anchor is surfaced
+
+
 async def test_approval_modal_deny():
     host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
     async with host.run_test() as pilot:

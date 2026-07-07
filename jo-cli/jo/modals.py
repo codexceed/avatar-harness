@@ -114,7 +114,12 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
             The dialog container holding the prompt, detail, buttons, and hint widgets.
         """
         with VerticalScroll(id="approval_dialog"):
-            yield Static(f"{self.tool} wants to run — {self.reason}", id="approval_prompt")
+            prompt = (
+                f"{self.tool} — the model wants to AMEND its verification contract"
+                if self.tool == "alter_verification"
+                else f"{self.tool} wants to run — {self.reason}"
+            )
+            yield Static(prompt, id="approval_prompt")
             yield Static(self._command_text(), id="approval_command")  # the exact command, always shown
             yield Static(str(self.tool_input), id="approval_detail")
             with Horizontal(id="approval_buttons"):
@@ -159,14 +164,35 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
     def _command_text(self) -> str:
         """The exact thing being approved, shown up front.
 
-        A command tool's `command` is shown verbatim (`$ <command>`); any other tool's
-        call shows its arguments dict, so the human always sees precisely what will run.
+        A command tool's `command` is shown verbatim (`$ <command>`); an `alter_verification`
+        amendment gets a legible rationale + proposed-checks rendering (ADR-0038/0039); any other
+        tool's call shows its arguments dict, so the human always sees precisely what will run.
 
         Returns:
             The command line (or the arguments) to display.
         """
+        if self.tool == "alter_verification":
+            return self._amendment_text()
         command = self.tool_input.get("command")
         return f"$ {command}" if command is not None else str(self.tool_input)
+
+    def _amendment_text(self) -> str:
+        """Render a verification-contract amendment so the human ratifies, not rubber-stamps.
+
+        Surfaces the model's obsolescence rationale and the proposed replacement checks — the
+        signal a reviewer needs to tell a genuine design change from a real failure being papered
+        over. The immutable floor is never amendable, so it is noted but not up for approval.
+
+        Returns:
+            The multi-line amendment summary to display.
+        """
+        rationale = self.tool_input.get("rationale", "")
+        checks = self.tool_input.get("checks") or []
+        lines = [f"Rationale: {rationale}", "", "Proposed contract:"]
+        lines += [f"  $ {c.get('command', c) if isinstance(c, dict) else c}" for c in checks]
+        lines.append("")
+        lines.append("(The immutable floor beneath the contract cannot be amended away.)")
+        return "\n".join(lines)
 
 
 class DiffModal(ModalScreen[None]):
