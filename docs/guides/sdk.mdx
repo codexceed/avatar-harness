@@ -180,7 +180,7 @@ local `.env`):
 | `AVATAR_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint. |
 | `AVATAR_WORKSPACE_ROOT` | `.` | The repo the agent operates on. |
 | `AVATAR_MAX_ITERATIONS` | `50` | Iteration budget → `incomplete`. |
-| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `600` | Whole-run timeout → `incomplete`. |
+| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `1800` | Whole-run timeout → `incomplete`. |
 | `AVATAR_MAX_CONSECUTIVE_FAILURES` | `5` | Thrash guard (tool errors in a row) → `incomplete`. |
 | `AVATAR_MAX_REPAIR_ATTEMPTS` | `3` | Verification rejections in a row → `failed`. |
 | `AVATAR_MAX_CONTEXT_TOKENS` | `100000` | Hard bound on the per-turn context packet. |
