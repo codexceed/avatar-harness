@@ -703,7 +703,7 @@ dependencies = [
 requires-dist = [
     { name = "avatar-harness", extras = ["openai"], editable = "avatar-harness" },
     { name = "rich", specifier = ">=13" },
-    { name = "textual", specifier = ">=0.50" },
+    { name = "textual", specifier = ">=8" },
 ]
 
 [[package]]

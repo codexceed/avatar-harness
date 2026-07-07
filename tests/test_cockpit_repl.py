@@ -74,7 +74,7 @@ async def _type_and_send(pilot, app, text: str) -> None:
     """Type `text` into the prompt and submit it."""
     inp = app.query_one("#prompt")
     inp.focus()
-    inp.value = text
+    inp.text = text
     await pilot.press("enter")
     await pilot.pause()
 
