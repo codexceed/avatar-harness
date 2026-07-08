@@ -303,7 +303,10 @@ def test_phase_advances_to_editing_on_first_edit_intent(git_repo):
     decisions = [ModelDecision(action=ToolCall(name="str_replace", input=_FIX))]
     state = TaskState(goal="fix add()", task_kind="edit")
     assert state.phase == "investigating"
-    _runner(git_repo, _edit_registry(), decisions, lint_command="", max_iterations=1).run(state)
+    # Gate off (ADR-0038): this test isolates the phase advance, not the greenfield declaration gate.
+    _runner(
+        git_repo, _edit_registry(), decisions, lint_command="", max_iterations=1, max_declaration_nudges=0
+    ).run(state)
     assert state.phase in {"editing", "verifying"}  # advanced past investigating on the edit
 
 
@@ -625,7 +628,8 @@ def test_runner_journals_frozen_plan_as_typed_event(git_repo):
 def test_smoke_floor_journaled_to_typed_sink(git_repo):
     # The late-bound floor must reach the typed sink too, not just the legacy emitter, so
     # journal/cockpit/eval replay see the real rubric — not the earlier empty plan (PR #50).
-    config = HarnessConfig()
+    # Gate off (ADR-0038): this test isolates the smoke-floor journaling, not the declaration gate.
+    config = HarnessConfig(max_declaration_nudges=0)
     deps = RunDeps(workspace=Workspace(git_repo), config=config, cancellation=CancellationToken())
     sink = _SinkStub()
     reg = _edit_registry()
@@ -679,9 +683,9 @@ def test_smoke_floor_attempted_at_most_once_across_repair(git_repo):
         ModelDecision(action=FinalAnswer(answer="still done")),
         ModelDecision(action=FinalAnswer(answer="really done")),
     ]
-    result = _runner(git_repo, reg, decisions, planner=planner, max_repair_attempts=2).run(
-        TaskState(goal="write a module", task_kind="edit")
-    )
+    result = _runner(
+        git_repo, reg, decisions, planner=planner, max_repair_attempts=2, max_declaration_nudges=0
+    ).run(TaskState(goal="write a module", task_kind="edit"))
     assert result.outcome == "failed"  # no contract and the floor declined
     assert calls["n"] == 1  # attempted exactly once, not once per repair iteration
 
@@ -750,9 +754,14 @@ def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
     reg = _edit_registry()
     reg.register(write_file)
     state = TaskState(goal="write a module", task_kind="edit")
-    result = _runner(git_repo, reg, decisions, planner=_smoke_planner("python -m py_compile main.py")).run(
-        state
-    )
+    # Gate off (ADR-0038): this test isolates the ADR-0014 smoke floor, not the declaration gate.
+    result = _runner(
+        git_repo,
+        reg,
+        decisions,
+        planner=_smoke_planner("python -m py_compile main.py"),
+        max_declaration_nudges=0,
+    ).run(state)
 
     assert result.outcome == "success"  # verified on the model-authored floor, run by the harness
     assert state.verification_plan == [

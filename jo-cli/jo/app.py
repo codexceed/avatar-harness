@@ -27,6 +27,7 @@ from avatar import (
     AgentStart,
     ApprovalRequested,
     DecisionError,
+    DeclarationRequired,
     DirtyWorkspaceError,
     HarnessEvent,
     ModelDecisionEvent,
@@ -369,6 +370,10 @@ class CockpitApp(App):
             return line
         if isinstance(event, ApprovalRequested):
             return f"⏸ approval needed: {event.tool}"
+        if isinstance(event, DeclarationRequired):
+            # Greenfield edit refused pending a declared contract (ADR-0038) — informational, no
+            # modal (the model complies, not the human): observe-only, §13.
+            return Text("✍ declare a verification contract before editing", style="yellow")
         if isinstance(event, DecisionError):
             kind = "retried" if event.recovered else "turn lost"
             return f"↩ malformed decision ({kind}): {event.error}"

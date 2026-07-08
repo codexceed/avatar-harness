@@ -71,6 +71,20 @@ class PhaseChanged(EventBase):
     new: str
 
 
+class DeclarationRequired(EventBase):
+    """A greenfield edit was refused pending a declared verification contract (ADR-0038).
+
+    Emitted at the investigating → editing boundary when the task is greenfield (no
+    detected/cited/configured contract) and the model tried to edit without first calling
+    `declare_verification`. `nudge`/`max_nudges` track the bounded-nudge budget: at the cap the
+    runner stops refusing and falls back to the smoke floor.
+    """
+
+    type: Literal["declaration_required"] = "declaration_required"
+    nudge: int = 0
+    max_nudges: int = 0
+
+
 class ModelDecisionEvent(EventBase):
     """The model chose an action this turn (thought + a one-line brief)."""
 
@@ -201,6 +215,7 @@ HarnessEvent = Annotated[
     | TurnStart
     | TurnEnd
     | PhaseChanged
+    | DeclarationRequired
     | ModelDecisionEvent
     | ModelUpdate
     | ToolStart

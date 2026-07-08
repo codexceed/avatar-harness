@@ -55,6 +55,9 @@ class HarnessConfig(BaseSettings):
     max_consecutive_failures: int = 5
     max_repair_attempts: int = 3
     max_context_tokens: int = 100_000
+    # Greenfield declaration gate (ADR-0038): how many times the runner refuses an edit-intent call
+    # to nudge the model to `declare_verification` first, before falling back to the smoke floor.
+    max_declaration_nudges: int = 3
     # Backstop on a blocking (attended) approval: deny it after this many seconds so a run can't
     # hang inside the gate (the wall-clock budget can't preempt an awaited approval). `None` (the
     # default) waits indefinitely — correct for a human at a REPL; an unattended run never blocks.

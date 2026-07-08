@@ -272,8 +272,10 @@ _KIND_FRAMING = {
     ),
     "edit": (
         "Your mission: make a WORKING code change. Inspect what you will modify, then edit "
-        "with str_replace (or write_file to create or rewrite a file); an external verifier "
-        "will run real tests/lint on your diff."
+        "with str_replace (or write_file to create or rewrite a file). An external verifier runs "
+        "real tests/lint on your diff — and if this repo has no test/lint setup for the harness to "
+        "detect, you MUST first declare how your change will be verified via declare_verification "
+        "(executing checks that fail on breakage) BEFORE you edit."
     ),
     "test_only": (
         "Your mission: ADD or change tests that capture the intended behavior. The new "

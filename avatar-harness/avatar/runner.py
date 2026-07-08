@@ -21,6 +21,7 @@ from avatar.event_types import (
     ApprovalController,
     CancellationObserved,
     DecisionError,
+    DeclarationRequired,
     EventSink,
     HarnessEvent,
     ModelDecisionEvent,
@@ -161,6 +162,15 @@ class AgentRunner:
         # awaited gate for tier-3 `ask` calls. A `Session` supplies both.
         self.event_sink = event_sink
         self.approval_controller = approval_controller
+        # Wall-clock credit for time the run sat *blocked on a human approval*: the budget bounds
+        # the agent's own work, not the reviewer's think-time. Accumulated in `_approved` and added
+        # to the deadline at every budget check so a slow human never starves the run. Per-run state
+        # (the runner is per-run — it holds run-scoped `deps`).
+        self._approval_wait_seconds = 0.0
+        # Memoized plan resolution for this run: the greenfield gate needs to know whether tiers 1-3
+        # resolve empty, and `_freeze_plan` needs the same result — resolve once (tier-3 may call an
+        # LLM). Reset at the top of each `_arun`. `None` = not yet resolved this run.
+        self._resolved_plan: list[PlannedCheck] | None = None
 
     def _record_usage(self, state: TaskState, usage: DecisionUsage | None) -> None:
         """Accumulate provider-reported usage into state and record it per turn.
@@ -241,10 +251,15 @@ class AgentRunner:
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
         deadline = time.monotonic() + self.config.max_wall_clock_seconds
+        self._approval_wait_seconds = 0.0  # reset the human-wait credit for this run
+        self._resolved_plan = None  # re-resolve the verification plan fresh for this run
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
         self._publish(AgentStart(task_id=state.task_id, goal=state.goal))
 
-        while not state.terminal and self._within_budget(state, deadline):
+        # The effective deadline slides forward by time spent blocked on human approval, so the
+        # wall-clock budget bounds agent work only. Read it fresh each turn — the credit grows
+        # while a tool call sits at the approval gate.
+        while not state.terminal and self._within_budget(state, deadline + self._approval_wait_seconds):
             if self.deps.cancellation.cancelled:
                 self._stop_incomplete(state, "run cancelled", kind="cancelled")
                 self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
@@ -270,7 +285,7 @@ class AgentRunner:
                     # turns). An empty `done` means the deadline elapsed mid-call.
                     done, _ = await asyncio.wait(
                         {task, cancel_wait},
-                        timeout=max(0.0, deadline - time.monotonic()),
+                        timeout=max(0.0, deadline + self._approval_wait_seconds - time.monotonic()),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 except asyncio.CancelledError:
@@ -455,6 +470,40 @@ class AgentRunner:
         self.emitter.emit("phase_changed", old=old, new=new, task_id=state.task_id)
         self._publish(PhaseChanged(task_id=state.task_id, old=old, new=new))
 
+    def _resolve_plan(self, ws: Workspace) -> list[PlannedCheck]:
+        """Resolve the verification plan once per run and memoize it (ADR-0007, ADR-0038).
+
+        Both the greenfield declaration gate and `_freeze_plan` need the tier-1-3 resolution;
+        resolving is potentially expensive (tier-3 may call an LLM) and should happen once. Safe to
+        memoize: an edit task cannot mutate the workspace during `investigating` without tripping
+        the edit-intent gate, so the resolution can't go stale before the freeze.
+
+        Args:
+            ws: The run-scoped workspace whose artifacts the planner reads.
+
+        Returns:
+            The resolved checks (empty for a greenfield task with nothing detected/cited/configured).
+        """
+        if self._resolved_plan is None:
+            self._resolved_plan = self.planner.resolve(ws)
+        return self._resolved_plan
+
+    def _must_declare_before_edit(self, state: TaskState, ws: Workspace) -> bool:
+        """Whether a greenfield edit must declare a verification contract before editing (ADR-0038).
+
+        True only for an `edit` task that is genuinely greenfield — tiers 1-3 resolve empty (no
+        config override / detected / cited contract) — and that has not yet declared one. Once the
+        model declares (`deps.declared_contract` set), the gate no longer fires.
+
+        Args:
+            state: The task state (its `task_kind`).
+            ws: The run-scoped workspace, for plan resolution.
+
+        Returns:
+            True iff the edit should be refused pending a declared contract.
+        """
+        return state.task_kind == "edit" and not self.deps.declared_contract and not self._resolve_plan(ws)
+
     def _freeze_plan(self, state: TaskState, ws: Workspace) -> None:
         """Resolve and freeze the verification plan at the phase boundary (ADR-0007).
 
@@ -471,7 +520,7 @@ class AgentRunner:
         """
         if state.verification_plan is not None or state.task_kind == "investigate":
             return
-        plan = self.planner.resolve(ws)
+        plan = self._resolve_plan(ws)
         # Greenfield edit with nothing detected or cited: the model's declared contract (ADR-0038)
         # becomes the frozen plan, if it declared one. Tiers 1-3 always win — a real detected/cited
         # contract is never displaced by a self-declared one; the smoke floor still covers a decline.
@@ -533,6 +582,40 @@ class AgentRunner:
             self.emitter.emit("out_of_phase", tool=action.name, phase=state.phase)
             return
         if tool is not None and self._is_edit_intent(state, tool) and state.phase == "investigating":
+            # Greenfield declaration gate (ADR-0038): a greenfield edit must declare a verification
+            # contract before it may edit. Refuse the edit and nudge up to `max_declaration_nudges`
+            # times; at the cap, fall through and let the smoke floor cover the run (ADR-0014).
+            if self._must_declare_before_edit(state, ws):
+                if state.declaration_nudges < self.config.max_declaration_nudges:
+                    state.declaration_nudges += 1
+                    record.outcome = "declaration required"
+                    msg = (
+                        "This is a from-scratch task and the harness detected no test/lint contract. "
+                        "Before you edit, declare how your work will be verified: call "
+                        "declare_verification with one or more commands that RUN what you build and "
+                        "exit non-zero if it is broken (e.g. `python -m pytest test_x.py`)."
+                    )
+                    state.latest_error = msg
+                    state.add_feedback(msg, kind="declare_required")
+                    # Dual-emit like PhaseChanged/VerificationPlanFrozen: legacy emitter → EventLog
+                    # JSONL, typed bus → the cockpit transcript.
+                    self.emitter.emit(
+                        "declaration_required", tool=action.name, nudge=state.declaration_nudges
+                    )
+                    self._publish(
+                        DeclarationRequired(
+                            task_id=state.task_id,
+                            nudge=state.declaration_nudges,
+                            max_nudges=self.config.max_declaration_nudges,
+                        )
+                    )
+                    return  # refuse: do NOT freeze the plan or advance the phase
+                if self.config.max_declaration_nudges:
+                    # Nudges exhausted (not a disabled gate): fall back to the smoke floor.
+                    state.add_feedback(
+                        "declaration gate exhausted; proceeding with the smoke floor as the contract",
+                        kind="declare_fallback",
+                    )
             # The investigating → editing boundary is the plan's freeze point (ADR-0007).
             self._freeze_plan(state, ws)
             self._set_phase(state, "editing")
@@ -589,9 +672,17 @@ class AgentRunner:
         if not ask or self.approval_controller is None:
             return False
         approval_id = uuid4().hex
-        return await self.approval_controller.request_approval(
-            approval_id, action.name, getattr(permission, "reason", ""), action.input
-        )
+        # Pause the wall-clock while blocked on the human: the reviewer's think-time is not the
+        # agent's budget. Credit the elapsed wait to the deadline via a monotonic delta measured
+        # around the awaited controller — robust to a scoped auto-approve returning instantly
+        # (credit ≈ 0) or a human taking minutes.
+        waited_from = time.monotonic()
+        try:
+            return await self.approval_controller.request_approval(
+                approval_id, action.name, getattr(permission, "reason", ""), action.input
+            )
+        finally:
+            self._approval_wait_seconds += time.monotonic() - waited_from
 
     async def _averify(self, state: TaskState, ws: Workspace) -> None:
         """Run the verifier off-thread, set the outcome, and publish typed events (§5, §12).

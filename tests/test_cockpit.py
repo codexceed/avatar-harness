@@ -17,6 +17,7 @@ from avatar.event_types import (
     AgentEnd,
     AgentStart,
     DecisionError,
+    DeclarationRequired,
     ModelDecisionEvent,
     ModelUpdate,
     PhaseChanged,
@@ -58,6 +59,20 @@ async def test_status_bar_reflects_phase_and_mode():
         assert app.phase == "editing" and app.mode == "edit"
         status = app._status_text()
         assert "editing" in status and "edit" in status  # the bar reflects both
+
+
+async def test_declaration_required_renders_as_transcript_line():
+    # The greenfield declaration gate (ADR-0038) surfaces as an informational transcript line —
+    # no modal (the model complies, not the human): observe-only.
+    events = [
+        AgentStart(goal="build tetris"),
+        DeclarationRequired(nudge=1, max_nudges=3),
+    ]
+    app = CockpitApp(ReplaySession(events))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+    joined = "\n".join(app.rendered)
+    assert "declare a verification contract before editing" in joined
 
 
 async def test_tool_activity_renders():

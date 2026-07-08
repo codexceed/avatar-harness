@@ -438,8 +438,14 @@ def test_run_task_provisions_under_workspace_root(tmp_path):
         ),
         ModelDecision(action=FinalAnswer(answer="done")),
     ]
+    # Gate off (ADR-0038): the scripted model doesn't declare a contract; this test isolates
+    # provisioning, not the greenfield declaration gate.
     row = run_task(
-        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+        spec,
+        config=HarnessConfig(max_declaration_nudges=0),
+        model_client=ScriptedModel(decisions),
+        seed=0,
+        workspace_root=run_dir,
     )
     assert row.workspace is not None
     assert Path(row.workspace).parent == run_dir  # provisioned UNDER the run workspace
@@ -1186,8 +1192,14 @@ def test_run_task_with_probe_scores_via_probe(tmp_path):
         ModelDecision(action=ToolCall(name="write_file", input={"path": "chatbot.py", "content": chatbot})),
         ModelDecision(action=FinalAnswer(answer="done")),
     ]
+    # Gate off (ADR-0038): the scripted model doesn't declare a contract; this test isolates
+    # probe scoring, not the greenfield declaration gate.
     row = run_task(
-        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+        spec,
+        config=HarnessConfig(max_declaration_nudges=0),
+        model_client=ScriptedModel(decisions),
+        seed=0,
+        workspace_root=run_dir,
     )
     assert row.solved is True and row.probe_exit == 0
     assert row.workspace is not None and Path(row.workspace).parent == run_dir

@@ -269,11 +269,14 @@ flowchart TD
     DET["2 · Deterministic detection — CI workflow run: steps > manifests (package.json, pyproject/tox/nox, Cargo.toml, go.mod, pre-commit) > Makefile targets; program-position classification, no LLM, no Python assumption"]
     LLM["3 · LLM fallback (opt-in: AVATAR_PLANNER_MODEL) — proposes for unresolved slots only, must cite the declaring artifact; the harness validates the citation or rejects"]
     FRZ["freeze onto TaskState at investigating → editing; journal verification_plan_frozen (command + provenance per check)"]
+    DECL["3.5 · Greenfield declaration gate (ADR-0038) — edit + tiers 1-3 empty: the runner REFUSES each edit and nudges the model to declare_verification (bounded: max_declaration_nudges, default 3; emits DeclarationRequired) before the freeze. A declared executing contract folds into the frozen plan; at the nudge cap it falls back to the floor"]
     SMK["4 · Greenfield smoke floor (ADR-0014) — empty plan + an edit that wrote code: the model AUTHORS one smoke check, bounded to an ALLOWLIST of non-executing checkers (py_compile/ruff/node --check/tsc/go vet/...); provenance=model-smoke, resolved at VERIFY time, run by the harness"]
     CO -->|slot unresolved| DET -->|slot unresolved| LLM
     CO --> FRZ
     DET --> FRZ
     LLM --> FRZ
+    LLM -->|greenfield edit, nothing resolved| DECL
+    DECL --> FRZ
     FRZ -->|froze empty + code written| SMK
 ```
 
@@ -281,6 +284,7 @@ Key properties:
 
 - **The model never authors the rubric — with one bounded exception (ADR-0014).** For tiers 1–3 it can only pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one. The greenfield smoke floor (tier 4) is the exception: when nothing else resolved, the model *authors* one check — but the harness still **runs** it and reads the real exit code, so it is author-and-run, never self-assertion (the model can't forge a process result). It runs unattended outside the permission gate, so it is bounded to an **allowlist of non-executing checkers** (compile/parse/type-check; no `python -c`/`node -e`/shell wrappers — those are single argvs a denylist can't catch). Lowest precedence (any real contract displaces it) and tagged `provenance=model-smoke` so the weak signal is legible.
 - **Python-ecosystem commands are emitted `python -m <tool>`**, so an installed-but-not-on-PATH tool still resolves; a genuinely missing binary surfaces as a failed check (exit 127 from `Workspace.run`), never a crash into the loop.
+- **Greenfield edit must declare a contract before editing (ADR-0038).** When tiers 1–3 resolve nothing on an `edit` task, the runner gates the `investigating→editing` boundary: it refuses each edit-intent call and nudges the model to `declare_verification` (emitting a typed `DeclarationRequired` event the cockpit renders), a **bounded nudge** of `max_declaration_nudges` (default 3; `0` disables the gate). A declared executing contract folds into the frozen plan (tiers 1–3 still win when present); at the nudge cap the runner falls back to the smoke floor, so the run is never stranded at declaration. Scoped to greenfield `edit`.
 - **Nothing discovered → the greenfield floor, else a legible failure.** An empty plan over an `edit` that wrote code triggers the tier-4 smoke floor (resolved at verify time, not the freeze boundary — the only late-bound tier). If the floor also declines (non-code task, or the model proposes nothing runnable), the empty plan stands and verification fails legibly ("no verification contract discovered — declare one via `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`"), keeping the structural guards (diff present, no secrets).
 - **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.
 - Smart **test-target inference** ("which tests cover this diff?") remains **deferred** (`§9`, `§21`); the plan is per-session, not per-diff.
