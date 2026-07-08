@@ -46,6 +46,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0038](0038-model-declared-semi-frozen-verification-contract.md) | Model-declared semi-frozen verification contract + immutable floor (supersedes greenfield disposition of 0014) | Proposed |
 | [0039](0039-scoped-autonomous-amendment-disposition.md) | Scoped autonomous amendment disposition: config-gated auto-approve of contract amendments only (extends 0016) | Proposed |
 | [0040](0040-held-out-verified-vs-self-reported-success.md) | Held-out-verified vs self-reported success; wire the ADR-0011 D3 held-out oracle | Proposed |
+| [0041](0041-retire-test-only-task-kind.md) | Retire the `test_only` task kind; subsume it into `edit` + a declared executing contract (supersedes the 2026-06-06 three-kind merge) | Proposed |
 | [0042](0042-hermetic-execution-at-the-workspace-run-seam.md) | Hermetic execution at the `Workspace.run` seam: a `Sandbox`/`ExecSpec` strategy closing Threat C (runtime/substrate gaming); `hermetic-env` default, staged to container (implements ADR-0009) | Proposed |
 
 ## Conventions
