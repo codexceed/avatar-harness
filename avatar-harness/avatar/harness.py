@@ -23,7 +23,7 @@ from avatar.journal import JsonlEventJournal
 from avatar.model_client import ModelClient, OpenAIModelClient
 from avatar.permission import PermissionPolicy
 from avatar.runner import AgentRunner
-from avatar.sandbox import make_sandbox
+from avatar.sandbox import RLimits, make_sandbox
 from avatar.session import Session
 from avatar.state import TaskState
 from avatar.tools import default_registry
@@ -136,7 +136,11 @@ class Harness:
                 sensitive_path_globs=self.config.sensitive_path_globs,
                 log_path=self.config.log_path,
                 sandbox=make_sandbox(
-                    self.config.sandbox_mode, allow_network=self.config.sandbox_allow_network
+                    self.config.sandbox_mode,
+                    allow_network=self.config.sandbox_allow_network,
+                    rlimits=RLimits() if self.config.sandbox_rlimits else None,
+                    image=self.config.sandbox_image,
+                    runtime=self.config.sandbox_container_runtime,
                 ),
             ),
             config=self.config,

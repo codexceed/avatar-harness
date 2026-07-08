@@ -123,6 +123,15 @@ class HarnessConfig(BaseSettings):
     # cannot gate network). Does NOT cover a model authoring weak tests (Threats A/B).
     sandbox_mode: Literal["none", "hermetic-env", "sandbox-exec", "bwrap", "container"] = "hermetic-env"
     sandbox_allow_network: bool = False
+    # POSIX resource ceilings on each sandboxed command (ADR-0042 Increment 2). OFF by default:
+    # they ride `preexec_fn`, which is not thread-safe between fork and exec against the
+    # multithreaded eval runner (ADR-0026), so they are opt-in, not baked into the default.
+    sandbox_rlimits: bool = False
+    # Container backend (`sandbox_mode=container`, ADR-0042 Increment 2): the image carrying the
+    # task's toolchain (required for that mode) and the runtime CLI. Empty image + container mode
+    # is a config error — the guest has no toolchain otherwise.
+    sandbox_image: str = ""
+    sandbox_container_runtime: Literal["podman", "docker"] = "podman"
 
     # Sensitive-path denylist (§11, Phase 2.5) — globs the permission gate refuses to
     # read or patch. Defaults cover common secret files; override via AVATAR_SENSITIVE_PATH_GLOBS.

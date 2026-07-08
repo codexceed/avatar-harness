@@ -240,6 +240,20 @@ class Verifier:
                 name=check.name, kind="required", status="pass", evidence=f"{check.command!r} exit=0 {tag}"
             )
         if no_target_allowed and out.exit_code == _NO_TESTS_EXIT:
+            # No tests collected. Genuine absence (a test-less repo) is a tolerated skip; but if
+            # the *pinned baseline* had tests, collecting none now is suppression, not absence —
+            # emptying/deleting/rigging the graded tests to launder an exit-5 skip (ADR-0042,
+            # Threat A). Fail, don't skip.
+            if _baseline_had_tests(ws):
+                return CheckResult(
+                    name=check.name,
+                    kind="required",
+                    status="fail",
+                    evidence=(
+                        f"{check.command!r} collected no tests (exit={_NO_TESTS_EXIT}) but the "
+                        f"pinned baseline had tests — suppression, not absence {tag}"
+                    ),
+                )
             return CheckResult(
                 name=check.name,
                 kind="required",
@@ -309,6 +323,23 @@ def _is_test_path(path: str) -> bool:
         or path.startswith("tests/")
         or "/tests/" in path
     )
+
+
+def _baseline_had_tests(ws: Workspace) -> bool:
+    """Whether the pinned baseline commit contained any test file (ADR-0042, Threat A).
+
+    The suppression signal for an exit-5 no-tests skip: if the baseline HAD tests but the
+    frozen check now collects none, the tests were emptied/deleted/rigged rather than never
+    having existed. Structural (path-based) and conservative — it only distinguishes absence
+    from suppression, and a genuinely test-less repo (no baseline test files) still skips.
+
+    Args:
+        ws: The run-scoped workspace, carrying the pinned baseline.
+
+    Returns:
+        `True` when the baseline tree held at least one test-shaped path.
+    """
+    return any(_is_test_path(p) for p in ws.baseline_paths())
 
 
 def _scan_secrets(diff: str) -> list[str]:

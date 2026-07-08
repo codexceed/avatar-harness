@@ -539,6 +539,26 @@ class Workspace:
         result = self._git("rev-parse", "HEAD")
         return result.stdout.strip() if result and result.returncode == 0 else None
 
+    def baseline_paths(self) -> list[str]:
+        """Workspace-relative paths tracked at the *pinned baseline* commit (empty when none).
+
+        Lets the verifier tell a genuinely test-less repo (a legitimate no-tests skip) from
+        one whose tests were suppressed after the baseline (ADR-0042, Threat A): if the
+        baseline HAD tests but a frozen `kind="test"` check now collects none, that exit-5 is
+        laundering, not absence. Reads the baseline tree via `git ls-tree` — not the working
+        tree — so a just-deleted/emptied test is still seen as having existed. Empty when the
+        workspace is not a git repo (no baseline was pinned).
+
+        Returns:
+            The sorted workspace-relative POSIX paths tracked at the pinned baseline.
+        """
+        if self._baseline is None:
+            return []
+        result = self._git("ls-tree", "-r", "--name-only", self._baseline)
+        if result is None or result.returncode != 0:
+            return []
+        return sorted(p for p in result.stdout.splitlines() if p)
+
     def diff(self) -> str:
         """Working-tree delta vs. the pinned baseline (empty when no baseline).
 

@@ -1,7 +1,24 @@
+import subprocess
+from pathlib import Path
+
 from avatar.config import HarnessConfig
 from avatar.state import PlannedCheck, TaskState
 from avatar.verifier import Verifier
 from avatar.workspace import Workspace
+
+
+def _init_repo_with(tmp_path: Path, files: dict[str, str]) -> Path:
+    """Init a git repo with `files` (relpath → content) committed as the pinned baseline."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
+    for rel, content in files.items():
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    return tmp_path
 
 
 def _investigate_state(**kwargs) -> TaskState:
@@ -163,6 +180,46 @@ def test_edit_gate_passes_on_clean_lint_when_no_test_target(git_repo):
     # Tests skip for an ALLOWED reason (none in repo); clean lint is the positive signal.
     report = Verifier(HarnessConfig(test_command=_NO_TESTS, lint_command=_PASS)).verify(state, ws)
     assert report.passed
+
+
+def test_edit_gate_fails_when_baseline_tests_suppressed(tmp_path):
+    # ADR-0042 Threat A: the baseline HAD tests, but the frozen `kind="test"` check now collects
+    # none (exit 5). That is suppression — emptying/deleting/rigging the graded tests to launder a
+    # tolerated skip — so it must FAIL, not skip, and the run cannot pass.
+    repo = _init_repo_with(
+        tmp_path,
+        {
+            "calc.py": "def add(a, b):\n    return a - b\n",
+            "tests/test_calc.py": "def test_add():\n    assert True\n",
+        },
+    )
+    ws = Workspace(repo)
+    state = _edit(ws)  # a real diff exists (calc.py fixed)
+    state.freeze_verification_plan(
+        [PlannedCheck(name="tests", command=_NO_TESTS, kind="test", provenance="ci")]
+    )
+    report = Verifier(HarnessConfig()).verify(state, ws)
+    assert report.passed is False
+    tests = next(c for c in report.checks if c.name == "tests")
+    assert tests.status == "fail"  # NOT a tolerated skip
+    assert "suppression" in tests.evidence
+
+
+def test_edit_gate_still_skips_exit5_when_baseline_had_no_tests(git_repo):
+    # A genuinely test-less repo (baseline has only calc.py): exit-5 stays a tolerated skip, and
+    # clean lint is the positive signal — not every no-tests-collected is a rig.
+    ws = Workspace(git_repo)
+    state = _edit(ws)
+    state.freeze_verification_plan(
+        [
+            PlannedCheck(name="tests", command=_NO_TESTS, kind="test", provenance="ci"),
+            PlannedCheck(name="lint", command=_PASS, kind="lint", provenance="Makefile:lint"),
+        ]
+    )
+    report = Verifier(HarnessConfig()).verify(state, ws)
+    assert report.passed  # skip tolerated + clean lint passes
+    tests = next(c for c in report.checks if c.name == "tests")
+    assert tests.status == "skip"
 
 
 def test_edit_gate_passes_on_declared_lint_only_contract(git_repo):

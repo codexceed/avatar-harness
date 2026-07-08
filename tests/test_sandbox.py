@@ -14,9 +14,12 @@ import pytest
 
 from avatar.config import HarnessConfig
 from avatar.sandbox import (
+    Bwrap,
+    Container,
     ExecSpec,
     HermeticEnv,
     NoSandbox,
+    RLimits,
     SandboxExec,
     hermetic_env,
     make_sandbox,
@@ -91,6 +94,8 @@ def test_make_sandbox_routes_modes():
     assert isinstance(make_sandbox("none"), NoSandbox)
     assert isinstance(make_sandbox("hermetic-env"), HermeticEnv)
     assert isinstance(make_sandbox("sandbox-exec"), SandboxExec)
+    assert isinstance(make_sandbox("bwrap"), Bwrap)
+    assert isinstance(make_sandbox("container", image="python:3.12-slim"), Container)
 
 
 def test_make_sandbox_default_config_is_hermetic_env():
@@ -99,13 +104,86 @@ def test_make_sandbox_default_config_is_hermetic_env():
     assert isinstance(make_sandbox(HarnessConfig().sandbox_mode), HermeticEnv)
 
 
-def test_make_sandbox_rejects_unbuilt_and_unknown():
-    with pytest.raises(NotImplementedError):
-        make_sandbox("container")  # ADR-0042 Increment 2
-    with pytest.raises(NotImplementedError):
-        make_sandbox("bwrap")
+def test_make_sandbox_container_requires_image():
+    with pytest.raises(ValueError, match="image"):
+        make_sandbox("container")  # no toolchain in the guest without one
+
+
+def test_make_sandbox_rejects_unknown():
     with pytest.raises(ValueError):
         make_sandbox("nonsense")
+
+
+def test_make_sandbox_threads_rlimits_into_preexec(tmp_path):
+    # the opt-in toggle: rlimits become a real preexec_fn on the direct-exec backends
+    sealed = make_sandbox("hermetic-env", rlimits=RLimits())
+    assert sealed.prepare(["true"], tmp_path).preexec_fn is not None
+    # default (no rlimits) stays thread-safe: no child setup
+    assert make_sandbox("hermetic-env").prepare(["true"], tmp_path).preexec_fn is None
+
+
+# --- Increment 2 backends (shape-only; execution needs bwrap/podman, gated below) -----------
+
+
+def test_bwrap_wraps_read_only_root_and_unshares_net(tmp_path):
+    spec = Bwrap().prepare(["pytest"], tmp_path)
+    assert spec.argv[0] == "bwrap"
+    assert "--unshare-net" in spec.argv  # network denied by default
+    assert spec.argv[-1] == "pytest"
+    # whole root read-only, workspace re-bound writable
+    joined = " ".join(spec.argv)
+    assert "--ro-bind / /" in joined
+    assert f"--bind {tmp_path} {tmp_path}" in joined
+    assert "PYTEST_ADDOPTS" not in spec.env  # env scrubbed too
+
+
+def test_bwrap_allow_network_keeps_namespace(tmp_path):
+    spec = Bwrap(allow_network=True).prepare(["true"], tmp_path)
+    assert "--unshare-net" not in spec.argv
+
+
+def test_container_binds_workspace_denies_network_caps_pids(tmp_path):
+    spec = Container(image="python:3.12-slim", runtime="podman").prepare(["pytest"], tmp_path)
+    joined = " ".join(spec.argv)
+    assert spec.argv[:2] == ["podman", "run"]
+    assert "--network none" in joined  # net-deny by default
+    assert "--read-only" in spec.argv  # read-only rootfs
+    assert f"-v {tmp_path}:/workspace:rw" in joined  # workspace writable
+    assert "--pids-limit" in spec.argv  # fork-bomb guard, kernel-enforced
+    assert spec.argv[-1] == "pytest"
+    assert "python:3.12-slim" in spec.argv
+
+
+def test_container_does_not_forward_host_path(monkeypatch, tmp_path):
+    # host PATH/VIRTUAL_ENV are meaningless in the guest — never forwarded via -e
+    monkeypatch.setenv("PATH", "/host/bin")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-p no:randomly")
+    spec = Container(image="img").prepare(["true"], tmp_path)
+    e_flags = [spec.argv[i + 1] for i, a in enumerate(spec.argv) if a == "-e"]
+    assert not any(f.startswith("PATH=") for f in e_flags)
+    assert not any(f.startswith("PYTEST_ADDOPTS=") for f in e_flags)
+
+
+def test_container_allow_network_uses_bridge(tmp_path):
+    spec = Container(image="img", allow_network=True).prepare(["true"], tmp_path)
+    assert "--network bridge" in " ".join(spec.argv)
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="preexec_fn needs POSIX fork")
+def test_rlimits_fsize_cap_kills_a_runaway_write(tmp_path):
+    # exercise the limit in a *child* (never in-process — it would cap the test runner): a write
+    # far over the FSIZE ceiling is killed, proving the preexec actually bit.
+    apply = RLimits(cpu_seconds=1000, fsize_bytes=4096).preexec()
+    assert apply is not None
+    proc = subprocess.run(
+        [sys.executable, "-c", "open('big','wb').write(b'x' * 1_000_000)"],
+        cwd=tmp_path,
+        preexec_fn=apply,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode != 0  # SIGXFSZ / write failure — the cap held
+    assert not (tmp_path / "big").exists() or (tmp_path / "big").stat().st_size <= 4096
 
 
 # --- end to end through the Workspace seam -------------------------------------------------
