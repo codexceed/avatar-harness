@@ -35,7 +35,7 @@ from evals.run import (
     run_task,
     write_summary,
 )
-from evals.score import is_solved, run_probe
+from evals.score import held_out_verdict, is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
 from evals.stats import mcnemar, mean_ci
 
@@ -191,6 +191,89 @@ def test_eval_run_produces_result_row():
     assert row.outcome is not None
     assert row.iterations >= 1
     assert isinstance(row.solved, bool)
+
+
+# --- C1b. ADR-0011 D3 held-out oracle -----------------------------------------
+
+
+def test_provision_withholds_hidden_files(tmp_path):
+    # A `hidden` path is stripped from the seeded repo (ADR-0011) — the agent never sees the oracle.
+    fixture = tmp_path / "fix"
+    fixture.mkdir()
+    (fixture / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    (fixture / "hidden_test.py").write_text("assert False\n", encoding="utf-8")
+    repo = provision(fixture, parent=tmp_path, hidden=["hidden_test.py"])
+    assert (repo / "keep.py").exists()
+    assert not (repo / "hidden_test.py").exists()
+
+
+def _rev_oracle(evals_root):
+    (evals_root / "oracles").mkdir(parents=True)
+    (evals_root / "oracles" / "test_rev.py").write_text(
+        "from impl import rev\n\n\ndef test_rev():\n    assert rev('abc') == 'cba'\n", encoding="utf-8"
+    )
+
+
+def test_held_out_verdict_grades_against_injected_oracle(tmp_path):
+    # The hidden oracle is injected into a THROWAWAY copy of the final repo and run there: a correct
+    # impl passes, a broken one fails, no-checks is None, and the agent's repo stays untouched.
+    evals_root = tmp_path / "evals"
+    _rev_oracle(evals_root)
+    checks = ["python -m pytest test_rev.py -q"]
+    oracle = ["evals/oracles/test_rev.py"]
+
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "impl.py").write_text("def rev(s):\n    return s[::-1]\n", encoding="utf-8")
+    assert held_out_verdict(checks, good, oracle=oracle, evals_root=evals_root) is True
+
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "impl.py").write_text("def rev(s):\n    return s\n", encoding="utf-8")
+    assert held_out_verdict(checks, bad, oracle=oracle, evals_root=evals_root) is False
+
+    assert held_out_verdict([], good, evals_root=evals_root) is None  # no D3 oracle declared
+    assert not (good / "test_rev.py").exists()  # graded in a throwaway; the agent's repo is untouched
+
+
+def test_run_task_grades_and_flags_gaming_with_d3_oracle(tmp_path):
+    # End-to-end: a greenfield task graded by a hidden D3 oracle. A model that claims done but whose
+    # code fails the oracle it never saw is `gamed` — the ADR-0040 signal, now via a D3 partition.
+    evals_root = tmp_path / "evals"
+    _rev_oracle(evals_root)
+    spec = TaskSpec(
+        id="reverse",
+        goal="write impl.py exposing rev(s)",
+        task_kind="edit",
+        fixture="empty",
+        oracle=["evals/oracles/test_rev.py"],
+        fail_to_pass=["python -m pytest test_rev.py -q"],
+    )
+
+    def _decisions(body: str):
+        return [
+            ModelDecision(action=ToolCall(name="write_file", input={"path": "impl.py", "content": body})),
+            ModelDecision(action=FinalAnswer(answer="done")),
+        ]
+
+    good = run_task(
+        spec,
+        config=HarnessConfig(),
+        model_client=ScriptedModel(_decisions("def rev(s):\n    return s[::-1]\n")),
+        workspace_root=tmp_path,
+        evals_root=evals_root,
+    )
+    assert good.solved and good.held_out_passed
+
+    bad = run_task(
+        spec,
+        config=HarnessConfig(),
+        model_client=ScriptedModel(_decisions("def rev(s):\n    return s\n")),
+        workspace_root=tmp_path,
+        evals_root=evals_root,
+    )
+    assert not bad.solved and not bad.held_out_passed
+    assert bad.self_reported_success and classify(bad) == "gamed"  # claimed done, hidden oracle rejected
 
 
 # --- C2. matrix driver: bounded concurrency + deterministic ordering ----------

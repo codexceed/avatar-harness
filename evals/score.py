@@ -9,7 +9,9 @@ whose output does not actually work.
 
 import os
 import shlex
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -106,3 +108,46 @@ def run_probe(
     except subprocess.TimeoutExpired:
         return _EXIT_TIMEOUT
     return proc.returncode
+
+
+def held_out_verdict(
+    checks: Sequence[str],
+    repo: Path,
+    *,
+    oracle: Sequence[str] = (),
+    evals_root: Path,
+    env: Mapping[str, str] | None = None,
+    timeout_seconds: int = _PROBE_TIMEOUT_SECONDS,
+) -> bool | None:
+    """The ADR-0011 D3 held-out verdict — grade against an oracle the agent never saw.
+
+    The oracle files are withheld from the agent's scratch repo (never seeded), so the agent
+    cannot special-case a test it never saw. Grading happens in a **throwaway copy** of the final
+    workspace with the oracle injected, leaving the agent's repo (and its diff) untouched; every
+    check (``fail_to_pass`` + ``pass_to_pass``) must exit 0. This is the richer sibling of a single
+    ``success_probe``: a partitioned, hidden, per-test oracle.
+
+    Args:
+        checks: The commands to run in the throwaway (``fail_to_pass`` then ``pass_to_pass``); argv
+            form, no shell metacharacters. An empty list means the task declares no D3 oracle.
+        repo: The agent's final scratch repo, copied into the throwaway for grading.
+        oracle: Repo-external oracle source files (paths under the repo root, e.g.
+            ``evals/oracles/<task>/test_x.py``) injected into the throwaway at their basename.
+        evals_root: The ``evals`` directory; its parent is the base the ``oracle`` paths resolve
+            against (a frozen copy under `validate`, so a candidate can't grade against edited tests).
+        env: Extra environment layered for the checks (the task's declared runtime env).
+        timeout_seconds: Per-check timeout (exit 124 on overrun).
+
+    Returns:
+        ``True`` when every check passes, ``False`` when any fails, or ``None`` when no checks are
+        declared (the task has no D3 oracle — the caller falls back to the success probe / verifier).
+    """
+    if not checks:
+        return None
+    base = evals_root.parent
+    with tempfile.TemporaryDirectory() as tmp:
+        graded = Path(tmp) / "graded"
+        shutil.copytree(repo, graded)
+        for src in oracle:  # inject the hidden oracle the agent never saw (ADR-0011)
+            shutil.copy(base / src, graded / Path(src).name)
+        return all(run_probe(cmd, graded, env=env, timeout_seconds=timeout_seconds) == 0 for cmd in checks)

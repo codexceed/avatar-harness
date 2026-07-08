@@ -7,10 +7,17 @@ without `--allow-dirty` and the agent's diff is well-defined against the pinned 
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 
-def provision(fixture: Path | None, *, parent: Path | None = None, label: str = "eval_") -> Path:
+def provision(
+    fixture: Path | None,
+    *,
+    parent: Path | None = None,
+    label: str = "eval_",
+    hidden: Sequence[str] = (),
+) -> Path:
     """Create a fresh scratch git repo seeded from `fixture`, committed clean.
 
     Args:
@@ -20,6 +27,8 @@ def provision(fixture: Path | None, *, parent: Path | None = None, label: str = 
             uses the system temp dir.
         label: Filename prefix for the scratch repo (e.g. `model__task__seedN__`) so a kept
             run workspace is inspectable.
+        hidden: Repo-relative paths to WITHHOLD from the seeded repo before the baseline commit
+            (ADR-0011 D3) — a held-out oracle the agent must never see, injected only at grade time.
 
     Returns:
         The path to the provisioned scratch repo (a clean git baseline).
@@ -27,6 +36,12 @@ def provision(fixture: Path | None, *, parent: Path | None = None, label: str = 
     repo = Path(tempfile.mkdtemp(prefix=label, dir=parent))
     if fixture is not None and Path(fixture).exists():
         shutil.copytree(fixture, repo, dirs_exist_ok=True)
+    for rel in hidden:
+        target = repo / rel
+        if target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "eval@avatar-harness.local")
     _git(repo, "config", "user.name", "avatar-eval")

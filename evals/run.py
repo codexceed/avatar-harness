@@ -26,7 +26,7 @@ from evals.journal_read import row_events
 from evals.metrics import gamed_rate, held_out_pass_at_1, pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, write_results
-from evals.score import is_solved, run_probe
+from evals.score import held_out_verdict, is_solved, run_probe
 from evals.spec import TaskSpec, load_task_spec
 
 _EVALS_ROOT = Path(__file__).resolve().parent
@@ -130,7 +130,9 @@ def run_task(
     """
     root = evals_root or _EVALS_ROOT
     label = f"{_slug(config.model)}__{spec.id}__seed{seed}__"
-    repo = provision(_fixture_path(spec.fixture, root), parent=workspace_root, label=label)
+    repo = provision(
+        _fixture_path(spec.fixture, root), parent=workspace_root, label=label, hidden=spec.hidden
+    )
     # Errors after provisioning still produce a row that carries the scratch path, so it maps to
     # its files and the cleanup contract holds (provision-stage failures propagate to the caller).
     try:
@@ -142,10 +144,10 @@ def run_task(
             update={"workspace_root": str(repo), "log_path": str(repo / "journal.jsonl"), **spec.budgets}
         )
         client = Harness(config=cfg, model=model_client) if model_client is not None else Harness(config=cfg)
-        # Option A: a probe-bearing task is graded by the probe, so the agent runs *non-strict* —
-        # it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh
-        # creation can't satisfy. A no-probe task stays strict (the verifier is the grader).
-        conversational = spec.success_probe is not None
+        # Option A: an oracle-graded task (a success probe or a D3 held-out oracle) runs *non-strict*
+        # — it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh
+        # creation can't satisfy. A no-oracle task stays strict (the verifier is the grader).
+        conversational = spec.success_probe is not None or bool(spec.fail_to_pass or spec.pass_to_pass)
         session = client.session(
             spec.goal,
             task_kind=spec.task_kind,
@@ -161,16 +163,28 @@ def run_task(
         # when there is no probe, AND as the positive signal a *guard* probe is ANDed with (ADR-0020)
         # — so a no-leak guard plus a give-up `incomplete` run does not score solved.
         reached_success = state.outcome == "success"
-        probe_exit = (
-            run_probe(
+        # A D3 held-out oracle (ADR-0011: hidden per-test partition), preferred over a success probe
+        # when declared. Its verdict rides the probe axis (pass -> exit 0, fail -> exit 1), so solved,
+        # held_out_passed, gamed, and classify all read the held-out signal through one path.
+        d3 = held_out_verdict(
+            [*spec.fail_to_pass, *spec.pass_to_pass],
+            repo,
+            oracle=spec.oracle,
+            evals_root=root,
+            env=spec.env,
+            timeout_seconds=spec.probe_timeout_seconds,
+        )
+        if d3 is not None:
+            probe_exit = 0 if d3 else 1
+        elif spec.success_probe:
+            probe_exit = run_probe(
                 _resolve_probe(spec.success_probe, root),
                 repo,
                 env=spec.env,
                 timeout_seconds=spec.probe_timeout_seconds,
             )
-            if spec.success_probe
-            else None
-        )
+        else:
+            probe_exit = None
         solved = is_solved(
             reached_success,
             probe_exit,
@@ -178,12 +192,11 @@ def run_task(
             outcome=state.outcome,
             passing_outcomes=spec.passing_outcomes,
         )
-        # The independent held-out verdict (ADR-0040): a success probe's real exit code when one
-        # exists — the oracle the agent never sees and can't amend — else the composed grade (no
-        # separate oracle: the harness verifier is the authority). Split from `self_reported_success`
-        # so `gamed` (claimed done, oracle rejected) is measurable under auto-approve.
+        # The independent held-out verdict (ADR-0040): the hidden oracle's exit (D3 or success probe)
+        # when one exists — the check the agent never sees and can't amend — else the composed grade.
+        # Split from `self_reported_success` so `gamed` (claimed done, oracle rejected) is measurable.
         held_out_passed = (
-            (probe_exit == 0) if (spec.success_probe and spec.probe_role == "success") else solved
+            (probe_exit == 0) if (probe_exit is not None and spec.probe_role == "success") else solved
         )
         row = ResultRow(
             task=spec.id,
