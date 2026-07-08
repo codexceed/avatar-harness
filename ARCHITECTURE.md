@@ -60,6 +60,7 @@ flowchart TD
     TR --> WS["Workspace: path-confined, diff/rollback, command exec"]
     V --> WS
     VP --> WS
+    WS --> SB["Sandbox: hermetic exec seam (ADR-0042)"]
 
     %% force the tiers to stack vertically into one column
     turn ~~~ act
@@ -67,7 +68,7 @@ flowchart TD
 
     classDef done fill:#1b4332,stroke:#52b788,color:#d8f3dc;
     classDef todo fill:#343a40,stroke:#868e96,color:#dee2e6;
-    class TS,EM,EL done;
+    class TS,EM,EL,SB done;
     class SESS,CLI,R,CB,MC,TR,PP,VP,V,AM,UI,WS todo;
 ```
 
@@ -84,7 +85,8 @@ flowchart TD
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id`; `EventLog` round-trips typed events too. | [Implemented] |
 | `HarnessEvent` + `EventBus` | Typed lifecycle union (`event_types.py`) + bounded per-subscriber fan-out (`bus.py`) the async loop publishes through, with the privileged write-ahead `JsonlEventJournal` (`journal.py`). | [Implemented] (3.0 fan-out + Lane 1 bounded queues/drop policy/journal) |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
-| `Workspace` | Path confinement + sensitive-path denylist (resolved-path backstop), diff/rollback, command execution. | [Implemented] |
+| `Workspace` | Path confinement + sensitive-path denylist (resolved-path backstop), diff/rollback, command execution. Every command funnels through one seam (`_run_unlogged`), where an injected `Sandbox` seals the substrate (ADR-0042). | [Implemented] |
+| `Sandbox` | Hermetic execution at the command seam (`sandbox.py`, ADR-0042, implements ADR-0009). A pure `prepare() → ExecSpec` transform closing **Threat C** (runtime/substrate gaming): `hermetic-env` (default) scrubs the child env to a language-neutral allowlist so an inherited `PYTEST_ADDOPTS`/`PYTHONPATH` can't rig a check; `sandbox-exec` adds macOS network-deny; `none` inherits (escape hatch). Does *not* cover weak/gutted tests (Threats A/B). | [Implemented] (Increment 1: `hermetic-env` + `sandbox-exec`; container/`bwrap` + rlimits deferred to Increment 2) |
 | `Harness` | Public facade (`from_env()`/`run()`/`arun()`/`session()`); wires defaults, every seam overridable; the CLI delegates to it. | [Implemented] |
 | `Session` | Two-plane boundary over a run — `events()` out, `resolve_approval()`/`cancel()` in (`§13`/`§23`). | [Implemented] (3.0 foundation) |
 | `SessionState` + `ReplSession` | The multi-turn scope above `TaskState` (`session_state.py`): history, per-goal tasks, session-scoped grants, mode (incl. `auto`/conversational); drives each goal through a per-goal `Session`; handles local meta commands (`run_meta` → `MetaResult`); seeds `@path` as denylist-checked `grounding` evidence; the plan-flow seam (`start_plan`/`start_build`/`extract_plan`/`plan_is_approvable`/`record_goal`) that both `submit_plan` (headless) and the cockpit reuse. | [Implemented] (Lane 2a + 3.2a–3.2e) |

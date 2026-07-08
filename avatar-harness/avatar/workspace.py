@@ -15,6 +15,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 from avatar.config import DEFAULT_SENSITIVE_PATH_GLOBS
+from avatar.sandbox import NoSandbox, Sandbox
 
 
 def path_is_sensitive(rel_path: str, globs: Sequence[str]) -> bool:
@@ -128,6 +129,10 @@ class Workspace:
             `HarnessConfig.sensitive_path_globs` through to match the permission gate.
         log_path: The harness's own event-journal path (`HarnessConfig.log_path`), hidden
             from the agent's file tools so it can't list/read/search the harness's plumbing.
+        sandbox: The execution strategy applied at the command seam (ADR-0042). Defaults to
+            `NoSandbox` (the full inherited environment — today's behavior), so a bare
+            `Workspace(root)` and every read-only inspection stay unchanged; the entry points
+            that actually run model/verifier commands inject `make_sandbox(config.sandbox_mode)`.
     """
 
     def __init__(
@@ -137,8 +142,10 @@ class Workspace:
         allow_dirty: bool = False,
         sensitive_path_globs: Sequence[str] | None = None,
         log_path: Path | str | None = None,
+        sandbox: Sandbox | None = None,
     ) -> None:
         self.root = Path(root).resolve()
+        self._sandbox: Sandbox = sandbox or NoSandbox()
         self._sensitive = list(
             DEFAULT_SENSITIVE_PATH_GLOBS if sensitive_path_globs is None else sensitive_path_globs
         )
@@ -472,14 +479,20 @@ class Workspace:
             )
         if not argv:
             return CommandOutput(command=command, stdout="", stderr="empty command", exit_code=127)
+        # Seal the substrate (ADR-0042): the sandbox scrubs the env and (OS backends) wraps the
+        # argv before we exec. A pure transform — `argv`/`self.root` are unchanged, so error
+        # messages below still name the *original* command, not a launcher.
+        spec = self._sandbox.prepare(argv, self.root)
         try:
             proc = subprocess.run(
-                argv,
+                spec.argv,
                 cwd=str(self.root),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=spec.env,
+                preexec_fn=spec.preexec_fn,
             )
         except subprocess.TimeoutExpired as exc:
             return CommandOutput(

@@ -104,6 +104,14 @@ The sandbox raises the floor everywhere, but on its own it converts "trivially g
 | **Return a bare `(argv, env)` tuple from `prepare()`** | Rejected — resource limits can't be expressed as env; `ExecSpec` carries `preexec_fn` too, and stays extensible without churning callers. |
 | **Isolate only the verifier's checks, not the model's `run_command`** | Rejected — both funnel through the same seam; a split would let the model rig state in an un-sandboxed `run_command` that a later sandboxed check inherits. Uniform wrapping is simpler and tighter. |
 
+## Implementation notes (Increment 1, 2026-07-09)
+
+Two refinements surfaced at build time and narrow Increment 1 without changing the decision:
+
+- **rlimits ship gated *off* (`preexec_fn = None`).** `preexec_fn` runs between `fork` and `exec`; the eval runner is multithreaded (ADR-0026), where a child touching a lock another thread held at fork can deadlock. The load-bearing, thread-safe half — the env allowlist, applied via `env=` — ships on by default; POSIX rlimits become a follow-on toggle rather than a hazard bundled into the default. `ExecSpec` still carries `preexec_fn` so the container backend and an opt-in rlimit mode slot in without a seam change.
+- **`sandbox-exec` ships network-deny only.** Write-confinement via a macOS `sandbox-exec` profile is finicky (and the launcher is Apple-deprecated); it is deferred to the **container** backend (Increment 2), which confines writes cleanly with a read-only rootfs. The env allowlist already removes the env-injection route on macOS; `sandbox-exec` adds egress-deny on top.
+- **The `Sandbox` is a `Workspace` constructor collaborator, not a `RunDeps` one.** The seam (`_run_unlogged`) is a `Workspace` method and `Workspace` must not depend on `RunDeps`; the default `NoSandbox` keeps a bare `Workspace(root)` (and every read-only inspection site) at today's behavior, while `harness.py` injects `make_sandbox(config.sandbox_mode)`. **Acceptance gate met:** the full suite is green with `hermetic-env` as the shipped default (652 passed).
+
 ## Consequences
 
 - Threat **C is closed** at a single seam; verifier, tools, and runner are unchanged — only the `Workspace` backend gains a collaborator. `none` reproduces today's behavior exactly (back-compat escape hatch).

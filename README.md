@@ -39,11 +39,14 @@ AVATAR_TEMPERATURE=0.0                          # sampling temperature (0 = as d
 AVATAR_REQUEST_TIMEOUT_SECONDS=240              # per-call model timeout (s); streaming idle cutoff via AVATAR_REQUEST_IDLE_TIMEOUT_SECONDS (30)
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbatim in context
+AVATAR_SANDBOX_MODE=hermetic-env                # execution isolation: hermetic-env (default) | none | sandbox-exec
 ```
 
 Point at OpenAI instead: `AVATAR_BASE_URL=https://api.openai.com/v1`, `AVATAR_MODEL=gpt-4o-mini`.
 
 For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile); a greenfield repo that declares no contract gets a model-authored **smoke check**, run by the harness, as a fallback floor (ADR-0014) — so a from-scratch project verifies out of the box. Set `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` for a stronger, declared contract (it always wins over the floor). The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `avatar-harness/avatar/config.py` is the source of truth.
+
+Every command the harness runs (verifier checks and the agent's own `run_command`) executes through a **sandbox** at the workspace seam (ADR-0042). The default `hermetic-env` scrubs the child environment to a safe allowlist on every OS, so an inherited `PYTEST_ADDOPTS` / `PYTHONPATH` can't rig a verification pass; `sandbox-exec` adds macOS network-deny (`AVATAR_SANDBOX_ALLOW_NETWORK=true` to permit egress); `none` restores the fully-inherited environment.
 
 ## Usage
 

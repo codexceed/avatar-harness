@@ -114,6 +114,16 @@ class HarnessConfig(BaseSettings):
     # Workspace (§15).
     workspace_root: str = "."
 
+    # Execution sandbox (ADR-0042, implements ADR-0009). Closes Threat C — runtime/substrate
+    # gaming (a planted `PYTEST_ADDOPTS`/`PYTHONPATH`, a phone-home) — at the `Workspace.run`
+    # seam. `hermetic-env` (the default) scrubs the environment to a language-neutral allowlist
+    # on every OS with no dependencies; `sandbox-exec` adds macOS network-deny; `none` restores
+    # the fully-inherited environment (escape hatch). `bwrap`/`container` are reserved for
+    # Increment 2. `sandbox_allow_network` only bites on the OS backends (the env-only floor
+    # cannot gate network). Does NOT cover a model authoring weak tests (Threats A/B).
+    sandbox_mode: Literal["none", "hermetic-env", "sandbox-exec", "bwrap", "container"] = "hermetic-env"
+    sandbox_allow_network: bool = False
+
     # Sensitive-path denylist (§11, Phase 2.5) — globs the permission gate refuses to
     # read or patch. Defaults cover common secret files; override via AVATAR_SENSITIVE_PATH_GLOBS.
     sensitive_path_globs: list[str] = Field(default_factory=lambda: list(DEFAULT_SENSITIVE_PATH_GLOBS))
