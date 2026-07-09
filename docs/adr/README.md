@@ -48,6 +48,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0040](0040-held-out-verified-vs-self-reported-success.md) | Held-out-verified vs self-reported success; wire the ADR-0011 D3 held-out oracle | Proposed |
 | [0041](0041-retire-test-only-task-kind.md) | Retire the `test_only` task kind; subsume it into `edit` + a declared executing contract (supersedes the 2026-06-06 three-kind merge) | Proposed |
 | [0042](0042-hermetic-execution-at-the-workspace-run-seam.md) | Hermetic execution at the `Workspace.run` seam: a `Sandbox`/`ExecSpec` strategy closing Threat C (runtime/substrate gaming); `hermetic-env` default, staged to container (implements ADR-0009) | Proposed |
+| [0043](0043-nullable-wall-clock-cockpit-default-off.md) | Nullable per-run wall-clock (`None` = unbounded); the attended cockpit defaults it off — Ctrl-C + `max_iterations` are the backstops; an explicit cap (env or `.env`) always wins | Accepted |
 
 ## Conventions
 

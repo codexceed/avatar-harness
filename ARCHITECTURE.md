@@ -195,7 +195,7 @@ flowchart TD
     RB -->|no| I["outcome = incomplete: ran out of budget mid-progress"]
 ```
 
-General budgets (max iterations, wall-clock, per-tool timeout, max context, consecutive failed actions) → **`incomplete`**. The repair budget (consecutive verification rejections) → **`failed`**. `blocked` comes only from `ask_user` in a non-interactive run.
+General budgets (max iterations, wall-clock, per-tool timeout, max context, consecutive failed actions) → **`incomplete`**. The repair budget (consecutive verification rejections) → **`failed`**. `blocked` comes only from `ask_user` in a non-interactive run. The per-run wall-clock is **nullable** (ADR-0043): the attended cockpit defaults it off — Ctrl-C and `max_iterations` are the backstops there — while batch/eval keep the 600s cap; an explicitly configured cap (env or `.env`) always wins.
 
 ## 4. Deep dive — verification
 
