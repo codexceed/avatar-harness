@@ -545,21 +545,43 @@ def effective_invocation(command: str) -> tuple[str, list[str]]:
     return "", []
 
 
-# Programs that don't exercise the project's code — a declared verification check built on one is
-# vacuous (it passes without proving anything). Rejected at declaration so a model-declared contract
-# (ADR-0038) can't be a no-op the model asserts passes. NOT exhaustive: the immutable floor (a check
-# the model can't author or amend) is the real anti-vacuity anchor; this only blocks the obvious.
-_VACUOUS_PROGRAMS = frozenset({"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["})
+# Programs that don't exercise the project's code — no-ops, emitters, and read-only inspectors.
+# A declared check whose every stage is one of these is vacuous (it disposes of nothing). Rejected
+# at declaration so a model-declared contract (ADR-0038) can't be a no-op the model asserts passes.
+# NOT exhaustive: the immutable floor (a check the model can't author or amend) is the real
+# anti-vacuity anchor; this only blocks the obvious.
+_VACUOUS_PROGRAMS = frozenset(
+    {"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["}
+    | {"grep", "rg", "head", "tail", "wc", "sleep"}  # read-only inspectors (same class as `test`)
+)
+
+
+def _vacuous_segment(segment: str) -> bool:
+    """Whether one command segment's effective program is a no-op/inspector.
+
+    Args:
+        segment: One command segment (no `&&`/`;`/`|` chaining).
+
+    Returns:
+        `True` when the segment executes nothing that could exercise the project.
+    """
+    program, _args = effective_invocation(segment)
+    return not program or program in _VACUOUS_PROGRAMS
 
 
 def vacuous_declared_check(command: str) -> bool:
     """Whether a model-declared verification command is vacuous (proves nothing — ADR-0038).
 
-    A check is vacuous when it is empty or its effective program (after unwrapping
-    env/`sudo`/`uv run`/`npx`/`python -m`) does not run the project's code — e.g. `true`,
-    `echo ok`, `:`. Such a command exits 0 regardless of the artifact, so it can't be a real
-    contract. This is a *lower bound* guard, not proof of adequacy: the immutable floor beneath
-    the declared contract is what ultimately anchors non-vacuity.
+    A check is vacuous when it is empty or when *every* executed program on the line —
+    each `&&`/`||`/`;` segment and each `|` pipeline stage, after unwrapping
+    env/`sudo`/`uv run`/`npx`/`python -m` — is a no-op/inspector (`true`, `echo`, `grep`, …).
+    Such a line exits 0 regardless of the artifact, so it can't be a real contract. One real
+    stage redeems the line: `printf 'q' | python -m game` drives the program under test via
+    stdin and must not be rejected for its `printf` head (dogfood 7e49b161 — the rejection
+    cost a turn plus a tier-3 amendment approval for an equivalent check). The split is
+    quote-blind, so an in-quote `|`/`;` can only mis-split toward *accepting* — the safe
+    direction for a lower-bound guard: the immutable floor beneath the declared contract is
+    what ultimately anchors non-vacuity.
 
     Args:
         command: The declared check command to validate.
@@ -567,8 +589,13 @@ def vacuous_declared_check(command: str) -> bool:
     Returns:
         `True` when the command is vacuous and must be rejected.
     """
-    program, _args = effective_invocation(command)
-    return not program or program in _VACUOUS_PROGRAMS
+    stages = [
+        stage.strip()
+        for segment in _split_segments(command)
+        for stage in segment.split("|")  # single `|`; `||` was consumed by _split_segments
+        if stage.strip()
+    ]
+    return not stages or all(_vacuous_segment(stage) for stage in stages)
 
 
 def _first_positional(args: list[str]) -> str:
