@@ -40,6 +40,78 @@ Claude's addition** (Codex's blind spot — it critiqued only the content-risk a
 
 **Cadence:** pick a rhythm (≈ one post / 1–2 weeks). Seven posts without a cadence is a backlog, not a presence.
 
+## 2026-07-09 update — post-improvement-loop candidates + master scorecard
+
+**What changed since the 2026-06-16 roadmap.** The evals-driven improvement loop *shipped* (Workflows
+A/B, increments 0–3, merged 2026-07-05), moving the project from rung C to **rung D** ("agent proposes
+changes to itself/its harness") on the capability ladder below. That, plus two new frontier eval tasks
+(news-analyzer ADR-0035, ecommerce-portal ADR-0036) and unified dollar/latency cost metrics (#102),
+unblocks or reframes several candidates and surfaces new ones.
+
+**Scoring legend (all 1–5).** **R** = research/novelty value + credibility with a research audience ·
+**E** = reusable engineering lesson an engineer can apply *without* adopting the harness · **P** =
+immediate practitioner/productivity value (model choice, workflow) · **U** = *uniqueness* — how
+un-crowded the angle is in public discourse as of a 2026-07-09 web scan (5 = almost nobody's written
+it; 2 = commodity take). **Status** keys off `sarthak-blog/src/content/blog/`: **Published** =
+`draft:false`; **Scaffolded** = dir exists, `draft:true` stub (~150–180 words) with a target date;
+**Unwritten** = no post yet.
+
+### New candidates (this wave)
+
+Two update existing doc entries; four are net-new. All respect the two guardrails (directional
+case-study, 6-question template).
+
+| ID | Title | Core (what + why it matters) | Evidence | R | E | P | U | Ready? |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **NC1** | Cost-per-solved: "token count is not cost" | ~90× per-token price spread; codex uses fewest tokens yet costs most in dollars; `$/solved` is the honest metric. **Matters:** directly changes model selection. **Updates A.3.** | `research/llm-landscape-2026-07-05.md`, `pricing.json`, cost dashboard (#102) | 3 | 4 | 5 | **2** | ✓ |
+| **NC2** | pass@1 vs pass^k: reliability ≠ capability | At 5 seeds the field separates far more than pass@1 implies (qwen 0.33, gemma 0.17 collapse); weak models revive "saturated" tasks. **Matters:** construct validity of agent leaderboards. **Complements blog 02.** | landscape matrix (7×6×5, n=210) | 4 | 3 | 4 | **2** | ✓ |
+| **NC3** | Oracle-gaming / verifier integrity | Make eval scores un-cheatable before removing human gates; frozen grading surface vs. an agent that can edit its own tests/verifier. **Matters:** the flagship / RSI-safety credential. **Updates ⭐ = blog 06**; adds the UTBoost hook (15.7% of "passing" SWE-bench Verified patches were gamed) and the "the field is now racing you" note (SpecBench, Verification Horizon, External Anchor Principle). | `increment-4-plan.md`, ADR-0011/0024 | 5 | 4 | 3 | **3** | ✗ demo |
+| **NC4** | The human-gated improvement loop: route on **blast radius**, not complexity | Two workflows / three gates over a deterministic core; `validate` runs against *frozen* `evals/` assets so a candidate can't grade a spec it just edited; autonomy deferred until anti-Goodhart exists. **Matters:** the "verifier is the scorer" story, now *built* not proposed — and "route on blast radius" is the one sub-angle that returned nothing in a web scan. | ADR-0024/0031/0032, `evals/improvement-loop-design.md` | 4 | 4 | 3 | **2** | ✓ |
+| **NC5** | Designing a **deterministic grader for a nondeterministic scenario** | ecommerce-portal scores a concurrency/ACID task with schedule-invariant assertions + randomness pushed into a probe stub keyed on the echoed `user_id`; SQLite-lock-as-intended-difficulty; no LLM judge. **Matters:** a concrete recipe nobody's written for *agent evals* (web scan fell through to formal-methods papers). **Best differentiation of the wave.** | ADR-0036, `research/ecommerce-portal-first-baseline-2026-07-05.md` | 3 | 5 | 3 | **4** | ✓ |
+| **NC6** | Score the **attempt**, not the prevented outcome | When a denylist enforces "no leak" deterministically, the terminal outcome can't tell intrinsic restraint from a blocked lunge; read intent from the agent-hidden journal of denied calls. **Matters:** clean, generalizable safety-eval principle. **Honest caveat:** the attempt-vs-effect split already exists in the literature (the tool-affordance-on-safety paper), so lead with that citation and position the journal method as the *harness-native* instantiation. Impl deferred (ADR-0034 is design-only). | ADR-0034 | 5 | 4 | 2 | **3** | ~ concept |
+
+**Strategic read of the U column:** readiness and uniqueness are *inversely correlated* here. The
+write-now posts (NC1, NC2) are the most crowded — publish them as *"our data confirming a known
+effect,"* not as reveals. **NC5 is the sleeper** (unique, ready, hard to nitpick) and is the best
+antidote to invisibility for an unknown author. **NC3's moat is shrinking** as the field races in —
+which *raises* the urgency of building the demo, since "I ran it in a live self-modifying harness" is
+now the whole differentiator. Recommended shift: lead with **NC5**, keep **NC1** as a fast
+confirming-data follow-up, and treat the **NC3 demo as time-sensitive** rather than perpetually-last.
+
+### Master scorecard — every candidate + published status
+
+Deduplicated by article concept (overlapping doc refs folded, noted in the last column). Blog dir =
+`sarthak-blog/src/content/blog/`.
+
+| Candidate (doc ref) | Blog dir | R | E | P | U | Status | Note |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Post 0 — "When is an agent truly done?" (verifier owns done) | `00-verification-first-harness` | 3 | 4 | 3 | 2 | **Published** (2026-06-18) | — |
+| Post 1 / T2 — "scaffold, not model" (0.10→0.75) | `01-scaffold-not-model` | 4 | 4 | 4 | 3 | **Published** (2026-07-01) | — |
+| #2 spine / "What pass@1 hides" (token asymmetry) | `02-what-pass-at-1-hides` | 4 | 3 | 4 | 2 | **Scaffolded** (draft, 2026-06-24) | pair with **NC2** (reliability angle) |
+| #3 spine / "Failure modes from the first eval loop" | `03-failure-modes` | 3 | 3 | 3 | 3 | **Scaffolded** (draft, 2026-06-30) | subsumes A.2 (failure buckets) |
+| #3 / #4 spine — "A verifier is not a tool" | `04-verifier-is-not-a-tool` | 4 | 4 | 3 | 3 | **Scaffolded** (draft, 2026-07-08) | #5 "verifier is the scorer" folds in here |
+| #1 / #5 spine — "The model proposes, the harness disposes" | `05-model-proposes-harness-disposes` | 3 | 4 | 3 | 2 | **Scaffolded** (draft, 2026-07-16) | manifesto; earn it with empirics first |
+| ⭐ / A.4 — oracle-gaming / verifier integrity | `06-oracle-gaming` | 5 | 4 | 3 | 3 | **Scaffolded** (draft, 2026-07-30) | = **NC3**; needs the demo built |
+| A.3 — cost per solved | — | 3 | 4 | 5 | 2 | **Unwritten** (evidence ready) | = **NC1** |
+| A.1 — "What counts as solved? probe- vs verifier-owned" | — | 4 | 4 | 3 | 4 | **Unwritten** | fresh; ecommerce/news-analyzer give cases |
+| A.5 — "A tiny rejection-sampling loop" | — | 4 | 3 | 3 | 3 | **Unwritten** (needs build) | first real closed-loop uplift result |
+| #2 — "State is not a transcript" | — | 3 | 5 | 3 | 3 | **Unwritten** | = B.2 (structured state vs scraping) |
+| #4 / C.1 — "We let an agent read `.env` once" | — | 3 | 4 | 4 | 3 | **Unwritten** | narrative/security; secret-safety regression |
+| #6 — "Building a coding agent with coding agents" | — | 2 | 3 | 4 | 3 | **Unwritten** | meta; pairs with the timeline graphic |
+| #7 / B.3 / D.1 — "The cockpit is a subscriber, not the runtime" | — | 2 | 4 | 3 | 3 | **Unwritten** | control-vs-observation lesson |
+| B.1 — "The journal is the dataset" | — | 3 | 4 | 3 | 3 | **Unwritten** | instrumentation framing |
+| C.2 — "Silent truncation is a bug, not a context strategy" | — | 2 | 4 | 3 | 3 | **Unwritten** | bite-sized context-engineering |
+| C.3 — "Native tool calls fixed one class of patch failures" | — | 2 | 4 | 3 | 2 | **Unwritten** | pragmatic tooling note |
+| C.4 — "Errors disguised as success" (flaky provider) | — | 3 | 5 | 3 | 4 | **Unwritten** (kit ready) | full kit: [`blog_kits/provider-reliability-retries.md`](blog_kits/provider-reliability-retries.md) |
+| D.2 — "The task, not the session, is the unit of truth" | — | 3 | 4 | 3 | 3 | **Unwritten** | product/kernel boundary |
+| **NC4** — human-gated loop (route on blast radius) | — | 4 | 4 | 3 | 2 | **Unwritten** | net-new; the loop is now built |
+| **NC5** — deterministic grader (concurrency) | — | 3 | 5 | 3 | 4 | **Unwritten** | net-new; strongest differentiation |
+| **NC6** — score the attempt | — | 5 | 4 | 2 | 3 | **Unwritten** (concept) | net-new; cite affordance paper |
+
+> **Snapshot:** 2 published, 5 scaffolded, 15 unwritten. The published/scaffolded set already covers
+> the original spine (Posts 0→5 + flagship); the highest-value *unstarted* work is **NC5** (unique +
+> ready), **A.1** (fresh, cases now exist), and finishing the **06-oracle-gaming** demo (**NC3**).
+
 ## Distribution plan (the layer amendment #1 names)
 
 **Goals this serves:** contribute to public knowledge · get real feedback on process/conclusions ·

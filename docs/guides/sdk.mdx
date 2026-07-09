@@ -180,7 +180,7 @@ local `.env`):
 | `AVATAR_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint. |
 | `AVATAR_WORKSPACE_ROOT` | `.` | The repo the agent operates on. |
 | `AVATAR_MAX_ITERATIONS` | `50` | Iteration budget → `incomplete`. |
-| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `600` | Per-agent-run timeout → `incomplete` (reset each run, not cumulative across a sitting). Batch/eval keep the cap; the interactive cockpit (`jo`) **disables it by default** (unset ⇒ no clock — the human's Ctrl-C and `AVATAR_MAX_ITERATIONS` are the backstops). Set it explicitly to re-impose a cap in the cockpit. |
+| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `1800` | Per-agent-run timeout → `incomplete` (reset each run, not cumulative across a sitting). Batch/eval keep the cap; the interactive cockpit (`jo`) **disables it by default** (unset ⇒ no clock — the human's Ctrl-C and `AVATAR_MAX_ITERATIONS` are the backstops). Set it explicitly to re-impose a cap in the cockpit. |
 | `AVATAR_MAX_CONSECUTIVE_FAILURES` | `5` | Thrash guard (tool errors in a row) → `incomplete`. |
 | `AVATAR_MAX_REPAIR_ATTEMPTS` | `3` | Verification rejections in a row → `failed`. |
 | `AVATAR_MAX_CONTEXT_TOKENS` | `100000` | Hard bound on the per-turn context packet. |

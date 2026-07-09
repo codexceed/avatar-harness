@@ -12,7 +12,7 @@ The per-run wall-clock budget (`max_wall_clock_seconds`, 600s) exists to bound *
 ## Decision
 
 1. **`max_wall_clock_seconds` becomes `int | None`** — `None` means *no wall-clock bound*. The runner's deadline math threads the `None` through (`deadline`, `_effective_deadline`, `_within_budget`, and the model-call timeout all treat `None` as unbounded).
-2. **The attended cockpit (`jo`) defaults it to `None`.** The human's Ctrl-C (ADR-0030) and `max_iterations` are the backstops there. Batch/eval paths keep the 600s default — unattended runs still self-terminate.
+2. **The attended cockpit (`jo`) defaults it to `None`.** The human's Ctrl-C (ADR-0030) and `max_iterations` are the backstops there. Batch/eval paths keep a finite default — unattended runs still self-terminate. (600s at decision time; `main`'s PR #104 raised it to 1800s for slow reasoning models, folded in at the merge.)
 3. **An explicitly configured cap always wins over the cockpit default.** The guard keys on `config.model_fields_set` — pydantic marks env-var *and* `.env`-sourced values alike, and defaults not at all — so any operator-stated cap survives. (The first cut keyed on `os.environ` and silently nulled a `.env`-sourced cap; caught in the PR-#106 review.)
 
 The clock stays **per-agent-run, not cumulative** across a sitting — this ADR changes who opts out, not what it measures.
@@ -26,6 +26,6 @@ The clock stays **per-agent-run, not cumulative** across a sitting — this ADR 
 ## Consequences
 
 - An attended cockpit run can now run indefinitely; the operator is the bound. `max_iterations` still terminates a model-side loop.
-- Unattended consumers (batch CLI, eval driver) are unaffected: 600s unless configured otherwise.
+- Unattended consumers (batch CLI, eval driver) are unaffected: the finite default (1800s post-PR #104) unless configured otherwise.
 - Any consumer that *wants* a cap in the cockpit states it (`AVATAR_MAX_WALL_CLOCK_SECONDS`, env var or `.env`) and it is honored.
 - Two budget axes remain deliberately separate (§5): general budgets (incl. this clock, when set) → `incomplete`; the repair budget → `failed`.
