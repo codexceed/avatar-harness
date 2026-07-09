@@ -460,6 +460,21 @@ def test_vacuous_declared_check_judges_every_segment():
     assert vacuous_declared_check("echo a | grep -q a && echo ok")
 
 
+def test_vacuous_declared_check_not_redeemed_by_shell_builtins():
+    """Unlisted shell builtins must not redeem an inspector-only line (PR-#110 review).
+
+    `all(...)` treats any unknown program as real, so `|| exit 1` or a `command -v`
+    probe laundered a pure-inspection check into acceptance. Builtins and fs-noise
+    programs execute nothing of the deliverable; a probe + a REAL run stays accepted.
+    """
+    assert vacuous_declared_check("grep -q Overview DESIGN.md || exit 1")
+    assert vacuous_declared_check("command -v pytest && grep -q Overview DESIGN.md")
+    assert vacuous_declared_check("cd pkg && test -f main.py")
+    assert vacuous_declared_check("mkdir -p out && touch out/ok && echo done")
+    # The probe pattern with a real invocation downstream is still redeemed:
+    assert not vacuous_declared_check("command -v pytest && python -m pytest -q")
+
+
 def _declared(command: str) -> PlannedCheck:
     return PlannedCheck(name="declared_1", command=command, kind="declared", provenance="model-declared")
 

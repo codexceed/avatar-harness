@@ -724,6 +724,41 @@ def test_declare_verification_rejects_vacuous_check(tmp_path):
     assert deps.declared_contract is None
 
 
+def test_declare_verification_judges_vacuity_across_the_contract(tmp_path):
+    # PR-#110 review: one real executing check redeems the CONTRACT — an artifact-inspection
+    # check alongside it is legal (it still runs and must pass), so the model isn't burned a
+    # turn for supplementing `pytest` with a grep over the deliverable's docs.
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(
+            checks=[
+                DeclaredCheckInput(command="python -m pytest test_x.py"),
+                DeclaredCheckInput(command="grep -q '## Verification' DESIGN.md"),
+            ]
+        ),
+        deps,
+    )
+    assert res.success
+    assert deps.declared_contract is not None and len(deps.declared_contract) == 2
+
+
+def test_declare_verification_rejects_all_vacuous_contract(tmp_path):
+    # No check executes anything: rejected, and the error steers toward an executing check.
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(
+            checks=[
+                DeclaredCheckInput(command="test -f DESIGN.md"),
+                DeclaredCheckInput(command="grep -q Overview DESIGN.md || exit 1"),
+            ]
+        ),
+        deps,
+    )
+    assert res.success is False
+    assert "at least one" in (res.error or "").lower()
+    assert deps.declared_contract is None
+
+
 def test_declare_verification_requires_at_least_one_check(tmp_path):
     deps = _declare_deps(tmp_path)
     res = declare_verification.handler(DeclareVerificationInput(checks=[]), deps)
