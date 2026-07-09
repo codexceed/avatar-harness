@@ -196,7 +196,7 @@ def test_planted_env_cannot_flip_a_verifier_command(monkeypatch, tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     # A command whose PASS is entirely at the mercy of an inherited env var — exactly the shape
     # of a rigged `pytest` run that a planted `PYTEST_ADDOPTS` would coerce green.
-    rigged = f'{sys.executable} -c "import os,sys; sys.exit(0 if os.environ.get(\'RIGGED\') else 1)"'
+    rigged = f"{sys.executable} -c \"import os,sys; sys.exit(0 if os.environ.get('RIGGED') else 1)\""
     monkeypatch.setenv("RIGGED", "1")
 
     inherited = Workspace(tmp_path, allow_dirty=True, sandbox=NoSandbox())
@@ -223,7 +223,7 @@ def test_default_workspace_is_unsealed_back_compat(monkeypatch, tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     monkeypatch.setenv("RIGGED", "1")
     ws = Workspace(tmp_path, allow_dirty=True)
-    rigged = f'{sys.executable} -c "import os,sys; sys.exit(0 if os.environ.get(\'RIGGED\') else 1)"'
+    rigged = f"{sys.executable} -c \"import os,sys; sys.exit(0 if os.environ.get('RIGGED') else 1)\""
     assert ws.run(rigged).exit_code == 0
 
 
