@@ -101,8 +101,11 @@ declare_verification = ToolDefinition(
     name="declare_verification",
     description=(
         "Declare the verification contract for a from-scratch task: one or more commands that RUN "
-        "what you build and exit non-zero if it is broken (e.g. `python -m pytest test_x.py`). The "
-        "harness runs them itself and grades on the real exit code. Declare this before you finish."
+        "what you build and exit non-zero if it is broken. At least one check MUST exercise the "
+        "actual deliverable end-to-end — the real entry point imports and launches (e.g. run the "
+        "program, or import its main module), not only isolated unit tests. Install any tooling your "
+        "checks need first, and make the commands run in that environment. The harness runs them "
+        "itself and grades on the real exit code. Declare this before you edit."
     ),
     input_model=DeclareVerificationInput,
     handler=_declare_verification,
@@ -116,8 +119,10 @@ alter_verification = ToolDefinition(
     description=(
         "Amend the verification contract you declared, when a check has become obsolete as the "
         "design evolved (NOT to dodge a real failure). Supply the replacement checks and a rationale. "
-        "This is gated: a human approves it, or an autonomous run applies its configured policy. The "
-        "immutable floor beneath your contract cannot be amended away."
+        "The replacement must still exercise the deliverable end-to-end — you may not narrow the "
+        "contract to skip running the real entry point. This is gated: a human approves it, or an "
+        "autonomous run applies its configured policy. The immutable floor beneath your contract "
+        "cannot be amended away."
     ),
     input_model=AlterVerificationInput,
     handler=_alter_verification,

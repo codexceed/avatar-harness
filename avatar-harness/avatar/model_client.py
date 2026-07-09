@@ -275,7 +275,11 @@ _KIND_FRAMING = {
         "with str_replace (or write_file to create or rewrite a file). An external verifier runs "
         "real tests/lint on your diff — and if this repo has no test/lint setup for the harness to "
         "detect, you MUST first declare how your change will be verified via declare_verification "
-        "(executing checks that fail on breakage) BEFORE you edit."
+        "(executing checks that fail on breakage) BEFORE you edit. That contract must exercise the "
+        "actual deliverable end-to-end — at least one check that runs the real entry point (it "
+        "imports and launches without error), not only isolated unit tests. You also own toolchain "
+        "setup: do not assume a test runner or dependencies are pre-installed — install what your "
+        "checks need, and make your declared commands run in that same environment."
     ),
     "test_only": (
         "Your mission: ADD or change tests that capture the intended behavior. The new "
