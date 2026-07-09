@@ -12,7 +12,6 @@ nothing journaled.
 """
 
 import argparse
-import os
 from uuid import uuid4
 
 from avatar import (
@@ -69,8 +68,9 @@ def main(
         # The cockpit is attended: Ctrl-C is an instant hard-cancel and `max_iterations` bounds a
         # runaway, so the per-run wall-clock guillotine is off by default here — it used to
         # terminate in-progress builds as `incomplete` mid-work. An explicit
-        # AVATAR_MAX_WALL_CLOCK_SECONDS still wins for anyone who wants a cap.
-        if "AVATAR_MAX_WALL_CLOCK_SECONDS" not in os.environ:
+        # AVATAR_MAX_WALL_CLOCK_SECONDS still wins for anyone who wants a cap — keyed on
+        # `model_fields_set` (not os.environ) so a `.env`-sourced cap counts too (PR-#106 review).
+        if "max_wall_clock_seconds" not in config.model_fields_set:
             config.max_wall_clock_seconds = None
     session_id = uuid4().hex
     log_path = resolve_log_path(args.log, session_id)
