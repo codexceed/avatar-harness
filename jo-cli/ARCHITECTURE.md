@@ -62,7 +62,7 @@ flowchart TD
     APP -->|observe events| SESS
     APP -->|control via| MOD
     MOD -->|resolve_approval / plan choice| SESS
-    RP -.->|observe (tests / future --replay)| APP
+    RP -.->|observe: tests + future replay| APP
 
     classDef pkg fill:#1b4332,stroke:#52b788,color:#d8f3dc;
     classDef ext fill:#343a40,stroke:#868e96,color:#dee2e6;
