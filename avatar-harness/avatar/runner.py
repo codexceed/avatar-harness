@@ -250,7 +250,8 @@ class AgentRunner:
         """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
-        deadline = time.monotonic() + self.config.max_wall_clock_seconds
+        wall = self.config.max_wall_clock_seconds
+        deadline = time.monotonic() + wall if wall is not None else None  # None ⇒ no wall-clock bound
         self._approval_wait_seconds = 0.0  # reset the human-wait credit for this run
         self._resolved_plan = None  # re-resolve the verification plan fresh for this run
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
@@ -259,7 +260,7 @@ class AgentRunner:
         # The effective deadline slides forward by time spent blocked on human approval, so the
         # wall-clock budget bounds agent work only. Read it fresh each turn — the credit grows
         # while a tool call sits at the approval gate.
-        while not state.terminal and self._within_budget(state, deadline + self._approval_wait_seconds):
+        while not state.terminal and self._within_budget(state, self._effective_deadline(deadline)):
             if self.deps.cancellation.cancelled:
                 self._stop_incomplete(state, "run cancelled", kind="cancelled")
                 self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
@@ -283,9 +284,10 @@ class AgentRunner:
                     # timeout only bounds the gap between chunks, so a live-but-runaway stream could
                     # otherwise blow past max_wall_clock_seconds within one turn (checked only between
                     # turns). An empty `done` means the deadline elapsed mid-call.
+                    eff = self._effective_deadline(deadline)
                     done, _ = await asyncio.wait(
                         {task, cancel_wait},
-                        timeout=max(0.0, deadline + self._approval_wait_seconds - time.monotonic()),
+                        timeout=None if eff is None else max(0.0, eff - time.monotonic()),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 except asyncio.CancelledError:
@@ -845,12 +847,24 @@ class AgentRunner:
 
     # --- bounding (§5) ---------------------------------------------------
 
-    def _within_budget(self, state: TaskState, deadline: float) -> bool:
+    def _effective_deadline(self, deadline: float | None) -> float | None:
+        """The wall-clock deadline credited with human-approval wait; `None` when unbounded.
+
+        Args:
+            deadline: The base monotonic deadline, or `None` when no wall-clock budget applies
+                (the attended-cockpit default — the human and `max_iterations` are the backstops).
+
+        Returns:
+            The credited deadline, or `None` to mean 'no wall-clock bound'.
+        """
+        return None if deadline is None else deadline + self._approval_wait_seconds
+
+    def _within_budget(self, state: TaskState, deadline: float | None) -> bool:
         return (
             state.iterations < self.config.max_iterations
             and state.consecutive_failures < self.config.max_consecutive_failures
             and state.repair_failures < self.config.max_repair_attempts
-            and time.monotonic() < deadline
+            and (deadline is None or time.monotonic() < deadline)
         )
 
     def _context_over_budget(self, context: ContextPacket) -> bool:

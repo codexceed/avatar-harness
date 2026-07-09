@@ -51,7 +51,10 @@ class HarnessConfig(BaseSettings):
 
     # Budgets — the bounding conditions of the loop (§5).
     max_iterations: int = 50
-    max_wall_clock_seconds: int = 600
+    # Per-agent-run wall-clock bound (reset each run, not cumulative across a sitting). `None`
+    # disables it — correct for the attended cockpit, where the human (Ctrl-C) and `max_iterations`
+    # are the backstops; an unattended/eval run keeps a real cap so a runaway can't burn forever.
+    max_wall_clock_seconds: int | None = 600
     max_consecutive_failures: int = 5
     max_repair_attempts: int = 3
     max_context_tokens: int = 100_000

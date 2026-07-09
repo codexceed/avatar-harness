@@ -438,6 +438,30 @@ def test_wall_clock_budget_yields_incomplete(git_repo):
     assert result.iterations == 0  # the wall-clock bound short-circuits, not iteration exhaustion
 
 
+def test_none_wall_clock_disables_the_guillotine(git_repo):
+    # `max_wall_clock_seconds=None` (the attended-cockpit default) removes the per-run clock: the
+    # run proceeds on its own terms rather than being cut off mid-work. `_within_budget` skips the
+    # clock check, and the other budgets (iterations) still bound the loop.
+    runner = _runner(git_repo, _edit_registry(), [], max_wall_clock_seconds=None)
+    state = TaskState(goal="x", task_kind="investigate")
+    assert runner._within_budget(state, None) is True  # no wall-clock kill, whatever the elapsed time
+    state.iterations = runner.config.max_iterations
+    assert runner._within_budget(state, None) is False  # iterations remain the backstop
+
+
+def test_none_wall_clock_run_reaches_its_own_terminal(git_repo):
+    # End-to-end: with the clock off, the investigate run reaches its own final_answer instead of an
+    # `incomplete` wall-clock stop (contrast with the `max_wall_clock_seconds=0` case above).
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py subtracts in add()")),
+    ]
+    state = TaskState(goal="look around", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions, max_wall_clock_seconds=None).run(state)
+    assert result.iterations >= 1  # not short-circuited at iteration 0 by a wall-clock bound
+    assert result.final_answer == "calc.py subtracts in add()"  # reached its own terminal decision
+
+
 def test_context_budget_yields_incomplete(git_repo):
     # A tiny context-token budget is exceeded immediately → incomplete (not failed).
     decisions = [ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"}))]
