@@ -8,7 +8,7 @@ anchored on the existing tracked set plus three new SotA offerings.
 `evals/results/`), so the raw data is self-contained here. Journals kept under
 `eval_run_20260705T173314Z/` (`--no-cleanup`, not committed); reproduce them with the command below.
 **Reproduce (matrix):** `make eval-matrix MATRIX_MODELS="minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2,deepseek/deepseek-v4-pro,google/gemma-4-31b-it,qwen/qwen3.6-27b"` (SEEDS=5, CONCURRENCY=8, NO_CLEANUP=1 are the target defaults).
-**Reproduce (heatmap):** `uv run python scripts/eval_heatmap.py evals/results/20260705T173314Z.jsonl`.
+**Reproduce (heatmaps):** `uv run python scripts/eval_heatmap.py evals/results/20260705T173314Z.jsonl` (emits both the pass@1 solved-rate and pass^k reliability SVGs; `--metric pass1|passk` for just one).
 
 ## Why this run
 
@@ -73,6 +73,13 @@ At 5 seeds, `pass^k` separates the field far more sharply than `pass@1`: only `g
 is solidly reliable; `glm-5.2` shows a capable-but-inconsistent 0.80/0.50 split, and the two weakest
 new models are barely reliable (`qwen` 0.33, `gemma` 0.17 — it rarely lands all seeds of a task). A
 one-seed or `pass@1`-only reading would have flattered them.
+
+The reliability heatmap makes the "works every time" lens explicit: each cell is binary — solved on
+*every* seed, or not — so the capable-but-inconsistent models (e.g. `glm-5.2`) lose cells the pass@1
+figure keeps warm. `ecommerce-portal` is a fully cold column (nobody reliable), and the ``all models``
+row shows how few models reliably clear each task.
+
+![Reliability (pass^k) per (model, task) — 7-model landscape, binary all-seeds-solved cells](assets/20260705T173314Z-reliability-heatmap.svg)
 
 ## Failure modes and cost
 
