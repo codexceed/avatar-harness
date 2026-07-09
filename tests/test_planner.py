@@ -435,6 +435,46 @@ def test_vacuous_declared_check_flags_noops():
     assert not vacuous_declared_check("uv run pytest")  # unwrapped to pytest
 
 
+def test_vacuous_declared_check_judges_every_segment():
+    """The guard judges every `&&`/`;` segment and `|` pipeline stage, never just token 0.
+
+    Dogfood 7e49b161 (tetris_glm): `printf 'q' | python3 -m ascii_tetris.main` was
+    rejected as vacuous because the line's first program was `printf` — though the
+    pipeline drives the real entry point via stdin. One real stage redeems the line;
+    a line of pure no-ops/inspectors (`test`/`grep`/`echo`) is still rejected.
+    """
+    # The log's false positives — a real program downstream of a vacuous head:
+    assert not vacuous_declared_check("printf 'q' | python3 -m ascii_tetris.main --no-raw")
+    assert not vacuous_declared_check("echo starting && pytest -q")
+    # The log's turn-5 amendment — accepted, now on the strength of its python3 stage:
+    assert not vacuous_declared_check(
+        "out=$(printf 'jjj q' | python3 -m ascii_tetris.main --no-raw 2>&1); "
+        'echo "$out" | grep -qi score && echo "$out" | grep -qi quit'
+    )
+    # All-vacuous lines stay rejected — including grep-led ones (inspection, not execution),
+    # which today pass or fail on the accident of which program comes first:
+    assert vacuous_declared_check(
+        "test -f DESIGN.md && grep -q '^## 1. Overview' DESIGN.md && echo 'DESIGN.md OK'"
+    )
+    assert vacuous_declared_check("grep -q Overview DESIGN.md")
+    assert vacuous_declared_check("echo a | grep -q a && echo ok")
+
+
+def test_vacuous_declared_check_not_redeemed_by_shell_builtins():
+    """Unlisted shell builtins must not redeem an inspector-only line (PR-#110 review).
+
+    `all(...)` treats any unknown program as real, so `|| exit 1` or a `command -v`
+    probe laundered a pure-inspection check into acceptance. Builtins and fs-noise
+    programs execute nothing of the deliverable; a probe + a REAL run stays accepted.
+    """
+    assert vacuous_declared_check("grep -q Overview DESIGN.md || exit 1")
+    assert vacuous_declared_check("command -v pytest && grep -q Overview DESIGN.md")
+    assert vacuous_declared_check("cd pkg && test -f main.py")
+    assert vacuous_declared_check("mkdir -p out && touch out/ok && echo done")
+    # The probe pattern with a real invocation downstream is still redeemed:
+    assert not vacuous_declared_check("command -v pytest && python -m pytest -q")
+
+
 def _declared(command: str) -> PlannedCheck:
     return PlannedCheck(name="declared_1", command=command, kind="declared", provenance="model-declared")
 

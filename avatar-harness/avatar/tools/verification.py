@@ -42,6 +42,12 @@ class AlterVerificationInput(BaseModel):
 def _validate_checks(checks: list[DeclaredCheckInput]) -> tuple[list[PlannedCheck], str]:
     """Validate declared/amended checks and build their `PlannedCheck`s (ADR-0038).
 
+    Vacuity is judged across the whole contract (PR-#110 review): one executing check
+    redeems it, so an artifact-inspection check *alongside* a real one is legal — it
+    still runs and must pass. Only a contract in which no check executes anything is
+    rejected; per-check rejection recreated the burn-a-turn failure the per-segment
+    fix removed, one level up.
+
     Args:
         checks: The model-supplied checks to validate.
 
@@ -50,12 +56,12 @@ def _validate_checks(checks: list[DeclaredCheckInput]) -> tuple[list[PlannedChec
     """
     if not checks:
         return [], "declare at least one verification check (an executing test/lint command)"
-    vacuous = [c.command for c in checks if vacuous_declared_check(c.command)]
-    if vacuous:
-        # Model-correctable (§10): a no-op check proves nothing; the model supplies a real one.
+    if all(vacuous_declared_check(c.command) for c in checks):
+        # Model-correctable (§10): an inspection-only contract proves nothing about the code.
         return [], (
-            f"these checks are vacuous (they don't run the code): {vacuous}. "
-            "Use commands that execute what you built and fail (non-zero exit) if it is broken."
+            f"every declared check is vacuous (none executes the code): "
+            f"{[c.command for c in checks]}. At least one check must RUN what you build "
+            "and fail (non-zero exit) if it is broken."
         )
     planned = [
         PlannedCheck(
