@@ -545,14 +545,18 @@ def effective_invocation(command: str) -> tuple[str, list[str]]:
     return "", []
 
 
-# Programs that don't exercise the project's code — no-ops, emitters, and read-only inspectors.
-# A declared check whose every stage is one of these is vacuous (it disposes of nothing). Rejected
-# at declaration so a model-declared contract (ADR-0038) can't be a no-op the model asserts passes.
-# NOT exhaustive: the immutable floor (a check the model can't author or amend) is the real
-# anti-vacuity anchor; this only blocks the obvious.
+# Programs that don't exercise the project's code — no-ops, emitters, read-only inspectors,
+# shell builtins/probes, and filesystem noise. A declared check whose every stage is one of these
+# is vacuous (it disposes of nothing). Rejected at declaration so a model-declared contract
+# (ADR-0038) can't be a no-op the model asserts passes. Execution-capable wrappers (`env`, `eval`,
+# `find` with `-exec`, `xargs`) are deliberately absent — unknown programs count as real, so a
+# mis-parse fails open (accepts). NOT exhaustive: the immutable floor (a check the model can't
+# author or amend) is the real anti-vacuity anchor; this only blocks the obvious.
 _VACUOUS_PROGRAMS = frozenset(
     {"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["}
-    | {"grep", "rg", "head", "tail", "wc", "sleep"}  # read-only inspectors (same class as `test`)
+    | {"grep", "rg", "head", "tail", "wc", "sleep", "sort", "uniq", "cut", "tr", "stat"}
+    | {"exit", "return", "command", "type", "which", "hash", "cd", "export", "set", "unset"}
+    | {"mkdir", "touch", "rm", "cp", "mv", "chmod", "dirname", "basename"}
 )
 
 
@@ -579,9 +583,10 @@ def vacuous_declared_check(command: str) -> bool:
     stage redeems the line: `printf 'q' | python -m game` drives the program under test via
     stdin and must not be rejected for its `printf` head (dogfood 7e49b161 — the rejection
     cost a turn plus a tier-3 amendment approval for an equivalent check). The split is
-    quote-blind, so an in-quote `|`/`;` can only mis-split toward *accepting* — the safe
-    direction for a lower-bound guard: the immutable floor beneath the declared contract is
-    what ultimately anchors non-vacuity.
+    quote-blind, so an in-quote `|`/`;` can only mis-split toward *accepting* — e.g.
+    `echo "a | b"` now passes because its phantom second stage `b"` reads as an unknown
+    (real) program. That is the safe direction for a lower-bound guard: the immutable
+    floor beneath the declared contract is what ultimately anchors non-vacuity.
 
     Args:
         command: The declared check command to validate.
