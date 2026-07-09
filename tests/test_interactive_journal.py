@@ -141,3 +141,14 @@ def test_cockpit_respects_explicit_wall_clock_env(git_repo, monkeypatch, tmp_pat
     monkeypatch.setenv("AVATAR_MAX_WALL_CLOCK_SECONDS", "300")
     repl = _launch_default_config(git_repo, monkeypatch, tmp_path)
     assert repl.harness.config.max_wall_clock_seconds == 300
+
+
+def test_cockpit_respects_wall_clock_from_dotenv(git_repo, monkeypatch, tmp_path):
+    # PR-#106 review: the guard keyed on os.environ and missed a `.env`-sourced cap — an
+    # operator's explicit AVATAR_MAX_WALL_CLOCK_SECONDS was silently nulled. The setting's
+    # source must not matter; pydantic marks env-var and dotenv values alike in
+    # `model_fields_set` (and defaults not at all).
+    monkeypatch.delenv("AVATAR_MAX_WALL_CLOCK_SECONDS", raising=False)
+    (tmp_path / ".env").write_text("AVATAR_MAX_WALL_CLOCK_SECONDS=900\n", encoding="utf-8")
+    repl = _launch_default_config(git_repo, monkeypatch, tmp_path)  # chdirs into tmp_path
+    assert repl.harness.config.max_wall_clock_seconds == 900
