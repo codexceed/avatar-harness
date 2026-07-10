@@ -21,6 +21,8 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Static, TextArea
 
+from avatar import UNGRANTABLE_TOOLS
+
 
 @dataclass(frozen=True)
 class ApprovalChoice:
@@ -110,8 +112,9 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self._show_detail = False
         # A contract amendment must be ratified per occurrence — a standing grant would
         # let the model re-move its own goalposts silently (ADR-0038/0039). The core's
-        # Session refuses to store/match such grants; hiding [a] keeps the UI honest.
-        self._grantable = tool != "alter_verification"
+        # Session refuses to store/match such grants; hiding [a] keeps the UI honest,
+        # derived from the same core constant so the two seams cannot drift.
+        self._grantable = tool not in UNGRANTABLE_TOOLS
 
     def compose(self) -> Iterator[Widget]:
         """Render the bounded dialog: summary, the (toggleable) detail, buttons, key hints.

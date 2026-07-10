@@ -64,7 +64,7 @@ from avatar.model_client import (
     ToolCall,
 )
 from avatar.planner import VerificationPlanner
-from avatar.session import ApprovalGrant, Session
+from avatar.session import UNGRANTABLE_TOOLS, ApprovalGrant, Session
 from avatar.session_state import ReplSession, SessionState, Turn
 from avatar.state import PlannedCheck, TaskState
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
@@ -102,6 +102,7 @@ __all__ = [  # noqa: RUF022 — grouped by role, not alphabetized: the grouping 
     "EventSink",
     "ApprovalController",
     "ApprovalGrant",
+    "UNGRANTABLE_TOOLS",
     # --- multi-turn session scope (Phase 3.1 Lane 2a) ---
     "ReplSession",
     "SessionState",

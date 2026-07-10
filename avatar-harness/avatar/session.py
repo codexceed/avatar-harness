@@ -35,7 +35,7 @@ _GRANT_MAX_TIER = 4
 # the session (ADR-0038/0039 — the semi-frozen contract is amendable only through a gate a
 # human answers each time; only the config-gated *unattended* policy may auto-approve).
 # Enforced at grant storage AND grant matching, so even a hand-built grant is inert.
-_UNGRANTABLE_TOOLS = frozenset({"alter_verification"})
+UNGRANTABLE_TOOLS = frozenset({"alter_verification"})
 
 
 def _grant_prefix(tool: str, tool_input: dict) -> str:
@@ -88,7 +88,7 @@ class ApprovalGrant(BaseModel):
             and an ungrantable tool (`alter_verification`) never matches — a contract
             amendment is ratified by a human every time.
         """
-        if tier >= _GRANT_MAX_TIER or tool in _UNGRANTABLE_TOOLS:
+        if tier >= _GRANT_MAX_TIER or tool in UNGRANTABLE_TOOLS:
             return False
         return self.tool == tool and self.tier >= tier and bool(self.prefix) and self.prefix == program
 
@@ -328,7 +328,7 @@ class Session:
             pending = next(iter(self._pending.values()))
         if pending is None or pending.future.done():
             return
-        grantable = pending.tool not in _UNGRANTABLE_TOOLS
+        grantable = pending.tool not in UNGRANTABLE_TOOLS
         if allow and remember and grantable and pending.program and pending.tier < _GRANT_MAX_TIER:
             self._grants.append(ApprovalGrant(tool=pending.tool, prefix=pending.program, tier=pending.tier))
         pending.future.set_result(allow)

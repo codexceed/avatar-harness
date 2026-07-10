@@ -382,7 +382,10 @@ class CockpitApp(App):
         self.activity = label
         self.activity_style = style if label is not None else ""
         if self._spinner_timer is not None:
-            self._spinner_timer.resume() if label is not None else self._spinner_timer.pause()
+            if label is not None:
+                self._spinner_timer.resume()
+            else:
+                self._spinner_timer.pause()
         self._render_activity()
 
     def _spin(self) -> None:

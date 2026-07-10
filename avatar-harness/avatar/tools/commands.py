@@ -190,7 +190,10 @@ def _run_command(args: RunCommandInput, deps: RunDeps) -> ToolResult:
         return ToolResult(tool_name="run_command", success=False, error="empty command")
     # ADR-0045: reject shell syntax instead of silently mis-executing it. A `&&` chain
     # would run ONLY the first program (the rest as its literal argv) yet report exit=0 —
-    # manufactured evidence; a heredoc would block on stdin until the timeout.
+    # manufactured evidence; a heredoc would block on stdin until the timeout. This runs
+    # AFTER the tier-3 gate (an approved chained call is refused without executing): the
+    # gate stays tool-semantics-blind by design (§13) — one wasted modal is the cost of
+    # not teaching the permission layer what each tool's input means.
     segments, reason = argv_segments(args.command)
     if not reason and len(segments) > 1:
         reason = (
