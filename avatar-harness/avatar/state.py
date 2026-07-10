@@ -145,6 +145,11 @@ class TaskState(BaseModel):
     # Frozen once via `freeze_verification_plan` — the rubric never moves mid-run.
     verification_plan: list[PlannedCheck] | None = None
 
+    # The change kinds a model-declared contract covers (ADR-0044), stamped at freeze
+    # when the declared contract becomes the plan; the verifier audits the actual diff
+    # against them. `None` = no declaration this run (tiers 1-3 / smoke) — no audit.
+    declared_change_kinds: list[str] | None = None
+
     current_plan: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     latest_error: str | None = None

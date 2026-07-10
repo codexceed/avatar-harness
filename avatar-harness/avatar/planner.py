@@ -27,8 +27,8 @@ import json
 import re
 import shlex
 import tomllib
-from collections.abc import Callable
-from pathlib import Path
+from collections.abc import Callable, Iterable
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from avatar.config import HarnessConfig
@@ -601,6 +601,117 @@ def vacuous_declared_check(command: str) -> bool:
         if stage.strip()
     ]
     return not stages or all(_vacuous_segment(stage) for stage in stages)
+
+
+# Inspectors whose exit code reflects artifact/filesystem state (given an operand): for a
+# textual deliverable these ARE the verification (ADR-0044) — `grep -q <section> DESIGN.md`
+# is the strongest external evidence a markdown artifact admits. Distinct from the emitters
+# left in `_VACUOUS_PROGRAMS` (`true`, `echo`, `printf`, …), whose exit is state-independent.
+_ASSERTIVE_INSPECTORS = frozenset(
+    {"test", "[", "grep", "rg", "cmp", "diff", "cat", "ls", "stat", "head", "tail", "wc"}
+)
+
+# Path suffixes classified as `content` (non-functional textual artifacts). Anything else —
+# including behavior-bearing config (`pyproject.toml`, CI yaml) — classifies as `code`:
+# murky fails toward the stricter rulebook (ADR-0044).
+_CONTENT_SUFFIXES = frozenset({".md", ".rst", ".txt", ".adoc"})
+
+# A content-artifact reference anywhere in a declared check — the anchor a `content`-covering
+# check must carry (same suffix set the diff-side classifier uses, so the two halves agree).
+_CONTENT_PATH_RE = re.compile(
+    r"[\w./-]+\.(?:" + "|".join(s.lstrip(".") for s in sorted(_CONTENT_SUFFIXES)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _stages(text: str) -> list[str]:
+    """All command stages of `text` — `&&`/`||`/`;` segments split again on `|`.
+
+    Args:
+        text: A shell line (or fragment) to decompose.
+
+    Returns:
+        The non-empty stages, stripped, in order.
+    """
+    return [
+        stage.strip() for segment in _split_segments(text) for stage in segment.split("|") if stage.strip()
+    ]
+
+
+def _segment_asserts(stage: str) -> bool:
+    """Whether one stage's exit code can depend on the state of an artifact.
+
+    True for a real executor (any program outside `_VACUOUS_PROGRAMS`, fail-open like
+    `_vacuous_segment`) or an assertive inspector (`test`, `grep`, `cmp`, …) given at
+    least one non-flag operand to inspect. False for emitters (`true`, `echo`, …) and
+    bare inspectors with nothing to look at.
+
+    Args:
+        stage: One command stage (no `&&`/`;`/`|` chaining).
+
+    Returns:
+        `True` when the stage asserts something about world state.
+    """
+    program, args = effective_invocation(stage)
+    if not program:
+        return False
+    if program not in _VACUOUS_PROGRAMS:
+        return True  # unknown/real program — fails open, consistent with `_vacuous_segment`
+    return program in _ASSERTIVE_INSPECTORS and any(not arg.startswith("-") for arg in args)
+
+
+def check_covers_content(command: str) -> bool:
+    """Whether a declared check covers a `content` change: anchored + falsifiable (ADR-0044).
+
+    The `content` rulebook replaces "must run what you build" (meaningless for a textual
+    deliverable) with two demands. **Anchored:** the command names a content artifact (a
+    `.md`/`.rst`/`.txt`/`.adoc` path — the same suffixes the diff-side classifier calls
+    `content`), so a plain `pytest` check never silently "covers" the docs half of a mixed
+    change. **Falsifiable:** at least one stage asserts something (an assertive inspector
+    with an operand, or a real executor), and no trailing `||` alternative that cannot fail
+    (`|| true`, `|| echo fine`) neutralizes the line to exit 0. The split is quote-blind
+    like `vacuous_declared_check`; the immutable floor beneath the contract is the
+    ultimate anchor.
+
+    Args:
+        command: The declared check command to classify.
+
+    Returns:
+        `True` when the command satisfies the `content` rulebook.
+    """
+    if not _CONTENT_PATH_RE.search(command):
+        return False  # anchored: no content artifact named — this check is not about the docs
+    alternatives = [alt for alt in command.split("||") if alt.strip()]
+    if len(alternatives) > 1 and not any(_segment_asserts(s) for s in _stages(alternatives[-1])):
+        return False  # the fallback arm can't fail — the line always exits 0
+    return any(_segment_asserts(stage) for stage in _stages(command))
+
+
+# Per-kind coverage rulebooks (ADR-0044): what one declared check must satisfy to count
+# toward a declared change kind. `code` is the ADR-0038 rule unchanged; `content` is
+# anchored + falsifiable. The registry is the single source of the valid kinds.
+CHANGE_KIND_COVERAGE: dict[str, Callable[[str], bool]] = {
+    "code": lambda command: not vacuous_declared_check(command),
+    "content": check_covers_content,
+}
+
+
+def classify_change_paths(paths: Iterable[str]) -> set[str]:
+    """The change kinds present in a set of changed paths (ADR-0044).
+
+    The verification-time half of the declared-kind audit: `.md`/`.rst`/`.txt`/`.adoc`
+    classify as `content`; every other suffix — including behavior-bearing config —
+    classifies as `code`, so ambiguity fails toward the stricter rulebook.
+
+    Args:
+        paths: Workspace-relative changed paths (from the diff / `files_modified`).
+
+    Returns:
+        The subset of `{"code", "content"}` present; empty for no paths.
+    """
+    return {
+        "content" if PurePosixPath(path).suffix.lower() in _CONTENT_SUFFIXES else "code" for path in paths
+    }
 
 
 def _first_positional(args: list[str]) -> str:

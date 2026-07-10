@@ -15,7 +15,7 @@ integrity gained. ADR-0044's cure, pinned here across its three seams:
   `classify_change_paths` maps changed paths to kinds, murky → `code`.
 - **Audit:** at verification time `kinds(diff) ⊆ declared change_kinds` — a required
   `change_kind_coverage` check fails legibly on under-declaration; over-declaration
-  is tolerated. No declaration (tiers 1–3) → no reconciliation.
+  is tolerated. No declaration (tiers 1-3) → no reconciliation.
 """
 
 from avatar.config import HarnessConfig
@@ -98,9 +98,7 @@ def _deps(tmp_path) -> RunDeps:
 
 
 def _declare(tmp_path, commands: list[str], **kwargs):
-    args = DeclareVerificationInput(
-        checks=[DeclaredCheckInput(command=c) for c in commands], **kwargs
-    )
+    args = DeclareVerificationInput(checks=[DeclaredCheckInput(command=c) for c in commands], **kwargs)
     return declare_verification.handler(args, _deps(tmp_path))
 
 
@@ -193,7 +191,7 @@ def test_verifier_tolerates_over_declaration(git_repo):
 
 
 def test_verifier_skips_audit_without_a_declaration(git_repo):
-    # Tiers 1–3 contracts declare nothing — no reconciliation runs.
+    # Tiers 1-3 contracts declare nothing — no reconciliation runs.
     state = _edit_state({"tetris.py"}, None)
     report = Verifier(HarnessConfig(test_command=_PASS, lint_command="")).verify(state, Workspace(git_repo))
     assert not any(c.name == "change_kind_coverage" for c in report.checks)

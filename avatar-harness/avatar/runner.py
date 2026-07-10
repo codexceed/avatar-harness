@@ -528,12 +528,22 @@ class AgentRunner:
         # contract is never displaced by a self-declared one; the smoke floor still covers a decline.
         if not plan and state.task_kind == "edit" and self.deps.declared_contract:
             plan = list(self.deps.declared_contract)
+            # The declared kinds freeze with the declared contract (ADR-0044): the verifier
+            # audits the actual diff against them. Tier 1-3 plans declare nothing — no audit.
+            state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
         state.freeze_verification_plan(plan)
         self.deps.verification_plan = plan  # mirrored so run_tests/run_linter ride the contract
         rubric = "; ".join(f"{c.name}: `{c.command}` [{c.provenance}]" for c in plan) or "none discovered"
         state.add_feedback(f"verification plan frozen: {rubric}", kind="verification_plan")
         self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in plan])
-        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=plan))
+        self._publish(
+            VerificationPlanFrozen(
+                task_id=state.task_id,
+                turn=state.iterations,
+                checks=plan,
+                change_kinds=state.declared_change_kinds,
+            )
+        )
 
     def _stop_incomplete(self, state: TaskState, reason: str, *, kind: str) -> None:
         """Record a stop reason and end the run as `incomplete` (budgets/cancellation, §5).
@@ -785,6 +795,8 @@ class AgentRunner:
         if not new_checks or state.verification_plan is None:
             return
         state.amend_declared_contract(list(new_checks))
+        if state.declared_change_kinds is not None:  # a declared contract froze — re-stamp its kinds
+            state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
         self.deps.verification_plan = state.verification_plan  # mirror, as _freeze_plan does
         rubric = state.verification_plan or []
         state.add_feedback(
@@ -792,7 +804,14 @@ class AgentRunner:
             kind="verification_plan",
         )
         self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in rubric])
-        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=rubric))
+        self._publish(
+            VerificationPlanFrozen(
+                task_id=state.task_id,
+                turn=state.iterations,
+                checks=rubric,
+                change_kinds=state.declared_change_kinds,
+            )
+        )
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).

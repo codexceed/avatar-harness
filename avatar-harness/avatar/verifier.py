@@ -15,7 +15,7 @@ is used as the plan — never a detected or invented default.
 """
 
 from avatar.config import HarnessConfig
-from avatar.planner import config_override_checks
+from avatar.planner import classify_change_paths, config_override_checks
 from avatar.state import CheckResult, PlannedCheck, TaskState, VerifierResult
 from avatar.workspace import Workspace
 
@@ -119,6 +119,9 @@ class Verifier:
             self._no_secrets(diff),
             *command_checks,
         ]
+        if state.declared_change_kinds is not None:
+            # A declared contract froze: the diff audits the declaration (ADR-0044).
+            checks.append(self._change_kind_coverage(state, diff))
         # Positive external signal: any frozen plan command passing — a targeted
         # test, or (when the repo declares none) clean lint over the diff (§12).
         return self._dispose(checks, positive={c.name for c in plan})
@@ -198,6 +201,46 @@ class Verifier:
             kind="required",
             status="pass" if present else "fail",
             evidence=f"files_modified={sorted(state.files_modified)}",
+        )
+
+    def _change_kind_coverage(self, state: TaskState, diff: str) -> CheckResult:
+        """Audit the declared change kinds against the change actually made (ADR-0044).
+
+        Self-declared kinds without reconciliation would be self-certification one level
+        up (declare `content`, ship code, dodge execution checks) — so every changed path
+        must classify to a *declared* kind. Paths come from `files_modified` (the runner's
+        tracked edits) unioned with the diff's `+++ b/` paths, catching files a shelled
+        command wrote outside the edit tools. Only under-declaration fails; over-declaring
+        is self-inflicted strictness the model may amend away (gated), not an integrity
+        violation.
+
+        Args:
+            state: The task state carrying `declared_change_kinds` and `files_modified`.
+            diff: The workspace diff whose paths are audited.
+
+        Returns:
+            The required `change_kind_coverage` check result.
+        """
+        declared = set(state.declared_change_kinds or [])
+        changed = set(state.files_modified) | _diff_paths(diff)
+        offending: dict[str, list[str]] = {}
+        for path in sorted(changed):
+            (kind,) = classify_change_paths([path])
+            if kind not in declared:
+                offending.setdefault(kind, []).append(path)
+        if offending:
+            detail = "; ".join(f"{kind}: {paths}" for kind, paths in sorted(offending.items()))
+            evidence = (
+                f"undeclared change kind(s) — declared {sorted(declared)} but the diff touches "
+                f"{detail}. Amend the contract (alter_verification) to declare and cover them."
+            )
+        else:
+            evidence = f"declared {sorted(declared)} covers all changed paths"
+        return CheckResult(
+            name="change_kind_coverage",
+            kind="required",
+            status="fail" if offending else "pass",
+            evidence=evidence,
         )
 
     def _no_secrets(self, diff: str) -> CheckResult:
@@ -313,6 +356,21 @@ class Verifier:
             checks=checks,
             recommended_next_action=None if passed else _recommend(failed, bad_skips, has_positive),
         )
+
+
+def _diff_paths(diff: str) -> set[str]:
+    """The workspace-relative paths a unified diff touches (its `+++ b/` targets).
+
+    Deletions (`+++ /dev/null`) carry no `b/` target and are skipped — a removed
+    file needs no kind coverage.
+
+    Args:
+        diff: The unified diff text.
+
+    Returns:
+        The touched paths, possibly empty.
+    """
+    return {line[len("+++ b/") :].strip() for line in diff.splitlines() if line.startswith("+++ b/")}
 
 
 def _is_test_path(path: str) -> bool:

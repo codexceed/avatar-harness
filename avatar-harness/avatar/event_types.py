@@ -181,11 +181,15 @@ class VerificationPlanFrozen(EventBase):
     Journaled at the investigating → editing boundary, before any verification:
     each check carries its command and provenance, so every run's rubric — and
     where each check came from — is auditable. An empty `checks` records that
-    nothing was discovered (the verifier will fail legibly).
+    nothing was discovered (the verifier will fail legibly). `change_kinds`
+    records the kinds a model-declared contract covers (ADR-0044) — the model's
+    stated intent, auditable against the diff; `None` = no declaration (tiers 1-3),
+    including journals written before the field existed.
     """
 
     type: Literal["verification_plan_frozen"] = "verification_plan_frozen"
     checks: list[PlannedCheck] = Field(default_factory=list)
+    change_kinds: list[str] | None = None
 
 
 class VerificationStart(EventBase):

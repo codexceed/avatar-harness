@@ -11,12 +11,33 @@ rejects no-op commands so the declared contract can't be a bar the model trivial
 from pydantic import BaseModel, Field
 
 from avatar.deps import RunDeps
-from avatar.planner import vacuous_declared_check
+from avatar.planner import CHANGE_KIND_COVERAGE
 from avatar.state import PlannedCheck
 from avatar.tools.base import ToolDefinition, ToolResult
 
 # Declared checks are offered while the model still shapes the contract, before the plan freezes.
 _DECLARE_PHASES = frozenset({"investigating", "editing"})
+
+_CHANGE_KINDS_DESCRIPTION = (
+    "The kinds of change this contract validates: 'code' (functional — behavior in executable "
+    "artifacts) and/or 'content' (textual artifacts: docs, specs). List every kind the task "
+    "touches; each needs a covering check. Defaults to ['code']."
+)
+
+# Per-kind steering appended to a coverage rejection, so the model recovers in one turn.
+# The 'code' wording keeps the ADR-0038 vocabulary ("vacuous", "at least one") — it is the
+# same rule, now scoped to the kind instead of the whole contract.
+_KIND_STEER = {
+    "code": (
+        "every candidate is vacuous there — at least one check must RUN what you build "
+        "and exit non-zero if it is broken"
+    ),
+    "content": (
+        "at least one check must inspect the artifact (name the file, e.g. "
+        "`grep -q '<required section>' FILE.md`) and be able to fail on a wrong one "
+        "— no `|| true`-style fallback"
+    ),
+}
 
 
 class DeclaredCheckInput(BaseModel):
@@ -30,6 +51,7 @@ class DeclareVerificationInput(BaseModel):
     """Input for `declare_verification`: the checks that define 'done' for this greenfield task."""
 
     checks: list[DeclaredCheckInput] = Field(description="One or more executing verification checks.")
+    change_kinds: list[str] = Field(default_factory=lambda: ["code"], description=_CHANGE_KINDS_DESCRIPTION)
 
 
 class AlterVerificationInput(BaseModel):
@@ -37,31 +59,45 @@ class AlterVerificationInput(BaseModel):
 
     checks: list[DeclaredCheckInput] = Field(description="The replacement executing verification checks.")
     rationale: str = Field(description="Why the current contract is obsolete given the code as built.")
+    change_kinds: list[str] = Field(default_factory=lambda: ["code"], description=_CHANGE_KINDS_DESCRIPTION)
 
 
-def _validate_checks(checks: list[DeclaredCheckInput]) -> tuple[list[PlannedCheck], str]:
-    """Validate declared/amended checks and build their `PlannedCheck`s (ADR-0038).
+def _validate_checks(
+    checks: list[DeclaredCheckInput], change_kinds: list[str]
+) -> tuple[list[PlannedCheck], str]:
+    """Validate declared/amended checks against the declared change kinds (ADR-0038/0044).
 
-    Vacuity is judged across the whole contract (PR-#110 review): one executing check
-    redeems it, so an artifact-inspection check *alongside* a real one is legal — it
-    still runs and must pass. Only a contract in which no check executes anything is
-    rejected; per-check rejection recreated the burn-a-turn failure the per-segment
-    fix removed, one level up.
+    Coverage is per kind, judged across the whole contract (PR-#110 review): **each**
+    declared kind needs at least one check satisfying its rulebook — `code` requires an
+    executing check, `content` an anchored+falsifiable one — and one check may count
+    toward both. Companion checks satisfying no rulebook are tolerated once every kind
+    is covered (they still run and must pass); per-check rejection recreated the
+    burn-a-turn failure the per-segment fix removed, one level up.
 
     Args:
         checks: The model-supplied checks to validate.
+        change_kinds: The declared kinds this contract must cover.
 
     Returns:
         `(planned, "")` on success, or `([], error)` with a model-correctable message.
     """
     if not checks:
         return [], "declare at least one verification check (an executing test/lint command)"
-    if all(vacuous_declared_check(c.command) for c in checks):
-        # Model-correctable (§10): an inspection-only contract proves nothing about the code.
+    if not change_kinds:
+        return [], "declare at least one change kind: 'code' (functional) and/or 'content' (textual)"
+    unknown = sorted(set(change_kinds) - CHANGE_KIND_COVERAGE.keys())
+    if unknown:
         return [], (
-            f"every declared check is vacuous (none executes the code): "
-            f"{[c.command for c in checks]}. At least one check must RUN what you build "
-            "and fail (non-zero exit) if it is broken."
+            f"unknown change kind(s) {unknown}: valid kinds are "
+            "'code' (functional) and 'content' (textual artifacts)"
+        )
+    uncovered = [k for k in change_kinds if not any(CHANGE_KIND_COVERAGE[k](c.command) for c in checks)]
+    if uncovered:
+        # Model-correctable (§10): a declared kind with no covering check proves nothing there.
+        steers = "; ".join(f"'{k}': {_KIND_STEER[k]}" for k in uncovered)
+        return [], (
+            f"no declared check covers change kind(s) {uncovered}: "
+            f"{[c.command for c in checks]}. For {steers}."
         )
     planned = [
         PlannedCheck(
@@ -73,15 +109,17 @@ def _validate_checks(checks: list[DeclaredCheckInput]) -> tuple[list[PlannedChec
 
 
 def _declare_verification(args: DeclareVerificationInput, deps: RunDeps) -> ToolResult:
-    checks, error = _validate_checks(args.checks)
+    checks, error = _validate_checks(args.checks, args.change_kinds)
     if error:
         return ToolResult(tool_name="declare_verification", success=False, error=error)
     deps.declared_contract = checks
+    deps.declared_change_kinds = list(args.change_kinds)
     rubric = "; ".join(f"`{c.command}`" for c in checks)
+    kinds = "+".join(args.change_kinds)
     return ToolResult(
         tool_name="declare_verification",
         success=True,
-        content=f"declared {len(checks)} verification check(s): {rubric}",
+        content=f"declared {len(checks)} verification check(s) covering {kinds}: {rubric}",
         summary=f"declared {len(checks)} check(s)",
     )
 
@@ -90,10 +128,11 @@ def _alter_verification(args: AlterVerificationInput, deps: RunDeps) -> ToolResu
     # The permission gate has already disposed of the amendment (attended human / ADR-0039
     # auto-approve / auto-deny) before this handler runs; here we only validate and buffer the
     # replacement, which the runner folds into the frozen plan (floor preserved).
-    checks, error = _validate_checks(args.checks)
+    checks, error = _validate_checks(args.checks, args.change_kinds)
     if error:
         return ToolResult(tool_name="alter_verification", success=False, error=error)
     deps.declared_contract = checks
+    deps.declared_change_kinds = list(args.change_kinds)
     rubric = "; ".join(f"`{c.command}`" for c in checks)
     return ToolResult(
         tool_name="alter_verification",
@@ -106,12 +145,16 @@ def _alter_verification(args: AlterVerificationInput, deps: RunDeps) -> ToolResu
 declare_verification = ToolDefinition(
     name="declare_verification",
     description=(
-        "Declare the verification contract for a from-scratch task: one or more commands that RUN "
-        "what you build and exit non-zero if it is broken. At least one check MUST exercise the "
-        "actual deliverable end-to-end — the real entry point imports and launches (e.g. run the "
-        "program, or import its main module), not only isolated unit tests. Install any tooling your "
-        "checks need first, and make the commands run in that environment. The harness runs them "
-        "itself and grades on the real exit code. Declare this before you edit."
+        "Declare the verification contract for a from-scratch task: one or more commands that exit "
+        "non-zero if the deliverable is broken, plus change_kinds — the kinds of change being made "
+        "('code' and/or 'content'). For 'code', at least one check MUST exercise the actual "
+        "deliverable end-to-end — the real entry point imports and launches (e.g. run the program, "
+        "or import its main module), not only isolated unit tests. For 'content' (docs/specs), at "
+        "least one check must inspect the artifact and fail if it is wrong (e.g. grep required "
+        "sections) — no can't-fail fallbacks. Install any tooling your checks need first, and make "
+        "the commands run in that environment. The harness runs them itself and grades on the real "
+        "exit code, and at verification time the kinds of files actually changed must all have been "
+        "declared. Declare this before you edit."
     ),
     input_model=DeclareVerificationInput,
     handler=_declare_verification,
