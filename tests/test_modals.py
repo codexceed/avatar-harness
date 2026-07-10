@@ -96,6 +96,30 @@ async def test_approval_modal_renders_amendment_legibly():
         assert "immutable floor" in text  # the un-amendable anchor is surfaced
 
 
+async def test_amendment_modal_offers_no_always_option():
+    # A contract amendment is ratified per occurrence: a standing `[a]` grant would let the
+    # model re-move its own goalposts silently for the rest of the session (ADR-0038/0039).
+    # The Always button and its `[a]` hint are absent, and the key itself is inert.
+    host = _Host(
+        ApprovalModal(
+            tool="alter_verification",
+            reason="tier 3",
+            tool_input={"checks": [{"command": "python -m pytest test_y.py"}], "rationale": "r"},
+        )
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        assert not host.screen.query("#always")  # no Always button offered
+        hints = str(host.screen.query_one("#approval_hints", Static).render())
+        assert "always" not in hints  # no [a] hint either
+        await pilot.press("a")  # the key must be inert — not a hidden grant path
+        await pilot.pause()
+        assert host.result == "UNSET"  # nothing dismissed; the modal still awaits a decision
+        await pilot.press("y")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=True, remember=False)  # allow-once still works
+
+
 async def test_approval_modal_deny():
     host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
     async with host.run_test() as pilot:
