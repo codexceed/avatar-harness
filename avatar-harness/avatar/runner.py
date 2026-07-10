@@ -532,7 +532,10 @@ class AgentRunner:
             # audits the actual diff against them. Tier 1-3 plans declare nothing — no audit.
             state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
         state.freeze_verification_plan(plan)
-        self.deps.verification_plan = plan  # mirrored so run_tests/run_linter ride the contract
+        # Mirrored for the command tools. NOTE: run_tests/run_linter resolve only
+        # `kind == "test"/"lint"` plan entries — declared checks (kind="declared") are
+        # exercised via run_command, and the tools' no-command error steers there.
+        self.deps.verification_plan = plan
         rubric = "; ".join(f"{c.name}: `{c.command}` [{c.provenance}]" for c in plan) or "none discovered"
         state.add_feedback(f"verification plan frozen: {rubric}", kind="verification_plan")
         self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in plan])
@@ -795,8 +798,11 @@ class AgentRunner:
         if not new_checks or state.verification_plan is None:
             return
         state.amend_declared_contract(list(new_checks))
-        if state.declared_change_kinds is not None:  # a declared contract froze — re-stamp its kinds
-            state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
+        # Stamp the amendment's kinds unconditionally (PR #112 review): an amendment onto a
+        # tier-1-3 detected plan is the moment a declaration first EXISTS — keying on "a
+        # declaration froze earlier" dropped the validated kinds and silently skipped the
+        # verifier's change_kind_coverage audit for a plan now holding declared checks.
+        state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
         self.deps.verification_plan = state.verification_plan  # mirror, as _freeze_plan does
         rubric = state.verification_plan or []
         state.add_feedback(

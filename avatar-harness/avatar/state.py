@@ -69,12 +69,18 @@ class PlannedCheck(BaseModel):
     check the model authors up front (mandatory for greenfield edits), frozen like tiers 1-3
     but semi-frozen — amendable only through a gated action. `floor` is the immutable
     non-vacuity anchor beneath a declared contract; the model can never amend it away.
+
+    `chain` links checks split from one `&&` line (ADR-0045): the verifier stops a chain
+    at its first failure, preserving shell short-circuit semantics — a failing segment
+    still guards a later mutating one. `None` for independent checks. Optional with a
+    default, so journals written before the field parse unchanged (version-skew rule).
     """
 
     name: str
     command: str
     kind: Literal["test", "lint", "smoke", "declared", "floor"]
     provenance: str
+    chain: str | None = None
 
 
 class CheckResult(BaseModel):

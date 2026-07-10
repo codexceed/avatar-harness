@@ -98,7 +98,8 @@ def _run_tests(args: RunTestsInput, deps: RunDeps) -> ToolResult:
             success=False,
             error=(
                 "no test command configured or discovered — set AVATAR_TEST_COMMAND or declare "
-                "one in the repo (CI workflow, package manifest, Makefile)"
+                "one in the repo (CI workflow, package manifest, Makefile). On a greenfield "
+                "declared contract, run your declared checks via run_command instead"
             ),
         )
     if args.target:

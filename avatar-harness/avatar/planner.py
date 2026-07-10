@@ -32,6 +32,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from avatar.config import HarnessConfig
+from avatar.shell_syntax import argv_segments
 from avatar.state import PlannedCheck
 from avatar.workspace import Workspace
 
@@ -307,10 +308,22 @@ class VerificationPlanner:
                 continue
             if not _citation_valid(root, command, source):
                 continue  # no validated provenance → rejected (ADR-0007 tier 3)
+            # ADR-0045 applies to proposals too (PR #112 review P1): a cited `a && b`
+            # frozen whole would run argv-mangled (the tetris_glm false-pass class).
+            # `&&` splits into chained per-segment checks; other operators have no
+            # no-shell equivalent — discard the proposal (detection-only degradation).
+            segments, reason = argv_segments(command)
+            if reason:
+                continue
             taken.add(kind)
-            accepted.append(
-                PlannedCheck(name=_SLOT_NAMES[kind], command=command, kind=kind, provenance=f"llm:{source}")
-            )
+            chain = f"llm:{kind}" if len(segments) > 1 else None
+            for i, segment in enumerate(segments):
+                name = _SLOT_NAMES[kind] if i == 0 else f"{_SLOT_NAMES[kind]}_{i + 1}"
+                accepted.append(
+                    PlannedCheck(
+                        name=name, command=segment, kind=kind, provenance=f"llm:{source}", chain=chain
+                    )
+                )
         return accepted
 
     def _ensure_client(self) -> Any:
@@ -555,6 +568,7 @@ def effective_invocation(command: str) -> tuple[str, list[str]]:
 _VACUOUS_PROGRAMS = frozenset(
     {"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["}
     | {"grep", "rg", "head", "tail", "wc", "sleep", "sort", "uniq", "cut", "tr", "stat"}
+    | {"cmp", "diff"}  # inspectors: assertive for content (with operands), never executing code
     | {"exit", "return", "command", "type", "which", "hash", "cd", "export", "set", "unset"}
     | {"mkdir", "touch", "rm", "cp", "mv", "chmod", "dirname", "basename"}
 )
@@ -616,12 +630,35 @@ _ASSERTIVE_INSPECTORS = frozenset(
 # murky fails toward the stricter rulebook (ADR-0044).
 _CONTENT_SUFFIXES = frozenset({".md", ".rst", ".txt", ".adoc"})
 
-# A content-artifact reference anywhere in a declared check — the anchor a `content`-covering
-# check must carry (same suffix set the diff-side classifier uses, so the two halves agree).
+# `.txt` basenames that carry behavior (dependency/build manifests): they classify as
+# `code` despite the suffix, in BOTH the path classifier and the content anchor, so a
+# dependency change can never ship under a `content` declaration with zero executing
+# check (PR #112 review DO).
+_BEHAVIOR_TXT_RE = re.compile(r"(?:requirements[^/]*|constraints[^/]*|CMakeLists)\.txt$", re.IGNORECASE)
+
+# A content-artifact operand of a declared-check stage — the anchor a `content`-covering
+# check must carry (same suffix set the diff-side classifier uses, so the two halves
+# agree). Matched against whole argv tokens (`fullmatch`), never searched as a substring:
+# a filename inside a string literal (`python -c "print('README.md')"`) anchors nothing
+# (PR #112 review P1).
 _CONTENT_PATH_RE = re.compile(
-    r"[\w./-]+\.(?:" + "|".join(s.lstrip(".") for s in sorted(_CONTENT_SUFFIXES)) + r")\b",
+    r"[\w./-]+\.(?:" + "|".join(s.lstrip(".") for s in sorted(_CONTENT_SUFFIXES)) + r")",
     re.IGNORECASE,
 )
+
+
+def _is_content_path(path: str) -> bool:
+    """Whether `path` classifies as a `content` artifact (suffix in, behavior-bearing out).
+
+    Args:
+        path: A workspace-relative path (or a check's operand token).
+
+    Returns:
+        `True` for textual-artifact suffixes, unless the basename is a known
+        behavior-bearing manifest (`requirements*.txt`, `constraints*.txt`, `CMakeLists.txt`).
+    """
+    p = PurePosixPath(path)
+    return p.suffix.lower() in _CONTENT_SUFFIXES and not _BEHAVIOR_TXT_RE.search(p.name)
 
 
 def _stages(text: str) -> list[str]:
@@ -660,17 +697,46 @@ def _segment_asserts(stage: str) -> bool:
     return program in _ASSERTIVE_INSPECTORS and any(not arg.startswith("-") for arg in args)
 
 
+def _stage_inspects_content(stage: str) -> bool:
+    """Whether one stage asserts something AND receives a content artifact as an operand.
+
+    The anchored-and-falsifiable conjunction, judged per stage (PR #112 review P1): the
+    artifact must be a real argv operand the program receives — `grep -q S DESIGN.md`,
+    `python check_docs.py README.md` — never a substring of the line, so a filename
+    inside a string literal (`python -c "print('README.md')"`, which always exits 0
+    without reading the file) anchors nothing. Behavior-bearing `.txt` manifests are not
+    content operands (`_is_content_path`), keeping the anchor and the diff-side path
+    classifier in agreement.
+
+    Args:
+        stage: One command stage (no `&&`/`;`/`|` chaining).
+
+    Returns:
+        `True` when the stage is assertive/executing and names a content operand.
+    """
+    if not _segment_asserts(stage):
+        return False
+    _, args = effective_invocation(stage)
+    return any(
+        not arg.startswith("-") and _CONTENT_PATH_RE.fullmatch(arg) and _is_content_path(arg) for arg in args
+    )
+
+
 def check_covers_content(command: str) -> bool:
     """Whether a declared check covers a `content` change: anchored + falsifiable (ADR-0044).
 
     The `content` rulebook replaces "must run what you build" (meaningless for a textual
-    deliverable) with two demands. **Anchored:** the command names a content artifact (a
-    `.md`/`.rst`/`.txt`/`.adoc` path — the same suffixes the diff-side classifier calls
-    `content`), so a plain `pytest` check never silently "covers" the docs half of a mixed
-    change. **Falsifiable:** at least one stage asserts something (an assertive inspector
-    with an operand, or a real executor), and no trailing `||` alternative that cannot fail
-    (`|| true`, `|| echo fine`) neutralizes the line to exit 0. The split is quote-blind
-    like `vacuous_declared_check`; the immutable floor beneath the contract is the
+    deliverable) with two demands, judged together per stage (`_stage_inspects_content`):
+    **anchored** — some stage receives a content artifact (`.md`/`.rst`/`.txt`/`.adoc`,
+    behavior-bearing manifests excluded) as a real operand, so a plain `pytest` check
+    never silently "covers" the docs half of a mixed change and a quoted filename inside
+    a code string anchors nothing; **falsifiable** — that stage asserts (an assertive
+    inspector with an operand, or a real executor), and no trailing `||` alternative that
+    cannot fail (`|| true`, `|| echo fine`) neutralizes the line to exit 0. The stage
+    split is quote-blind like `vacuous_declared_check` — live declared checks are single
+    argvs by the time they reach here (the ADR-0045 gate rejects/splits operators first),
+    so the multi-stage handling is defense-in-depth for direct callers, kept so the two
+    layers can be edited independently. The immutable floor beneath the contract is the
     ultimate anchor.
 
     Args:
@@ -679,12 +745,10 @@ def check_covers_content(command: str) -> bool:
     Returns:
         `True` when the command satisfies the `content` rulebook.
     """
-    if not _CONTENT_PATH_RE.search(command):
-        return False  # anchored: no content artifact named — this check is not about the docs
     alternatives = [alt for alt in command.split("||") if alt.strip()]
     if len(alternatives) > 1 and not any(_segment_asserts(s) for s in _stages(alternatives[-1])):
         return False  # the fallback arm can't fail — the line always exits 0
-    return any(_segment_asserts(stage) for stage in _stages(command))
+    return any(_stage_inspects_content(stage) for stage in _stages(command))
 
 
 # The declared change kinds (ADR-0044) — one definition, shared by the rulebook registry,
@@ -709,8 +773,9 @@ def classify_change_paths(paths: Iterable[str]) -> set[ChangeKind]:
     """The change kinds present in a set of changed paths (ADR-0044).
 
     The verification-time half of the declared-kind audit: `.md`/`.rst`/`.txt`/`.adoc`
-    classify as `content`; every other suffix — including behavior-bearing config —
-    classifies as `code`, so ambiguity fails toward the stricter rulebook.
+    classify as `content`; every other suffix — and behavior-bearing `.txt` manifests
+    (`requirements*.txt`, `CMakeLists.txt`) — classifies as `code`, so ambiguity fails
+    toward the stricter rulebook.
 
     Args:
         paths: Workspace-relative changed paths (from the diff / `files_modified`).
@@ -718,9 +783,7 @@ def classify_change_paths(paths: Iterable[str]) -> set[ChangeKind]:
     Returns:
         The subset of `{"code", "content"}` present; empty for no paths.
     """
-    return {
-        "content" if PurePosixPath(path).suffix.lower() in _CONTENT_SUFFIXES else "code" for path in paths
-    }
+    return {"content" if _is_content_path(path) else "code" for path in paths}
 
 
 def _first_positional(args: list[str]) -> str:

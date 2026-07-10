@@ -232,6 +232,9 @@ def _edit_state(files: set[str], kinds: list[str] | None) -> TaskState:
 
 def test_verifier_fails_on_undeclared_code_change(git_repo):
     # Declared `content`, shipped code: the audit fails a required check, legibly.
+    # (The shipped files exist — the audit reads the final state, not the touch ledger.)
+    (git_repo / "tetris.py").write_text("X = 1\n", encoding="utf-8")
+    (git_repo / "DESIGN.md").write_text("# T\n", encoding="utf-8")
     state = _edit_state({"tetris.py", "DESIGN.md"}, ["content"])
     report = Verifier(HarnessConfig(test_command=_PASS, lint_command="")).verify(state, Workspace(git_repo))
     assert report.passed is False
@@ -244,6 +247,7 @@ def test_verifier_fails_on_undeclared_code_change(git_repo):
 def test_verifier_tolerates_over_declaration(git_repo):
     # Declared both kinds, shipped docs only: over-declaring is self-inflicted
     # strictness, not an integrity violation.
+    (git_repo / "DESIGN.md").write_text("# T\n", encoding="utf-8")
     state = _edit_state({"DESIGN.md"}, ["code", "content"])
     report = Verifier(HarnessConfig(test_command=_PASS, lint_command="")).verify(state, Workspace(git_repo))
     audit = next(c for c in report.checks if c.name == "change_kind_coverage")

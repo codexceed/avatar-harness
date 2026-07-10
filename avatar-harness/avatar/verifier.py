@@ -121,7 +121,7 @@ class Verifier:
         ]
         if state.declared_change_kinds is not None:
             # A declared contract froze: the diff audits the declaration (ADR-0044).
-            checks.append(self._change_kind_coverage(state, diff))
+            checks.append(self._change_kind_coverage(state, diff, ws))
         # Positive external signal: any frozen plan command passing — a targeted
         # test, or (when the repo declares none) clean lint over the diff (§12).
         return self._dispose(checks, positive={c.name for c in plan})
@@ -187,10 +187,32 @@ class Verifier:
                     evidence=_NO_CONTRACT_EVIDENCE,
                 )
             ]
-        return [
-            self._command_check(check, ws, no_target_allowed=no_target_allowed and check.kind == "test")
-            for check in plan
-        ]
+        results: list[CheckResult] = []
+        failed_chains: set[str] = set()
+        for check in plan:
+            # Short-circuit a failed `&&` chain (ADR-0045, PR #112 review): in shell a
+            # failing segment guards every later one — including a mutating command. A
+            # skipped segment reports as FAIL, never a vacuous pass; its chain already
+            # failed, so the verdict is unchanged and the side effect never runs.
+            if check.chain is not None and check.chain in failed_chains:
+                results.append(
+                    CheckResult(
+                        name=check.name,
+                        kind="required",
+                        status="fail",
+                        evidence=(
+                            f"not run: an earlier segment of its `&&` chain failed [{check.provenance}]"
+                        ),
+                    )
+                )
+                continue
+            result = self._command_check(
+                check, ws, no_target_allowed=no_target_allowed and check.kind == "test"
+            )
+            if check.chain is not None and result.status == "fail":
+                failed_chains.add(check.chain)
+            results.append(result)
+        return results
 
     # --- shared check builders -------------------------------------------
 
@@ -203,26 +225,31 @@ class Verifier:
             evidence=f"files_modified={sorted(state.files_modified)}",
         )
 
-    def _change_kind_coverage(self, state: TaskState, diff: str) -> CheckResult:
+    def _change_kind_coverage(self, state: TaskState, diff: str, ws: Workspace) -> CheckResult:
         """Audit the declared change kinds against the change actually made (ADR-0044).
 
         Self-declared kinds without reconciliation would be self-certification one level
         up (declare `content`, ship code, dodge execution checks) — so every changed path
-        must classify to a *declared* kind. Paths come from `files_modified` (the runner's
-        tracked edits) unioned with the diff's `+++ b/` paths, catching files a shelled
-        command wrote outside the edit tools. Only under-declaration fails; over-declaring
-        is self-inflicted strictness the model may amend away (gated), not an integrity
-        violation.
+        must classify to a *declared* kind. Paths come from the diff's `+++ b/` targets
+        unioned with the `files_modified` entries that still exist: `files_modified` is an
+        append-only touch ledger, so a scratch file created then deleted mid-run is not
+        part of the final change and must not fail the audit (PR #112 review) — deletions
+        already need no kind coverage, matching `_diff_paths`. The union still catches
+        files a shelled command wrote outside the edit tools. Only under-declaration
+        fails; over-declaring is self-inflicted strictness the model may amend away
+        (gated), not an integrity violation.
 
         Args:
             state: The task state carrying `declared_change_kinds` and `files_modified`.
             diff: The workspace diff whose paths are audited.
+            ws: The run-scoped workspace (existence checks for the touch ledger).
 
         Returns:
             The required `change_kind_coverage` check result.
         """
         declared = set(state.declared_change_kinds or [])
-        changed = set(state.files_modified) | _diff_paths(diff)
+        surviving = {p for p in state.files_modified if (ws.root / p).exists()}
+        changed = surviving | _diff_paths(diff)
         offending: dict[str, list[str]] = {}
         for path in sorted(changed):
             (kind,) = classify_change_paths([path])
@@ -359,10 +386,12 @@ class Verifier:
 
 
 def _diff_paths(diff: str) -> set[str]:
-    """The workspace-relative paths a unified diff touches (its `+++ b/` targets).
+    r"""The workspace-relative paths a unified diff touches (its `+++ b/` targets).
 
     Deletions (`+++ /dev/null`) carry no `b/` target and are skipped — a removed
-    file needs no kind coverage.
+    file needs no kind coverage. Git C-quotes headers whose paths hold non-ASCII or
+    control characters (`+++ "b/p\303\244th.md"`); those unquote here so such files
+    cannot silently escape the kind audit (PR #112 review).
 
     Args:
         diff: The unified diff text.
@@ -370,7 +399,15 @@ def _diff_paths(diff: str) -> set[str]:
     Returns:
         The touched paths, possibly empty.
     """
-    return {line[len("+++ b/") :].strip() for line in diff.splitlines() if line.startswith("+++ b/")}
+    paths: set[str] = set()
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            paths.add(line[len("+++ b/") :].strip())
+        elif line.startswith('+++ "b/') and line.rstrip().endswith('"'):
+            quoted = line.rstrip()[len('+++ "b/') : -1]
+            # Reverse git's C-style quoting: escapes are octal bytes of the UTF-8 form.
+            paths.add(quoted.encode("latin-1").decode("unicode_escape").encode("latin-1").decode("utf-8"))
+    return paths
 
 
 def _is_test_path(path: str) -> bool:

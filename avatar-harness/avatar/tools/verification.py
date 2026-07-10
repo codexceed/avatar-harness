@@ -16,8 +16,13 @@ from avatar.shell_syntax import argv_segments
 from avatar.state import PlannedCheck
 from avatar.tools.base import ToolDefinition, ToolResult
 
-# Declared checks are offered while the model still shapes the contract, before the plan freezes.
-_DECLARE_PHASES = frozenset({"investigating", "editing"})
+# Declaration is offered only while the plan can still freeze it: the freeze happens at the
+# investigating→editing boundary and runs once, so an editing-phase `declare_verification`
+# could only be a phantom success — buffered checks nobody drains (PR #112 review).
+# Post-freeze contract changes go through the gated `alter_verification`, which stays
+# available while editing (that is when a check goes obsolete).
+_DECLARE_PHASES = frozenset({"investigating"})
+_ALTER_PHASES = frozenset({"investigating", "editing"})
 
 _CHANGE_KINDS_DESCRIPTION = (
     "The kinds of change this contract validates: 'code' (functional — behavior in executable "
@@ -113,24 +118,34 @@ def _validate_checks(
     # ADR-0045: enforce the no-shell execution contract BEFORE coverage. `&&` normalizes to
     # conjunction — one check per segment, so execution finally matches the planner's
     # per-segment classification; every other operator rejects here instead of freezing a
-    # command `Workspace.run` would mangle (the tetris_glm false pass) or hang on.
-    commands: list[str] = []
-    for check in checks:
+    # command `Workspace.run` would mangle (the tetris_glm false pass) or hang on. Segments
+    # of one chain share a `chain` id: the verifier stops the chain at its first failure,
+    # so a failing segment still guards a later mutating one (shell short-circuit kept).
+    commands: list[tuple[str, str | None]] = []
+    for index, check in enumerate(checks):
         segments, reason = argv_segments(check.command)
         if reason:
             return [], (
                 f"{reason} — declare each command as its own check; for multi-line logic, "
                 "write a script file and declare `python <file>` as the check"
             )
-        commands.extend(segments)
-    uncovered = [k for k in change_kinds if not any(CHANGE_KIND_COVERAGE[k](c) for c in commands)]
+        chain = f"declared:{index}" if len(segments) > 1 else None
+        commands.extend((segment, chain) for segment in segments)
+    uncovered = [k for k in change_kinds if not any(CHANGE_KIND_COVERAGE[k](c) for c, _ in commands)]
     if uncovered:
         # Model-correctable (§10): a declared kind with no covering check proves nothing there.
         steers = "; ".join(f"'{k}': {_KIND_STEER[k]}" for k in uncovered)
-        return [], f"no declared check covers change kind(s) {uncovered}: {commands}. For {steers}."
+        listed = [c for c, _ in commands]
+        return [], f"no declared check covers change kind(s) {uncovered}: {listed}. For {steers}."
     planned = [
-        PlannedCheck(name=f"declared_{i + 1}", command=command, kind="declared", provenance="model-declared")
-        for i, command in enumerate(commands)
+        PlannedCheck(
+            name=f"declared_{i + 1}",
+            command=command,
+            kind="declared",
+            provenance="model-declared",
+            chain=chain,
+        )
+        for i, (command, chain) in enumerate(commands)
     ]
     return planned, ""
 
@@ -202,6 +217,6 @@ alter_verification = ToolDefinition(
     ),
     input_model=AlterVerificationInput,
     handler=_alter_verification,
-    phases=_DECLARE_PHASES,
+    phases=_ALTER_PHASES,
     permission_tier=3,
 )

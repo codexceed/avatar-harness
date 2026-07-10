@@ -173,17 +173,12 @@ def test_verifier_short_circuits_a_failed_chain(git_repo):
     (git_repo / "game.py").write_text("X = 1\n", encoding="utf-8")
     ws.stage(["game.py"])
     deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())
-    chain = (
-        "python -c 'import sys; sys.exit(1)' && "
-        'python -c \'open("mutated.txt", "w").write("x")\''
-    )
+    chain = 'python -c \'import sys; sys.exit(1)\' && python -c \'open("mutated.txt", "w").write("x")\''
     declared = _declare(deps, [chain], change_kinds=["code"])
     assert declared.success, declared.error
     assert deps.declared_contract is not None
 
-    state = TaskState(
-        goal="g", task_kind="edit", files_modified={"game.py"}, declared_change_kinds=["code"]
-    )
+    state = TaskState(goal="g", task_kind="edit", files_modified={"game.py"}, declared_change_kinds=["code"])
     state.freeze_verification_plan(deps.declared_contract)
     report = Verifier(HarnessConfig(lint_command="")).verify(state, ws)
 
