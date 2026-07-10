@@ -6,6 +6,8 @@ that `dismiss`es a small typed result the caller routes:
 - `ApprovalModal` → `ApprovalChoice` — `[y]` allow once · `[a]` always (scoped grant) ·
   `[d]` deny · `[v]` toggle the command/diff detail. The cockpit feeds the choice to
   `session.resolve_approval(allow=…, remember=…)` — `[a]` sets `remember=True` (PR #10 grant).
+  A contract amendment (`alter_verification`) never offers `[a]`: each amendment is ratified
+  by a human (ADR-0038/0039); the core refuses such grants too, this just keeps the UI honest.
 - `DiffModal` → `None` — a read-only scrollable diff viewer; dismissed with escape/enter.
 - `PlanModal` → `PlanChoice` — an editable plan with **approve** / **revise**; revise returns
   the edited text (the plan-mode *flow* that consumes it is the 3.2 tail).
@@ -106,6 +108,10 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self.reason = reason
         self.tool_input = tool_input
         self._show_detail = False
+        # A contract amendment must be ratified per occurrence — a standing grant would
+        # let the model re-move its own goalposts silently (ADR-0038/0039). The core's
+        # Session refuses to store/match such grants; hiding [a] keeps the UI honest.
+        self._grantable = tool != "alter_verification"
 
     def compose(self) -> Iterator[Widget]:
         """Render the bounded dialog: summary, the (toggleable) detail, buttons, key hints.
@@ -124,10 +130,16 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
             yield Static(str(self.tool_input), id="approval_detail")
             with Horizontal(id="approval_buttons"):
                 yield Button("Allow once", id="approve-once")
-                yield Button("Always", id="always")
+                if self._grantable:
+                    yield Button("Always", id="always")
                 yield Button("Deny", id="deny")
                 yield Button("View", id="view")
-            yield Static("[y] allow once   [a] always (scoped)   [d] deny   [v] view", id="approval_hints")
+            hints = (
+                "[y] allow once   [a] always (scoped)   [d] deny   [v] view"
+                if self._grantable
+                else "[y] allow once   [d] deny   [v] view"
+            )
+            yield Static(hints, id="approval_hints")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route a button to the same decision its key binding makes (view toggles, no dismiss).
@@ -149,7 +161,13 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self.dismiss(ApprovalChoice(allow=True, remember=False))
 
     def action_allow_always(self) -> None:
-        """Allow and remember a scoped grant for matching calls this session."""
+        """Allow and remember a scoped grant for matching calls this session.
+
+        Inert for an ungrantable call (a contract amendment): the `[a]` binding is
+        class-level, so the guard lives here rather than in the (static) bindings list.
+        """
+        if not self._grantable:
+            return
         self.dismiss(ApprovalChoice(allow=True, remember=True))
 
     def action_deny(self) -> None:

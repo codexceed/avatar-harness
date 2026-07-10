@@ -30,6 +30,13 @@ from avatar.state import TaskState
 # Grants never auto-allow tier-4+ (ADR-0002): destructive/external stays human-gated.
 _GRANT_MAX_TIER = 4
 
+# Tools a standing grant may never cover, regardless of tier: an `[a] always` on a contract
+# amendment would let the model re-move its own goalposts without a human for the rest of
+# the session (ADR-0038/0039 — the semi-frozen contract is amendable only through a gate a
+# human answers each time; only the config-gated *unattended* policy may auto-approve).
+# Enforced at grant storage AND grant matching, so even a hand-built grant is inert.
+_UNGRANTABLE_TOOLS = frozenset({"alter_verification"})
+
 
 def _grant_prefix(tool: str, tool_input: dict) -> str:
     """The grant key for a call: a command's program (`argv[0]`), else the tool name.
@@ -77,9 +84,11 @@ class ApprovalGrant(BaseModel):
 
         Returns:
             True iff the grant covers the call (same tool + program, at or below the
-            granted tier, and below the tier-4 ceiling). A blank prefix never matches.
+            granted tier, and below the tier-4 ceiling). A blank prefix never matches,
+            and an ungrantable tool (`alter_verification`) never matches — a contract
+            amendment is ratified by a human every time.
         """
-        if tier >= _GRANT_MAX_TIER:
+        if tier >= _GRANT_MAX_TIER or tool in _UNGRANTABLE_TOOLS:
             return False
         return self.tool == tool and self.tier >= tier and bool(self.prefix) and self.prefix == program
 
@@ -305,7 +314,9 @@ class Session:
         one) so a caller that didn't capture the id can still unblock the run. With
         `allow` and `remember` both set (the `[a] always` choice), stores a session-scoped
         `ApprovalGrant` for the call's program prefix so matching calls auto-allow later.
-        `remember` is ignored on a denial (there is no "always deny") and on a blank prefix.
+        `remember` is ignored on a denial (there is no "always deny"), on a blank prefix,
+        and on an ungrantable tool (`alter_verification` — a contract amendment is ratified
+        by a human every time; `remember` degrades to allow-once).
 
         Args:
             approval_id: The id from the `ApprovalRequested` event.
@@ -317,7 +328,8 @@ class Session:
             pending = next(iter(self._pending.values()))
         if pending is None or pending.future.done():
             return
-        if allow and remember and pending.program and pending.tier < _GRANT_MAX_TIER:
+        grantable = pending.tool not in _UNGRANTABLE_TOOLS
+        if allow and remember and grantable and pending.program and pending.tier < _GRANT_MAX_TIER:
             self._grants.append(ApprovalGrant(tool=pending.tool, prefix=pending.program, tier=pending.tier))
         pending.future.set_result(allow)
 

@@ -154,6 +154,10 @@ no cockpit decision (unlike an approval): the *model* must comply, the human jus
 A tier-3 gated call announces `ApprovalRequested`; the cockpit pops the `ApprovalModal` and
 routes the human's choice through the control plane. `[a] always` carries `remember=True`, which
 the session stores as a scoped `ApprovalGrant` so matching calls auto-allow later in the sitting.
+**Exception:** a contract amendment (`alter_verification`) never offers `[a]` — each amendment is
+ratified by a human every time (a standing grant would let the model re-move its own goalposts
+silently, ADR-0038/0039). The modal hides the option; the core `Session` independently refuses to
+store or match such a grant, so the guarantee doesn't rest on the UI.
 
 ```mermaid
 sequenceDiagram
