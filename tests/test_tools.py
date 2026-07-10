@@ -744,12 +744,14 @@ def test_declare_verification_judges_vacuity_across_the_contract(tmp_path):
 
 def test_declare_verification_rejects_all_vacuous_contract(tmp_path):
     # No check executes anything: rejected, and the error steers toward an executing check.
+    # (A `|| exit 1` variant now rejects earlier, at the ADR-0045 shell-syntax gate —
+    # pinned in test_shell_syntax_boundary.py; this pins the coverage steer itself.)
     deps = _declare_deps(tmp_path)
     res = declare_verification.handler(
         DeclareVerificationInput(
             checks=[
                 DeclaredCheckInput(command="test -f DESIGN.md"),
-                DeclaredCheckInput(command="grep -q Overview DESIGN.md || exit 1"),
+                DeclaredCheckInput(command="grep -q Overview DESIGN.md"),
             ]
         ),
         deps,

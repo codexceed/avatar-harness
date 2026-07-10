@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from avatar.deps import RunDeps
 from avatar.planner import effective_invocation
+from avatar.shell_syntax import argv_segments
 from avatar.tools.base import ToolDefinition, ToolResult
 
 # Verification tools load in the editing and verifying phases (§21).
@@ -186,6 +187,24 @@ def _run_command(args: RunCommandInput, deps: RunDeps) -> ToolResult:
     # model-correctable rather than a system error surfaced from the runtime.
     if not args.command.strip():
         return ToolResult(tool_name="run_command", success=False, error="empty command")
+    # ADR-0045: reject shell syntax instead of silently mis-executing it. A `&&` chain
+    # would run ONLY the first program (the rest as its literal argv) yet report exit=0 —
+    # manufactured evidence; a heredoc would block on stdin until the timeout.
+    segments, reason = argv_segments(args.command)
+    if not reason and len(segments) > 1:
+        reason = (
+            "'&&' chains cannot work here: commands execute as a single argv without a "
+            "shell — only the first program would run, with the rest as its literal arguments"
+        )
+    if reason:
+        return ToolResult(
+            tool_name="run_command",
+            success=False,
+            error=(
+                f"{reason}; run each command as its own call — for multi-line logic, "
+                "write a script file and run `python <file>`"
+            ),
+        )
     ws = deps.workspace
     # Attribute the command's side effects: the paths git sees as changed/untracked
     # AFTER minus those already changed BEFORE (§8/§15). This is what makes codegen,

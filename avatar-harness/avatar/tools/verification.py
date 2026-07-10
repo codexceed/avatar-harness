@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from avatar.deps import RunDeps
 from avatar.planner import CHANGE_KIND_COVERAGE, ChangeKind
+from avatar.shell_syntax import argv_segments
 from avatar.state import PlannedCheck
 from avatar.tools.base import ToolDefinition, ToolResult
 
@@ -78,7 +79,13 @@ class AlterVerificationInput(BaseModel):
 def _validate_checks(
     checks: list[DeclaredCheckInput], change_kinds: list[ChangeKind]
 ) -> tuple[list[PlannedCheck], str]:
-    """Validate declared/amended checks against the declared change kinds (ADR-0038/0044).
+    """Validate declared/amended checks against the declared change kinds (ADR-0038/0044/0045).
+
+    Shell syntax is disposed of first (ADR-0045): `&&` chains split into one check per
+    segment (execution-side conjunction, quote-aware — matching the planner's per-segment
+    classification), and any other shell operator (`;`, `|`, `||`, redirects, heredocs)
+    is a model-correctable rejection — `Workspace.run` has no shell, so freezing such a
+    command yields a mangled argv or a stdin hang, never the declared semantics.
 
     Coverage is per kind, judged across the whole contract (PR-#110 review): **each**
     declared kind needs at least one check satisfying its rulebook — `code` requires an
@@ -103,19 +110,27 @@ def _validate_checks(
         return [], "declare at least one verification check (an executing test/lint command)"
     if not change_kinds:
         return [], "declare at least one change kind: 'code' (functional) and/or 'content' (textual)"
-    uncovered = [k for k in change_kinds if not any(CHANGE_KIND_COVERAGE[k](c.command) for c in checks)]
+    # ADR-0045: enforce the no-shell execution contract BEFORE coverage. `&&` normalizes to
+    # conjunction — one check per segment, so execution finally matches the planner's
+    # per-segment classification; every other operator rejects here instead of freezing a
+    # command `Workspace.run` would mangle (the tetris_glm false pass) or hang on.
+    commands: list[str] = []
+    for check in checks:
+        segments, reason = argv_segments(check.command)
+        if reason:
+            return [], (
+                f"{reason} — declare each command as its own check; for multi-line logic, "
+                "write a script file and declare `python <file>` as the check"
+            )
+        commands.extend(segments)
+    uncovered = [k for k in change_kinds if not any(CHANGE_KIND_COVERAGE[k](c) for c in commands)]
     if uncovered:
         # Model-correctable (§10): a declared kind with no covering check proves nothing there.
         steers = "; ".join(f"'{k}': {_KIND_STEER[k]}" for k in uncovered)
-        return [], (
-            f"no declared check covers change kind(s) {uncovered}: "
-            f"{[c.command for c in checks]}. For {steers}."
-        )
+        return [], f"no declared check covers change kind(s) {uncovered}: {commands}. For {steers}."
     planned = [
-        PlannedCheck(
-            name=f"declared_{i + 1}", command=c.command, kind="declared", provenance="model-declared"
-        )
-        for i, c in enumerate(checks)
+        PlannedCheck(name=f"declared_{i + 1}", command=command, kind="declared", provenance="model-declared")
+        for i, command in enumerate(commands)
     ]
     return planned, ""
 

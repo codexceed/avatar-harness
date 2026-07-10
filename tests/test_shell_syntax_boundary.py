@@ -19,7 +19,7 @@ model-correctable rejection with a steer. `run_command` rejects all of them,
 chains included — silently mis-executing is worse than an error.
 """
 
-import subprocess
+import shlex
 
 import pytest
 
@@ -62,6 +62,7 @@ def test_declared_conjunction_splits_into_checks(tmp_path):
         change_kinds=["content"],
     )
     assert result.success, result.error
+    assert deps.declared_contract is not None
     commands = [c.command for c in deps.declared_contract]
     assert len(commands) == 2
     assert not any("&&" in c for c in commands)
@@ -72,11 +73,10 @@ def test_declared_conjunction_splits_into_checks(tmp_path):
 def test_declared_conjunction_split_is_quote_aware(tmp_path):
     # `&&` inside quotes is data, not an operator — the regex-blind planner split is for
     # classification; the execution-side split must respect quoting.
-    import shlex
-
     deps = _deps(tmp_path)
     result = _declare(deps, ['python -c "print(1 and 2)" && pytest'], change_kinds=["code"])
     assert result.success, result.error
+    assert deps.declared_contract is not None
     commands = [c.command for c in deps.declared_contract]
     assert len(commands) == 2
     assert shlex.split(commands[0]) == ["python", "-c", "print(1 and 2)"]
@@ -136,7 +136,7 @@ def test_alter_verification_enforces_the_same_boundary(tmp_path):
         deps,
     )
     assert split.success, split.error
-    assert len(deps.declared_contract) == 2
+    assert deps.declared_contract is not None and len(deps.declared_contract) == 2
 
 
 # --- verification time: the journal's false pass must fail ---------------------------------
@@ -147,9 +147,9 @@ def test_verifier_fails_partial_content_after_split(git_repo):
     # mangling the chain ran as one `grep -q` that exit-0'd on the first match (later
     # patterns became unopenable filenames) → verification passed vacuously. Split into
     # conjunction, the second check genuinely runs and fails.
+    ws = Workspace(git_repo)  # open on the clean pinned HEAD, then edit like a run would
     (git_repo / "DESIGN.md").write_text("# ASCII Tetris\n", encoding="utf-8")
-    subprocess.run(["git", "add", "DESIGN.md"], cwd=git_repo, check=True, capture_output=True)
-    ws = Workspace(git_repo)
+    ws.stage(["DESIGN.md"])
     deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())
     declared = _declare(
         deps,
@@ -157,6 +157,7 @@ def test_verifier_fails_partial_content_after_split(git_repo):
         change_kinds=["content"],
     )
     assert declared.success, declared.error
+    assert deps.declared_contract is not None
 
     state = TaskState(
         goal="design spec",
