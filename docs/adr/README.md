@@ -50,6 +50,7 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0042](0042-hermetic-execution-at-the-workspace-run-seam.md) | Hermetic execution at the `Workspace.run` seam: a `Sandbox`/`ExecSpec` strategy closing Threat C (runtime/substrate gaming); `hermetic-env` default, staged to container (implements ADR-0009) | Proposed |
 | [0043](0043-nullable-wall-clock-cockpit-default-off.md) | Nullable per-run wall-clock (`None` = unbounded); the attended cockpit defaults it off — Ctrl-C + `max_iterations` are the backstops; an explicit cap (env or `.env`) always wins | Accepted |
 | [0044](0044-declared-change-kinds-per-kind-vacuity-rulebooks.md) | Declared `change_kinds` (list) select per-kind vacuity rulebooks — `code` keeps "must execute", `content` gets anchored+falsifiable; the diff audits the declaration at verify time (amends 0038) | Proposed |
+| [0045](0045-shell-syntax-rejected-at-command-boundaries.md) | Shell syntax is rejected, not interpreted, at model-authored command boundaries — `&&` normalizes to per-segment check conjunction; `;`/`\|`/`\|\|`/redirects/heredocs reject model-correctably (`Workspace.run` stays pure argv) | Proposed |
 
 ## Conventions
 
