@@ -13,7 +13,7 @@ package's working rules, see [`CLAUDE.md`](./CLAUDE.md).
 
 The **interactive cockpit** — a full-screen Textual shell (the `jo` command) that turns a
 multi-turn conversation into observable harness runs: a status bar, a scrollable chat
-transcript, and an input box.
+transcript, an activity (spinner) line, and an input box.
 
 Two properties define it:
 
@@ -230,10 +230,18 @@ The line vocabulary distinguishes who is speaking, so the conversation reads abo
 | **Model** | `ModelDecisionEvent` (`final_answer` / `ask_user`) | `● agent  {action}` — `● agent` styled (bold green) |
 | **Model** | `ModelDecisionEvent.thought` (any decision type, when non-empty) | a dim/italic thought line (the public display-channel summary, ADR-0001 D6 — not private chain-of-thought) |
 | **Model** | `ModelUpdate` | the streamed display delta |
-| **Tool** | `ToolStart` / `ToolEnd` | dim `→`/`✓`/`✗` tool I/O |
+| **Tool** | `ToolStart` / `ToolEnd` | `→ {tool}` / `✓`/`✗ {tool}: {summary}` — **only the tool name** is colored, in its stable per-family color (`tool_style`: blue = inspect, magenta = mutate, yellow = execute, cyan = contract; unknown names crc32-hash onto the palette); everything else (arrow, marks, args, summaries) stays dim |
 | Verifier | `VerificationEnd` | `✓`/`⚠ verification …` (the real verdict, always — advisory in conversational mode, §23.5) |
 | Verifier | `DeclarationRequired` | `✍ declare a verification contract before editing` (yellow) — the greenfield declaration gate (ADR-0038) refused an edit pending a declared contract; **informational only, no modal** (the model complies, not the human — observe-only, §13) |
 | Loop | `DecisionError` / `ApprovalRequested` / `AgentEnd` | `↩` / `⏸` / `■ {outcome}` |
+
+Below the transcript, an **activity line** (`#activity`, in the bottom-docked footer above the
+input) shows a color-coded spinner for whatever the run is currently waiting on: `thinking…`
+(pending model inference, green — from submit, since mode classification precedes `AgentStart`),
+`running {tool}…` (in that tool's `tool_style` color), `verifying…` (yellow), or
+`waiting for approval…`; it clears on `AgentEnd` and in `_run_goal`'s `finally` (a crash or
+cancel must not leave it spinning). The label/style are tracked as `activity`/`activity_style`
+for headless assertions, like `rendered`.
 
 The label is **model-agnostic** (`you` / `agent`) — this harness runs non-Claude models too.
 For a `tool_call` decision `_format` returns only the thought line (or `None`): the call itself
@@ -251,8 +259,9 @@ the `■ blocked` from `AgentEnd`).
 - The three modals — approval, diff, plan — wired to the control plane and the plan flow.
 - Journaled sittings: `jo` writes one write-ahead `events/<session_id>.jsonl` (or `--log`),
   so an interactive run is as replayable as a batch one.
-- The chat-style transcript (user / model / tool vocabulary) and a live status bar
-  (mode · phase · outcome · verdict).
+- The chat-style transcript (user / model / tool vocabulary, tool names in stable per-family
+  colors), the color-coded activity spinner (thinking / running a tool / verifying / awaiting
+  approval), and a live status bar (mode · phase · outcome · verdict).
 
 **The boundary it must keep:** a pure **consumer of the core** (consumer → core, never back), an
 **observer + control-caller only** (control never flows through `events()`, §13), a separate
