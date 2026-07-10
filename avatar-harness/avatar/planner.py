@@ -687,16 +687,25 @@ def check_covers_content(command: str) -> bool:
     return any(_segment_asserts(stage) for stage in _stages(command))
 
 
+# The declared change kinds (ADR-0044) — one definition, shared by the rulebook registry,
+# the `declare_verification`/`alter_verification` input models (whose JSON schema advertises
+# the enum to the model), and the path classifier, so a typo'd kind anywhere fails the type
+# checker. Journaled fields (`TaskState`/`VerificationPlanFrozen`) deliberately stay
+# `list[str]`: journals are durable and read across version skew — a kind added later must
+# not make an older harness unable to parse a newer journal.
+ChangeKind = Literal["code", "content"]
+
 # Per-kind coverage rulebooks (ADR-0044): what one declared check must satisfy to count
 # toward a declared change kind. `code` is the ADR-0038 rule unchanged; `content` is
-# anchored + falsifiable. The registry is the single source of the valid kinds.
-CHANGE_KIND_COVERAGE: dict[str, Callable[[str], bool]] = {
+# anchored + falsifiable. Keyed by `ChangeKind`; a test guards exhaustiveness (a dict
+# literal missing a kind still typechecks — keys may be a subset of the annotated type).
+CHANGE_KIND_COVERAGE: dict[ChangeKind, Callable[[str], bool]] = {
     "code": lambda command: not vacuous_declared_check(command),
     "content": check_covers_content,
 }
 
 
-def classify_change_paths(paths: Iterable[str]) -> set[str]:
+def classify_change_paths(paths: Iterable[str]) -> set[ChangeKind]:
     """The change kinds present in a set of changed paths (ADR-0044).
 
     The verification-time half of the declared-kind audit: `.md`/`.rst`/`.txt`/`.adoc`

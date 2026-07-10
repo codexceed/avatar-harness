@@ -11,7 +11,7 @@ rejects no-op commands so the declared contract can't be a bar the model trivial
 from pydantic import BaseModel, Field
 
 from avatar.deps import RunDeps
-from avatar.planner import CHANGE_KIND_COVERAGE
+from avatar.planner import CHANGE_KIND_COVERAGE, ChangeKind
 from avatar.state import PlannedCheck
 from avatar.tools.base import ToolDefinition, ToolResult
 
@@ -27,7 +27,7 @@ _CHANGE_KINDS_DESCRIPTION = (
 # Per-kind steering appended to a coverage rejection, so the model recovers in one turn.
 # The 'code' wording keeps the ADR-0038 vocabulary ("vacuous", "at least one") — it is the
 # same rule, now scoped to the kind instead of the whole contract.
-_KIND_STEER = {
+_KIND_STEER: dict[ChangeKind, str] = {
     "code": (
         "every candidate is vacuous there — at least one check must RUN what you build "
         "and exit non-zero if it is broken"
@@ -38,6 +38,15 @@ _KIND_STEER = {
         "— no `|| true`-style fallback"
     ),
 }
+
+
+def _default_change_kinds() -> list[ChangeKind]:
+    """The `change_kinds` default: `["code"]` — backward compatible, fails toward strictness.
+
+    Returns:
+        A fresh single-element list (a shared literal default would be aliased).
+    """
+    return ["code"]
 
 
 class DeclaredCheckInput(BaseModel):
@@ -51,7 +60,9 @@ class DeclareVerificationInput(BaseModel):
     """Input for `declare_verification`: the checks that define 'done' for this greenfield task."""
 
     checks: list[DeclaredCheckInput] = Field(description="One or more executing verification checks.")
-    change_kinds: list[str] = Field(default_factory=lambda: ["code"], description=_CHANGE_KINDS_DESCRIPTION)
+    change_kinds: list[ChangeKind] = Field(
+        default_factory=_default_change_kinds, description=_CHANGE_KINDS_DESCRIPTION
+    )
 
 
 class AlterVerificationInput(BaseModel):
@@ -59,11 +70,13 @@ class AlterVerificationInput(BaseModel):
 
     checks: list[DeclaredCheckInput] = Field(description="The replacement executing verification checks.")
     rationale: str = Field(description="Why the current contract is obsolete given the code as built.")
-    change_kinds: list[str] = Field(default_factory=lambda: ["code"], description=_CHANGE_KINDS_DESCRIPTION)
+    change_kinds: list[ChangeKind] = Field(
+        default_factory=_default_change_kinds, description=_CHANGE_KINDS_DESCRIPTION
+    )
 
 
 def _validate_checks(
-    checks: list[DeclaredCheckInput], change_kinds: list[str]
+    checks: list[DeclaredCheckInput], change_kinds: list[ChangeKind]
 ) -> tuple[list[PlannedCheck], str]:
     """Validate declared/amended checks against the declared change kinds (ADR-0038/0044).
 
@@ -73,6 +86,11 @@ def _validate_checks(
     toward both. Companion checks satisfying no rulebook are tolerated once every kind
     is covered (they still run and must pass); per-check rejection recreated the
     burn-a-turn failure the per-segment fix removed, one level up.
+
+    An *unknown* kind never reaches here: `change_kinds` is `list[ChangeKind]`, so the
+    tool's JSON schema advertises the enum to the model and `ToolRuntime` rejects an
+    invalid value at input validation with pydantic's permitted-values error (§10,
+    model-correctable) before the handler runs.
 
     Args:
         checks: The model-supplied checks to validate.
@@ -85,12 +103,6 @@ def _validate_checks(
         return [], "declare at least one verification check (an executing test/lint command)"
     if not change_kinds:
         return [], "declare at least one change kind: 'code' (functional) and/or 'content' (textual)"
-    unknown = sorted(set(change_kinds) - CHANGE_KIND_COVERAGE.keys())
-    if unknown:
-        return [], (
-            f"unknown change kind(s) {unknown}: valid kinds are "
-            "'code' (functional) and 'content' (textual artifacts)"
-        )
     uncovered = [k for k in change_kinds if not any(CHANGE_KIND_COVERAGE[k](c.command) for c in checks)]
     if uncovered:
         # Model-correctable (§10): a declared kind with no covering check proves nothing there.

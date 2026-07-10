@@ -18,10 +18,18 @@ integrity gained. ADR-0044's cure, pinned here across its three seams:
   is tolerated. No declaration (tiers 1-3) → no reconciliation.
 """
 
+from typing import get_args
+
 from avatar.config import HarnessConfig
 from avatar.deps import CancellationToken, RunDeps
-from avatar.planner import check_covers_content, classify_change_paths
+from avatar.planner import (
+    CHANGE_KIND_COVERAGE,
+    ChangeKind,
+    check_covers_content,
+    classify_change_paths,
+)
 from avatar.state import TaskState
+from avatar.tools.base import ToolRegistry, ToolRuntime
 from avatar.tools.verification import (
     DeclaredCheckInput,
     DeclareVerificationInput,
@@ -143,11 +151,27 @@ def test_empty_change_kinds_rejected(tmp_path):
     assert not result.success
 
 
-def test_unknown_change_kind_rejected(tmp_path):
-    result = _declare(tmp_path, [_CODE_CHECK], change_kinds=["docs"])
+def test_change_kind_registry_is_exhaustive():
+    # The `ChangeKind` Literal and the rulebook registry share one definition; static
+    # typing catches typos but not a *missing* registry entry (dict keys may be a
+    # subset of the annotated type), so exhaustiveness is pinned here.
+    assert set(get_args(ChangeKind)) == set(CHANGE_KIND_COVERAGE)
+
+
+def test_unknown_change_kind_rejected_at_input_validation(tmp_path):
+    # `change_kinds` is `list[ChangeKind]`, so an invalid value never reaches the handler:
+    # `ToolRuntime` rejects it at input validation and the failed ToolResult carries
+    # pydantic's permitted-values error back to the model (§10, model-correctable).
+    registry = ToolRegistry()
+    registry.register(declare_verification)
+    runtime = ToolRuntime(registry, _deps(tmp_path))
+    result = runtime.execute(
+        "declare_verification",
+        {"checks": [{"command": _CODE_CHECK}], "change_kinds": ["docs"]},
+    )
     assert not result.success
     error = result.error or ""
-    assert "code" in error and "content" in error  # the valid kinds are steered
+    assert "code" in error and "content" in error  # the permitted values are steered
 
 
 def test_companion_checks_tolerated_once_kinds_covered(tmp_path):
