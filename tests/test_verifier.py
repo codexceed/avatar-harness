@@ -365,3 +365,18 @@ def test_verifier_never_passes_on_zero_positive_signal(git_repo):
     # external signal exists, so the gate must not pass (criterion 3).
     report = Verifier(HarnessConfig(test_command=_NO_TESTS, lint_command="")).verify(state, ws)
     assert report.passed is False
+
+
+def test_diff_paths_handles_git_quoted_headers():
+    # PR #112 review: git C-quotes headers for non-ASCII paths (`+++ "b/p\303\244th.md"`);
+    # the plain `+++ b/` prefix test missed them, so such files escaped the kind audit.
+    from avatar.verifier import _diff_paths
+
+    diff = (
+        'diff --git "a/p\\303\\244th.md" "b/p\\303\\244th.md"\n'
+        '--- "a/p\\303\\244th.md"\n'
+        '+++ "b/p\\303\\244th.md"\n'
+        "@@ -0,0 +1 @@\n"
+        "+x\n"
+    )
+    assert _diff_paths(diff) == {"päth.md"}

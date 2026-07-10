@@ -20,15 +20,21 @@ integrity gained. ADR-0044's cure, pinned here across its three seams:
 
 from typing import get_args
 
+from conftest import ScriptedModel
+
 from avatar.config import HarnessConfig
+from avatar.context import ContextBuilder
 from avatar.deps import CancellationToken, RunDeps
+from avatar.events import Emitter
 from avatar.planner import (
     CHANGE_KIND_COVERAGE,
     ChangeKind,
     check_covers_content,
     classify_change_paths,
+    vacuous_declared_check,
 )
-from avatar.state import TaskState
+from avatar.runner import AgentRunner
+from avatar.state import PlannedCheck, TaskState
 from avatar.tools.base import ToolRegistry, ToolRuntime
 from avatar.tools.verification import (
     DeclaredCheckInput,
@@ -59,8 +65,39 @@ def test_content_coverage_accepts_anchored_inspection():
 
 
 def test_content_coverage_accepts_a_real_executor():
-    # An executing check covers content too (one check may count toward both kinds).
-    assert check_covers_content("python3 -c \"open('DESIGN.md').read()\"")
+    # An executing check covers content too (one check may count toward both kinds) —
+    # but only when the artifact is a real OPERAND the program receives, not a substring.
+    assert check_covers_content("python3 check_docs.py DESIGN.md")
+
+
+def test_content_coverage_rejects_string_literal_anchor():
+    # PR #112 review P1: a filename inside a string literal is not an anchor — the check
+    # never inspects the artifact, so an always-exit-0 print would self-certify a doc change.
+    assert not check_covers_content("python -c \"print('README.md')\"")
+    assert not check_covers_content("python3 -c \"open('DESIGN.md').read()\"")
+    assert not check_covers_content("python3 render.py")  # executor, no artifact operand
+
+
+def test_behavior_bearing_txt_classifies_as_code():
+    # PR #112 review DO: `.txt` must not blanket-classify as content — dependency/build
+    # manifests are behavior-bearing; murky fails toward the stricter rulebook (ADR-0044).
+    assert classify_change_paths(["requirements.txt"]) == {"code"}
+    assert classify_change_paths(["deps/constraints-prod.txt"]) == {"code"}
+    assert classify_change_paths(["CMakeLists.txt"]) == {"code"}
+    assert classify_change_paths(["docs/notes.txt"]) == {"content"}
+
+
+def test_content_anchor_rejects_behavior_bearing_txt():
+    # The anchor and the path classifier must agree: a grep over requirements.txt is not
+    # a content check — otherwise a dependency change ships with zero executing check.
+    assert not check_covers_content("grep -q flask requirements.txt")
+
+
+def test_cmp_diff_inspect_but_do_not_execute():
+    # cmp/diff are inspectors: assertive for content (with operands), never an executing
+    # check for code (PR #112 review: they were dead entries in _ASSERTIVE_INSPECTORS).
+    assert check_covers_content("cmp expected.md actual.md")
+    assert vacuous_declared_check("diff expected.md actual.md")
 
 
 def test_content_coverage_rejects_pure_emitters():
@@ -219,3 +256,46 @@ def test_verifier_skips_audit_without_a_declaration(git_repo):
     state = _edit_state({"tetris.py"}, None)
     report = Verifier(HarnessConfig(test_command=_PASS, lint_command="")).verify(state, Workspace(git_repo))
     assert not any(c.name == "change_kind_coverage" for c in report.checks)
+
+
+def test_verifier_audit_ignores_created_then_deleted_paths(git_repo):
+    # PR #112 review P2: `files_modified` is an append-only touch ledger. A scratch file
+    # created then deleted mid-run is not part of the final change — auditing it fails a
+    # clean content-only run for undeclared `code` (false failure, fails closed but wrong).
+    ws = Workspace(git_repo)
+    (git_repo / "DESIGN.md").write_text("# T\n", encoding="utf-8")
+    ws.stage(["DESIGN.md"])
+    state = _edit_state({"scratch.py", "DESIGN.md"}, ["content"])  # scratch.py no longer exists
+    report = Verifier(HarnessConfig(test_command=_PASS, lint_command="")).verify(state, ws)
+    audit = next(c for c in report.checks if c.name == "change_kind_coverage")
+    assert audit.status == "pass", audit.evidence
+
+
+def test_amendment_onto_detected_plan_stamps_change_kinds(tmp_path):
+    # PR #112 review: `alter_verification` is legal against a tier-1-3 frozen plan, and the
+    # handler validated coverage against the amendment's change_kinds — dropping them here
+    # meant the verifier skipped `change_kind_coverage` for a plan that now holds declared
+    # checks. The stamp must key on "an amendment landed", not "a declaration froze earlier".
+    config = HarnessConfig()
+    deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
+    runner = AgentRunner(
+        model_client=ScriptedModel([]),
+        registry=ToolRegistry(),
+        deps=deps,
+        context_builder=ContextBuilder(),
+        verifier=Verifier(config),
+        emitter=Emitter(),
+        config=config,
+    )
+    state = TaskState(goal="g", task_kind="edit")
+    state.freeze_verification_plan(
+        [PlannedCheck(name="tests", command="pytest", kind="test", provenance="ci:workflow")]
+    )
+    deps.declared_contract = [
+        PlannedCheck(
+            name="declared_1", command="python -m pytest new", kind="declared", provenance="model-declared"
+        )
+    ]
+    deps.declared_change_kinds = ["code", "content"]
+    runner._apply_amendment(state)
+    assert state.declared_change_kinds == ["code", "content"]  # was None → audit silently skipped

@@ -768,11 +768,16 @@ def test_declare_verification_requires_at_least_one_check(tmp_path):
     assert deps.declared_contract is None
 
 
-def test_declare_verification_registered_in_investigating_and_editing_tier0():
+def test_declare_verification_registered_in_investigating_only_tier0():
+    # PR #112 review: the plan freezes at the investigating→editing boundary, so an
+    # editing-phase declare could only ever be a phantom success (buffered checks nobody
+    # drains). Investigating-only; post-freeze changes go through gated alter_verification.
     reg = default_registry()
     tool = reg.get("declare_verification")
     assert tool is not None and tool.permission_tier == 0
-    assert {"investigating", "editing"} <= set(tool.phases)
+    assert set(tool.phases) == {"investigating"}
+    alter = reg.get("alter_verification")
+    assert alter is not None and "editing" in alter.phases  # amendments stay available
 
 
 def test_alter_verification_is_gated_tier3_and_buffers_replacement(tmp_path):

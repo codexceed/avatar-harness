@@ -292,6 +292,30 @@ def test_planner_llm_proposal_rejected_when_command_not_in_citation(tmp_path):
     assert _resolve(tmp_path, _config(planner_model="cheap-model"), client=client) == []
 
 
+def test_planner_llm_chained_proposal_splits_per_segment(tmp_path):
+    # PR #112 review P1: proposals bypassed the ADR-0045 gate — a cited `a && b` froze as
+    # ONE PlannedCheck and Workspace.run mangled it (the tetris_glm false-pass class).
+    # Proposals route through the same split: one check per segment, sharing a chain.
+    (tmp_path / "justfile").write_text("test:\n\tbusted . && luacheck src\n", encoding="utf-8")
+    client = _CountingClient(
+        [{"kind": "test", "command": "busted . && luacheck src", "source_path": "justfile"}]
+    )
+    plan = _resolve(tmp_path, _config(planner_model="cheap-model"), client=client)
+    assert [c.command for c in plan] == ["busted .", "luacheck src"]
+    assert all(c.kind == "test" and c.provenance == "llm:justfile" for c in plan)
+    assert plan[0].chain is not None and plan[0].chain == plan[1].chain
+
+
+def test_planner_llm_proposal_with_unrunnable_shell_syntax_discarded(tmp_path):
+    # Pipes/redirects/heredocs have no no-shell equivalent; a proposal carrying them is
+    # dropped (detection-only degradation), never frozen as a command that can only mangle.
+    (tmp_path / "justfile").write_text("test:\n\tbusted . | tee out.log\n", encoding="utf-8")
+    client = _CountingClient(
+        [{"kind": "test", "command": "busted . | tee out.log", "source_path": "justfile"}]
+    )
+    assert _resolve(tmp_path, _config(planner_model="cheap-model"), client=client) == []
+
+
 # --- freeze semantics + the typed journal event ----------------------------
 
 

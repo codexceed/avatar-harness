@@ -139,6 +139,60 @@ def test_alter_verification_enforces_the_same_boundary(tmp_path):
     assert deps.declared_contract is not None and len(deps.declared_contract) == 2
 
 
+def test_quoted_operator_argument_rejected_legibly(tmp_path):
+    # PR #112 review: posix lexing strips quotes, so `grep -q '&&' f` is indistinguishable
+    # from an operator at token level and silently mis-split into two segments — the exact
+    # defect class ADR-0045 exists to eliminate. Reject it legibly instead.
+    deps = _deps(tmp_path)
+    result = _declare(deps, ["grep -q '&&' README.md"], change_kinds=["content"])
+    assert not result.success
+    assert "quoted" in (result.error or "")
+
+
+def test_declared_chain_segments_share_a_chain_id(tmp_path):
+    # Split segments keep their `&&` lineage so the verifier can preserve short-circuit
+    # semantics; independent checks carry no chain.
+    deps = _deps(tmp_path)
+    result = _declare(
+        deps,
+        ["python -m pytest && python -c 'import game'", "python -c 'import extra'"],
+        change_kinds=["code"],
+    )
+    assert result.success, result.error
+    assert deps.declared_contract is not None
+    first, second, lone = deps.declared_contract
+    assert first.chain is not None and first.chain == second.chain
+    assert lone.chain is None
+
+
+def test_verifier_short_circuits_a_failed_chain(git_repo):
+    # PR #112 review P1: `a && b` split into independent checks ran `b` even when `a`
+    # failed — unlike shell, a failing check no longer guards a later mutating command.
+    # The chain must stop at the first failure; the skipped segment reports legibly.
+    ws = Workspace(git_repo)
+    (git_repo / "game.py").write_text("X = 1\n", encoding="utf-8")
+    ws.stage(["game.py"])
+    deps = RunDeps(workspace=ws, config=HarnessConfig(), cancellation=CancellationToken())
+    chain = (
+        "python -c 'import sys; sys.exit(1)' && "
+        'python -c \'open("mutated.txt", "w").write("x")\''
+    )
+    declared = _declare(deps, [chain], change_kinds=["code"])
+    assert declared.success, declared.error
+    assert deps.declared_contract is not None
+
+    state = TaskState(
+        goal="g", task_kind="edit", files_modified={"game.py"}, declared_change_kinds=["code"]
+    )
+    state.freeze_verification_plan(deps.declared_contract)
+    report = Verifier(HarnessConfig(lint_command="")).verify(state, ws)
+
+    assert report.passed is False
+    assert not (git_repo / "mutated.txt").exists()  # the mutation never ran
+    skipped = [c for c in report.checks if "not run" in c.evidence]
+    assert skipped and skipped[0].status == "fail"  # skipped-after-fail is never a pass
+
+
 # --- verification time: the journal's false pass must fail ---------------------------------
 
 
