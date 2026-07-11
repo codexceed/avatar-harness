@@ -305,13 +305,18 @@ class AgentRunner:
                 mode_source=state.mode_source,
             )
         )
-        if state.task_kind == "investigate":
-            # ADR-0048: resolve (and memoize) the plan while the tree is at its pinned baseline —
-            # BEFORE any transient edit or run_command side effect can plant a contract file. If this
-            # investigation later escalates to an edit, its freeze reuses this baseline-clean
-            # resolution, so a Makefile/test the agent wrote mid-run can never become its own passing
-            # contract (§5 no self-certification). Edit tasks resolve lazily as before (unchanged).
-            self._resolve_plan(ws)
+        # ADR-0048: resolve (and memoize) the plan while the tree is at its pinned baseline —
+        # BEFORE any transient edit or `run_command` side effect can plant a contract file. A
+        # Makefile/test the agent writes mid-run can then never become its own passing contract
+        # (§5 no self-certification).
+        #
+        # For EVERY kind, not just investigate: `run_command` is now admitted in `investigating`
+        # (ADR-0048) for edit tasks too, and an edit task used to resolve lazily — at the first
+        # edit-intent gate check. That left a window where an approved codegen/init command could
+        # stage a Makefile/manifest *before* the first resolution, and detection would freeze the
+        # planted file as the contract (PR #114 review). Edit tasks pay this resolution at the gate
+        # or the freeze anyway, so hoisting it to run-open costs nothing and closes the window.
+        self._resolve_plan(ws)
 
         # The effective deadline slides forward by time spent blocked on human approval, so the
         # wall-clock budget bounds agent work only. Read it fresh each turn — the credit grows
@@ -546,9 +551,16 @@ class AgentRunner:
         """Resolve the verification plan once per run and memoize it (ADR-0007, ADR-0038).
 
         Both the greenfield declaration gate and `_freeze_plan` need the tier-1-3 resolution;
-        resolving is potentially expensive (tier-3 may call an LLM) and should happen once. Safe to
-        memoize: an edit task cannot mutate the workspace during `investigating` without tripping
-        the edit-intent gate, so the resolution can't go stale before the freeze.
+        resolving is potentially expensive (tier-3 may call an LLM) and should happen once.
+
+        The memoization is **load-bearing, not just a cost optimization** (ADR-0048): `_arun` calls
+        this at run open, while the tree still sits at its pinned baseline, and every later caller
+        reuses that result. So the contract is always resolved against the *baseline*, never against
+        a tree the agent has since mutated — a transient edit or a `run_command` side effect cannot
+        plant a Makefile/test that detection would then freeze as the run's own passing contract
+        (§5 no self-certification). The earlier rationale — "an edit task cannot mutate during
+        `investigating` without tripping the edit-intent gate" — is **no longer true**: `run_command`
+        is admitted in `investigating` and stages what it creates.
 
         Args:
             ws: The run-scoped workspace whose artifacts the planner reads.
@@ -733,8 +745,9 @@ class AgentRunner:
         if action.name == "switch_to_editing" and result.success:
             # The gate approved the escalation (attended human, or ADR-0048 scoped auto-approve).
             # Perform the investigate→edit flip — same post-approval, runner-owned pattern as the
-            # amendment above (tools never mutate TaskState, §8).
-            self._escalate_to_edit(state, trigger="model")
+            # amendment above (tools never mutate TaskState, §8). The trigger records who really
+            # steered here: the harness's thrash nudge, or the model unprompted.
+            self._escalate_to_edit(state, trigger="thrash" if state.escalation_nudged else "model")
         record.outcome = result.summary if result.success else (result.error or "failed")
         self.emitter.emit(
             "tool_execution_end",
@@ -955,7 +968,14 @@ class AgentRunner:
             state: The task state whose thrash streak is tracked.
             ws: The run-scoped workspace, to test divergence from the pinned baseline.
         """
-        if state.escalated or state.task_kind != "investigate" or not ws.status_paths():
+        # `ws.diff()`, NOT `ws.status_paths()`: status is `git status --porcelain`, which counts
+        # pre-existing untracked/dirty files the run never touched — on any ordinarily dirty repo it
+        # is never empty, so a clean read-only investigation would be falsely told it is "leaving
+        # changes in the tree" (and under escalation_policy="auto" would self-escalate for no
+        # reason). The diff vs the pinned baseline is exactly the signal `no_unintended_diff`
+        # enforces at verification, so the nudge now fires on precisely the condition that would
+        # fail the run — and `run_command` stages what it creates, so command output is included.
+        if state.escalated or state.task_kind != "investigate" or not ws.diff():
             return
         state.escalation_thrash_streak += 1
         if state.escalation_thrash_streak >= self.config.escalation_thrash_repeats:
@@ -966,6 +986,10 @@ class AgentRunner:
                 "run and verify them, and holds them to a real contract.",
                 kind="escalation_nudge",
             )
+            # Remember that the harness — not the model unprompted — steered here, so the resulting
+            # escalation journals `trigger="thrash"`. Without this the two triggers ADR-0048 promises
+            # to make legible in replay/eval are indistinguishable (every escalation read "model").
+            state.escalation_nudged = True
             state.escalation_thrash_streak = 0  # nudged; don't re-fire until N more thrash repeats
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:

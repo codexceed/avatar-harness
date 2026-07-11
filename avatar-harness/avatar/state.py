@@ -144,6 +144,11 @@ class TaskState(BaseModel):
     # Consecutive repeated no-progress actions while a non-empty diff persists (ADR-0048): trips the
     # thrash-escalation nudge at `config.escalation_thrash_repeats`. Reset when a fresh action lands.
     escalation_thrash_streak: int = 0
+    # Whether the harness's thrash detector nudged this run toward escalating (ADR-0048). Set when the
+    # nudge fires; read at escalation time so `TaskEscalated.trigger` distinguishes a thrash-RESCUED
+    # run from a self-aware one — the eval loop measures how often the safety net (vs. the model
+    # unprompted) catches a misrouted fix, which is unanswerable if every escalation reads "model".
+    escalation_nudged: bool = False
     prompt_tokens: int = 0  # provider-reported usage totals (in-client retries included)
     completion_tokens: int = 0
     files_read: set[str] = Field(default_factory=set)

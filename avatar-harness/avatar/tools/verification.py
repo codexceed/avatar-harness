@@ -231,10 +231,12 @@ class SwitchToEditingInput(BaseModel):
 
 
 def _switch_to_editing(args: SwitchToEditingInput, deps: RunDeps) -> ToolResult:  # noqa: ARG001 — ToolHandler shape; the runner performs the escalation on success
-    # A pure control signal: the runner performs the escalation itself (flip task_kind → edit,
-    # advance the phase, freeze a contract via the standard gate) AFTER the permission gate
+    # A pure control signal: the runner performs the escalation itself AFTER the permission gate
     # approves and this returns success — tools never mutate TaskState (§8), same as
-    # `alter_verification`, whose amendment the runner applies post-approval.
+    # `alter_verification`, whose amendment the runner applies post-approval. The runner flips
+    # `task_kind → edit` and NOTHING else: no phase jump, no plan freeze. The task becomes a normal
+    # edit task still in `investigating`, so the standard edit-intent bootstrap runs the declaration
+    # gate and advances the phase on the next edit — escalation never jumps that gate (ADR-0048).
     return ToolResult(
         tool_name="switch_to_editing",
         success=True,

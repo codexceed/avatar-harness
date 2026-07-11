@@ -74,13 +74,16 @@ class HarnessConfig(BaseSettings):
     autonomous_amendment_policy: Literal["deny", "approve"] = "deny"
 
     # Unattended disposition for a `switch_to_editing` escalation (ADR-0048). "deny" (default)
-    # refuses the mid-run investigate→edit escalation when no human is present; "auto" self-approves
+    # refuses the mid-run investigate→edit escalation when no human is present; "approve" self-ratifies
     # it — for autonomous runs where a misrouted fix should recover on its own. Scoped by tool name.
-    autonomous_escalation_policy: Literal["deny", "auto"] = "deny"
+    # Shares the amendment knob's vocabulary above ("deny"/"approve") deliberately: two consent knobs
+    # with the same semantics must not take two different words for the same disposition.
+    autonomous_escalation_policy: Literal["deny", "approve"] = "deny"
     # Repeat-with-persistent-diff count that trips the harness thrash-escalation nudge (ADR-0048):
     # after this many repeated no-progress actions while an investigate run holds a non-empty diff,
     # the harness surfaces the (harness-only) signal and directs the model to `switch_to_editing`.
-    escalation_thrash_repeats: int = 3
+    # `ge=1`: a 0/negative threshold would nudge on the very first duplicate action.
+    escalation_thrash_repeats: int = Field(default=3, ge=1)
 
     # Verification commands — the OVERRIDE tier of plan resolution (§12, ADR-0007).
     # A non-empty value always wins: the user's stated contract is never overridden.
