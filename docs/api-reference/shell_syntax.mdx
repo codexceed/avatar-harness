@@ -1,0 +1,30 @@
+---
+title: avatar.shell_syntax
+---
+
+Shell-syntax boundary: vet command strings the way the harness executes them (ADR-0045).
+
+`Workspace.run` executes a single argv with NO shell (`shlex.split` + `subprocess.run`),
+so shell operators are never operators — a `&&` chain runs its FIRST program with the
+rest of the line as literal arguments, and a heredoc blocks forever on stdin that no
+shell will ever feed. One dogfood journal (`tetris_glm/events/be46ea…jsonl`) showed both
+ends of that failure: a declared grep chain that verification passed vacuously (later
+patterns became unopenable *filenames*; `grep -q` exit-0'd on the first match anyway)
+and a declared heredoc that hung to timeout and fed a finalization spiral.
+
+This module is the shared gate every model-authored command boundary applies BEFORE a
+string reaches `Workspace.run`: `&&` normalizes to a conjunction of single-argv segments
+(matching the planner's per-segment classification, §12/ADR-0044); every other operator
+is a legible, model-correctable rejection (§10) — never a silent mangle.
+
+## Functions
+### `argv_segments(command: str) -> tuple[list[str], str]`
+
+Split `command` on `&&` into single-argv segments, rejecting other shell operators.
+
+Args:
+    command: The model-supplied, shell-style command string.
+
+Returns:
+    `(segments, "")` — each segment re-joined via `shlex.join`, argv-equivalent to
+    the original — or `([], reason)` naming the unrunnable construct.

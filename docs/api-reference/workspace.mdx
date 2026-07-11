@@ -73,9 +73,13 @@ Args:
         `HarnessConfig.sensitive_path_globs` through to match the permission gate.
     log_path: The harness's own event-journal path (`HarnessConfig.log_path`), hidden
         from the agent's file tools so it can't list/read/search the harness's plumbing.
+    sandbox: The execution strategy applied at the command seam (ADR-0042). Defaults to
+        `NoSandbox` (the full inherited environment — today's behavior), so a bare
+        `Workspace(root)` and every read-only inspection stay unchanged; the entry points
+        that actually run model/verifier commands inject `make_sandbox(config.sandbox_mode)`.
 
 ```python
-Workspace(root: Path | str, *, allow_dirty: bool = False, sensitive_path_globs: Sequence[str] | None = None, log_path: Path | str | None = None) -> None
+Workspace(root: Path | str, *, allow_dirty: bool = False, sensitive_path_globs: Sequence[str] | None = None, log_path: Path | str | None = None, sandbox: Sandbox | None = None) -> None
 ```
 
 #### `Workspace.apply_patch(self, diff: str) -> list[str]`
@@ -99,6 +103,20 @@ Returns:
 
 Raises:
     PatchError: When the diff names no targets or fails to apply cleanly.
+
+#### `Workspace.baseline_paths(self) -> list[str]`
+
+Workspace-relative paths tracked at the *pinned baseline* commit (empty when none).
+
+Lets the verifier tell a genuinely test-less repo (a legitimate no-tests skip) from
+one whose tests were suppressed after the baseline (ADR-0042, Threat A): if the
+baseline HAD tests but a frozen `kind="test"` check now collects none, that exit-5 is
+laundering, not absence. Reads the baseline tree via `git ls-tree` — not the working
+tree — so a just-deleted/emptied test is still seen as having existed. Empty when the
+workspace is not a git repo (no baseline was pinned).
+
+Returns:
+    The sorted workspace-relative POSIX paths tracked at the pinned baseline.
 
 #### `Workspace.contains(self, rel_path: str) -> bool`
 

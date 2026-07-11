@@ -128,9 +128,12 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
                 if self.tool == "alter_verification"
                 else f"{self.tool} wants to run — {self.reason}"
             )
-            yield Static(prompt, id="approval_prompt")
-            yield Static(self._command_text(), id="approval_command")  # the exact command, always shown
-            yield Static(str(self.tool_input), id="approval_detail")
+            # markup=False: the prompt/command/args are model-authored and routinely contain Rich
+            # markup metacharacters (`[` in `python -c '...[...]'`, `grep -E '[...]'`, list literals).
+            # Parsing them as markup crashed the modal (`MarkupError`); show them verbatim instead.
+            yield Static(prompt, id="approval_prompt", markup=False)
+            yield Static(self._command_text(), id="approval_command", markup=False)  # exact command
+            yield Static(str(self.tool_input), id="approval_detail", markup=False)
             with Horizontal(id="approval_buttons"):
                 yield Button("Allow once", id="approve-once")
                 if self._grantable:
@@ -142,7 +145,7 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
                 if self._grantable
                 else "[y] allow once   [d] deny   [v] view"
             )
-            yield Static(hints, id="approval_hints")
+            yield Static(hints, id="approval_hints", markup=False)  # the `[y]`/`[d]` keys are literal
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route a button to the same decision its key binding makes (view toggles, no dismiss).
@@ -239,7 +242,9 @@ class DiffModal(ModalScreen[None]):
             The scrollable diff body.
         """
         with VerticalScroll(id="diff_body"):
-            yield Static(self.diff_text or "(no changes)")
+            # markup=False: a diff routinely contains `[` (list literals, regexes, array indexing),
+            # which Rich would parse as markup and crash the viewer — show it verbatim.
+            yield Static(self.diff_text or "(no changes)", markup=False)
 
     def action_close(self) -> None:
         """Dismiss the viewer (no decision)."""

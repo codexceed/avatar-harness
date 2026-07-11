@@ -31,7 +31,9 @@ def test_harness_event_union_round_trips():
     # Each variant validates and round-trips via its `type` discriminator — the
     # renderer can match the union exhaustively.
     samples = [
-        AgentStart(event_id=1, session_id="s", ts=_TS, goal="fix it"),
+        AgentStart(
+            event_id=1, session_id="s", ts=_TS, goal="fix it", task_kind="edit", mode_source="classifier"
+        ),
         PhaseChanged(event_id=2, session_id="s", ts=_TS, old="investigating", new="editing"),
         ToolEnd(event_id=3, session_id="s", ts=_TS, tool="read_file", success=True, summary="ok"),
         ApprovalRequested(event_id=4, session_id="s", ts=_TS, approval_id="a1", tool="run_command"),

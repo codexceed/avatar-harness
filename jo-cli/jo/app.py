@@ -38,6 +38,7 @@ from avatar import (
     PhaseChanged,
     ReplSession,
     Session,
+    TaskEscalated,
     TaskState,
     ToolEnd,
     ToolStart,
@@ -228,7 +229,7 @@ class CockpitApp(App):
     BINDINGS = [Binding("ctrl+c", "cancel", "cancel / quit", priority=True)]  # noqa: RUF012 — Textual contract
 
     CSS = """
-    #status { dock: top; height: 1; background: $boost; color: $text; }
+    #status { height: 1; background: $boost; color: $text; }
     #footer { dock: bottom; height: auto; }
     #prompt { height: auto; max-height: 8; border: none; padding: 0; }
     #activity { height: 1; }
@@ -249,7 +250,7 @@ class CockpitApp(App):
         self.mode = (repl.mode or mode) if repl is not None else mode
         self.phase = "investigating"
         self.outcome: str | None = None
-        self.verdict: bool | None = None  # the verifier's real verdict (advisory in chat mode)
+        self.verdict: bool | None = None  # the verifier's real verdict (it steers the turn, §23.5)
         self._on_submit = on_submit or (lambda _prompt: None)
         self.rendered: list[str] = []  # mirror of transcript lines, for headless assertions
         self._run_task: asyncio.Task[TaskState] | None = None  # the in-flight per-goal run, for ctrl+c
@@ -264,11 +265,13 @@ class CockpitApp(App):
         Yields:
             The status bar, transcript log, and input widgets.
         """
-        yield Static(self._status_text(), id="status")
         yield RichLog(id="transcript", highlight=False, markup=False, wrap=True)
-        # One bottom-docked footer (same-edge docks would overlap, not stack): the
-        # activity (spinner) line sits directly above the input.
+        # One bottom-docked footer (same-edge docks would overlap, not stack). The
+        # mode·phase status sits at the footer's top — directly by the input the human is
+        # typing into, not stranded at the screen top — so the live task kind and phase are
+        # always in view where a decision is being made; the activity (spinner) line follows.
         yield Vertical(
+            Static(self._status_text(), id="status"),
             Static("", id="activity"),
             HistoryInput(
                 placeholder="Ask, or describe a change… (Enter to send · Shift+Enter for newline)",
@@ -348,6 +351,12 @@ class CockpitApp(App):
             self._set_activity("thinking…", THINKING_STYLE)  # first model inference is pending
         elif isinstance(event, PhaseChanged):
             self.phase = event.new
+        elif isinstance(event, TaskEscalated):
+            # A consented `switch_to_editing` flipped the kind mid-run (ADR-0048); the
+            # classification shown by the bar must follow it, or it lies "investigate"
+            # while the run edits (dogfood `tetris_grok4`: escalated goals stayed labeled
+            # investigate). PhaseChanged carries the editing advance; this carries the kind.
+            self.mode = event.to_kind
         elif isinstance(event, ToolStart):
             self._set_activity(f"running {event.tool}…", tool_style(event.tool))
         elif isinstance(event, ToolEnd):
@@ -489,8 +498,8 @@ class CockpitApp(App):
             kind = "retried" if event.recovered else "turn lost"
             return f"↩ malformed decision ({kind}): {event.error}"
         if isinstance(event, VerificationEnd):
-            # The real verdict, always — in conversational mode the outcome alone would
-            # read "success" even when verification failed (§23.5: the human decides).
+            # The real verdict, always — a mid-repair verdict or an advisory (eval) run can show
+            # `outcome: success` while a check failed, so render the verdict itself (§23.5).
             mark = "✓" if event.passed else "⚠"
             verb = "passed" if event.passed else "failed"
             line = Text(mark, style="green" if event.passed else "yellow")

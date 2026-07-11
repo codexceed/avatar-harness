@@ -464,7 +464,9 @@ _FAIL_HINTS = {
     ),
     "no_unintended_diff": (
         "an investigate task must leave the repo unchanged: revert the leftover "
-        "instrumentation so the diff vs the pinned baseline is empty"
+        "instrumentation so the diff vs the pinned baseline is empty — OR, if you meant to "
+        "FIX this rather than explain it, call switch_to_editing to escalate to an edit task "
+        "(which keeps and verifies your changes)"
     ),
     "tests_changed": "a test_only task must add or change tests; add the missing tests",
     "no_secrets": "remove the hard-coded secret/placeholder the diff introduces",

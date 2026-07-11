@@ -231,7 +231,7 @@ The line vocabulary distinguishes who is speaking, so the conversation reads abo
 | **Model** | `ModelDecisionEvent.thought` (any decision type, when non-empty) | a dim/italic thought line (the public display-channel summary, ADR-0001 D6 — not private chain-of-thought) |
 | **Model** | `ModelUpdate` | the streamed display delta |
 | **Tool** | `ToolStart` / `ToolEnd` | `→ {tool}` / `✓`/`✗ {tool}: {summary}` — **only the tool name** is colored, in its stable per-family color (`tool_style`: blue = inspect, magenta = mutate, yellow = execute, cyan = contract; unknown names crc32-hash onto the palette); everything else (arrow, marks, args, summaries) stays dim |
-| Verifier | `VerificationEnd` | `✓`/`⚠ verification …` (the real verdict, always — advisory in conversational mode, §23.5) |
+| Verifier | `VerificationEnd` | `✓`/`⚠ verification …` (the real verdict, always — it steers the turn; a mid-repair or advisory-eval verdict can differ from `outcome`, §23.5) |
 | Verifier | `DeclarationRequired` | `✍ declare a verification contract before editing` (yellow) — the greenfield declaration gate (ADR-0038) refused an edit pending a declared contract; **informational only, no modal** (the model complies, not the human — observe-only, §13) |
 | Loop | `DecisionError` / `ApprovalRequested` / `AgentEnd` | `↩` / `⏸` / `■ {outcome}` |
 

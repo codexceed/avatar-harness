@@ -47,10 +47,11 @@ def test_run_command_is_tier_3():
     assert run_command.permission_tier == 3  # default-blocked in batch; approval-gated in the REPL
 
 
-def test_run_command_is_editing_verifying_only():
-    # ADR-0002: not advertised during read-only `investigating`, so an investigate task
-    # can't reach it (and the command-ungrounded verifier dead-end it would cause).
-    assert run_command.phases == frozenset({"editing", "verifying"})
+def test_run_command_admitted_in_all_phases():
+    # ADR-0048: run_command ALSO loads in `investigating` (reproducing/observing a failure is
+    # core investigation) — safe because it attributes its side effects into the baseline diff.
+    # run_tests/run_linter stay editing/verifying-only (they lack that accounting).
+    assert run_command.phases == frozenset({"investigating", "editing", "verifying"})
 
 
 def test_run_command_ran_but_failed_is_success(tmp_path):

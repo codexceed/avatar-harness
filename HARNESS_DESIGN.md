@@ -811,14 +811,16 @@ A thin, optional set that operates on the session/workspace and **never goes thr
 | `/state` | Dump the current/last `TaskState` for debugging. |
 | `/quit` | End the session. |
 
-### 23.5 Verification in interactive mode
+### 23.5 Verification in interactive mode (revised — ADR-0046)
 
-The strict "verifier gates `success`" thesis (§12) is right for *autonomy*, but a conversational assistant would feel broken if every "explain this function" had to pass an edit-shaped gate. So verification **stays mandatory but its authority shifts with who is in the loop**:
+> **Superseded stance.** An earlier version made interactive verification *advisory*: the verifier ran and reported, but `final_answer` was delivered as `outcome="success"` regardless of the verdict, with no repair loop. Dogfood journals (`tetris_grok2`, 2026-07-10) showed this let the model self-certify — a failed verdict, and even a failed *immutable floor*, were laundered to `success`. **ADR-0046 supersedes it:** the verifier **steers in every mode**; interactivity changes only *who is deferred to at the terminal boundary*, never whether a failed verdict is honored.
 
-- **Autonomous task** (`--auto`, or the user explicitly says "go do X and verify it"): full §12 gate. The verifier sets `outcome`; the human is not consulted.
-- **Conversational task** (default interactive): the verifier still **runs and reports** — its evidence is rendered — but `final_answer` is delivered as a *reply* and does **not** block on a passing gate. **The human is the terminal authority**; they accept the reply or follow up, and the follow-up is the next turn.
+The strict "verifier gates `success`" thesis (§12) is right for *autonomy*, and the worry that it would force every "explain this function" through an edit-shaped gate is answered by `task_kind` (§7), **not** by disabling the gate: an `investigate` turn passes on producing a grounded explanation, so it never faces an edit-shaped check. With that concern handled, verification **always runs, always reports, and always steers**:
 
-This preserves the engine's guarantee (verification always runs, evidence is always surfaced) while making casual use feel like a chat rather than a CI job. `task_kind` (§7) still selects *which* checks run; interactivity only changes *who decides on the result*.
+- **Autonomous task** (`--auto`, or the user explicitly says "go do X and verify it"): full §12 gate. The verifier sets `outcome`; repair exhaustion is `failed`. The human is not consulted.
+- **Conversational task** (default interactive): *identical steering* — a failing verdict feeds the repair loop, so the model repairs or proposes a gated `alter_verification` amendment (§11/ADR-0038, the mid-loop human-consent path). The human is consulted **continuously** through the permission gate (every mutating tool, and the ungrantable tier-3 amendment), and is **deferred to at repair exhaustion**: the turn `blocks` with an `open_question` ("verification still failing after N attempts — how should I proceed?"), the last reply + failing verdict on the state for rendering. A failed verdict is **never** short-circuited to `success`.
+
+This preserves the engine's guarantee (verification always runs, always steers, evidence always surfaced) while keeping casual use fluid: `task_kind` (§7) selects *which* checks run, and interactivity changes only *who is deferred to*, and *when* — after the verifier has steered to success or exhaustion, never before.
 
 ### 23.6 Interaction-layer MVP cut
 

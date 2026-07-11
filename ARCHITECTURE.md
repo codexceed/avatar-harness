@@ -293,9 +293,11 @@ Key properties:
 - **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.
 - Smart **test-target inference** ("which tests cover this diff?") remains **deferred** (`§9`, `§21`); the plan is per-session, not per-diff.
 
-### 4.4 Interactive vs. autonomous authority (`§23.5`)
+### 4.4 Interactive vs. autonomous authority (`§23.5`, ADR-0046)
 
-Verification always *runs and reports*. **Who decides on the result** shifts: in an autonomous (`--auto`) run the verifier sets `outcome`; in a conversational turn `final_answer` is delivered as a reply and the human is the terminal authority. `task_kind` still picks *which* checks run.
+Verification always *runs, reports, and steers*. A failing verdict drives the repair loop in **every** mode — the model repairs, or proposes a gated `alter_verification` amendment (the mid-loop human-consent path). What shifts is only *who is deferred to at the terminal boundary*: an autonomous (`--auto`) run pronounces repair exhaustion `failed`; a conversational turn **blocks** at exhaustion (an `open_question` hand-off to the human), the last reply + failing verdict left on the state. A failed verdict is never laundered to `success`. `task_kind` still picks *which* checks run — that (not an advisory mode) is what keeps an "explain this" turn from facing an edit-shaped gate.
+
+But steering only reaches tasks that *arrive at* verification, and a fix goal misrouted to `investigate` never does — it edits blind (no execution, and its changes must net to zero) and thrashes. So `task_kind` gains **one sanctioned mid-run transition, `investigate → edit`** (ADR-0048): `run_command` is admitted in `investigating` (it attributes its side effects, so the net-zero contract still holds), and a **consented** `switch_to_editing` flips the kind — the run becomes a normal edit task that binds a contract and steers. Escalation is a proposal (attended asks; unattended → `autonomous_escalation_policy`), triggered mid-run by the model's request or by the harness thrash detector (repeats-with-a-persistent-diff); the *investigation-ended* case (`final_answer` with a leftover diff) is handled by the net-zero contract (revert), not escalation. Detection is resolved from the pinned baseline, so a contract file the agent wrote mid-investigation can never become its own passing rubric.
 
 ## 5. Dry run — one task, end to end
 
