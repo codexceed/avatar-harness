@@ -105,6 +105,20 @@ result through `parse_decision`; tests substitute a scripted fake.
 ModelClient()
 ```
 
+#### `ModelClient.adecide(self, context: ContextPacket) -> ModelDecision`
+
+Async entry point for one decision (ADR-0029 R5); defaults to offloading sync `decide`.
+
+`OpenAIModelClient` overrides this with a cancellable streaming path; every fake inherits
+this bridge unchanged — its sync `decide` runs in a worker thread (uncancellable mid-call,
+but fast and deterministic, so the runner's cancel-race still resolves promptly).
+
+Args:
+    context: The assembled context packet.
+
+Returns:
+    The validated decision for the current turn.
+
 #### `ModelClient.decide(self, context: ContextPacket) -> ModelDecision`
 
 Turn a context packet into a validated decision for the current turn.
@@ -124,7 +138,7 @@ can record them as evidence and journal them (invariant #5). It is never accepte
 from raw model output — `parse_decision` clears it.
 
 ```python
-ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, transport_trace: list[str] = <factory>, usage: DecisionUsage | None = None, transport: str = '') -> None
+ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | AskUser, retry_trace: list[DecisionRetryNote] = <factory>, transport_trace: list[str] = <factory>, streaming_fallback: str = '', usage: DecisionUsage | None = None, transport: str = '') -> None
 ```
 
 **Fields**
@@ -135,6 +149,7 @@ ModelDecision(*, thought_summary: str = '', action: ToolCall | FinalAnswer | Ask
 | `action` | `ToolCall | FinalAnswer | AskUser` | yes |
 | `retry_trace` | `list[DecisionRetryNote]` | no |
 | `transport_trace` | `list[str]` | no |
+| `streaming_fallback` | `str` | no |
 | `usage` | `DecisionUsage | None` | no |
 | `transport` | `str` | no |
 ### `OpenAIModelClient`
@@ -154,10 +169,29 @@ Args:
     transport_max_retries: Transport-layer retries on a NUL/empty body or a request
         failure (ADR-0028 R3); `None` takes `config.transport_max_retries`.
     sleep: Backoff sleeper, injectable so tests exercise retries without real delay.
+    aclient: An injected async OpenAI-compatible client (the ADR-0029 R5 streaming path),
+        or `None` to build an `AsyncOpenAI` lazily on first `adecide()`.
+    asleep: Async backoff sleeper, injectable so async tests skip real delay.
 
 ```python
-OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: int = 2, *, transport_max_retries: int | None = None, sleep: Callable[[float], None] = <built-in function sleep>) -> None
+OpenAIModelClient(config: HarnessConfig, client: Any = None, max_parse_retries: int = 2, *, transport_max_retries: int | None = None, sleep: Callable[[float], None] = <built-in function sleep>, aclient: Any = None, asleep: Callable[[float], Awaitable[None]] = <function sleep>) -> None
 ```
+
+#### `OpenAIModelClient.adecide(self, context: ContextPacket) -> ModelDecision`
+
+Call the endpoint asynchronously, streaming by default for idle-timeout + cancellation.
+
+Streams native tool-calls when enabled (ADR-0029 R5) so a stall is caught at the idle
+timeout regardless of generation length; a provider that can't stream trips
+`_streaming_unsupported` and the SAME request is re-issued non-streaming for the rest of the
+session (D4). Either path is cancellable mid-call (the runner races a cancel against it) and
+raises `TransportError`/`DecisionParseError` exactly like the sync `decide`.
+
+Args:
+    context: The assembled context packet.
+
+Returns:
+    The validated decision for the current turn.
 
 #### `OpenAIModelClient.decide(self, context: ContextPacket) -> ModelDecision`
 
@@ -173,6 +207,15 @@ Args:
 
 Returns:
     The validated decision for the current turn.
+### `StreamingUnsupportedError`
+
+The provider can't stream tool-calls — trip the per-instance flag and fall back (ADR-0029 D4).
+
+Deliberately NOT a `TransportError`: re-issuing the same streaming request would fail
+identically, so it must not flow into the transport-retry. The client catches it once, flips
+`_streaming_unsupported`, and re-issues the SAME request non-streaming for the rest of the
+session. A capability verdict (a streaming-rejection 4xx, or unusable tool-call framing), never
+a transient fault — when in doubt the discrimination defaults to `TransportError` (ADR-0029 D).
 ### `ToolCall`
 
 Decision to invoke a named tool with validated input (§6).

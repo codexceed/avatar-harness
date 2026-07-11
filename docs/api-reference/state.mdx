@@ -107,12 +107,21 @@ One resolved verification check: what runs, and where it came from (ADR-0007).
 
 The unit of the per-session verification plan. `provenance` names the artifact
 the command was resolved from (`config:AVATAR_TEST_COMMAND`, `ci:.github/...`,
-`Makefile:test`, `llm:&lt;cited path>`, `model-smoke`), so every run's rubric is
-auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored check the
-harness still runs itself, resolved at verification time rather than frozen up front.
+`Makefile:test`, `llm:&lt;cited path>`, `model-smoke`, `model-declared`), so every
+run's rubric is auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored
+check the harness still runs itself, resolved at verification time rather than frozen up
+front. `declared` is a greenfield model-declared contract (ADR-0038): a real executing
+check the model authors up front (mandatory for greenfield edits), frozen like tiers 1-3
+but semi-frozen — amendable only through a gated action. `floor` is the immutable
+non-vacuity anchor beneath a declared contract; the model can never amend it away.
+
+`chain` links checks split from one `&&` line (ADR-0045): the verifier stops a chain
+at its first failure, preserving shell short-circuit semantics — a failing segment
+still guards a later mutating one. `None` for independent checks. Optional with a
+default, so journals written before the field parse unchanged (version-skew rule).
 
 ```python
-PlannedCheck(*, name: str, command: str, kind: Literal['test', 'lint', 'smoke'], provenance: str) -> None
+PlannedCheck(*, name: str, command: str, kind: Literal['test', 'lint', 'smoke', 'declared', 'floor'], provenance: str, chain: str | None = None) -> None
 ```
 
 **Fields**
@@ -121,8 +130,9 @@ PlannedCheck(*, name: str, command: str, kind: Literal['test', 'lint', 'smoke'],
 | --- | --- | --- |
 | `name` | `str` | yes |
 | `command` | `str` | yes |
-| `kind` | `Literal['test', 'lint', 'smoke']` | yes |
+| `kind` | `Literal['test', 'lint', 'smoke', 'declared', 'floor']` | yes |
 | `provenance` | `str` | yes |
+| `chain` | `str | None` | no |
 ### `TaskState`
 
 The full, serializable state of one task — the harness's source of truth (§7).
@@ -132,7 +142,7 @@ how it ended), the bounding counters, and the accumulated evidence/decisions
 the context builder draws on. The model's message history is derived from this.
 
 ```python
-TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, smoke_floor_attempted: bool = False, prompt_tokens: int = 0, completion_tokens: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, conversation: list[ConversationTurn] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, verification_plan: list[PlannedCheck] | None = None, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
+TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <factory>, task_kind: Literal['edit', 'investigate', 'test_only'] = 'edit', mode_source: str | None = None, phase: Literal['investigating', 'editing', 'verifying'] = 'investigating', outcome: Literal['success', 'incomplete', 'blocked', 'failed'] | None = None, iterations: int = 0, consecutive_failures: int = 0, repair_failures: int = 0, declaration_nudges: int = 0, smoke_floor_attempted: bool = False, escalated: bool = False, escalation_thrash_streak: int = 0, escalation_nudged: bool = False, prompt_tokens: int = 0, completion_tokens: int = 0, files_read: set[str] = <factory>, files_modified: set[str] = <factory>, commands_run: list[CommandRecord] = <factory>, conversation: list[ConversationTurn] = <factory>, evidence: list[Evidence] = <factory>, decisions: list[DecisionRecord] = <factory>, verifier_results: list[VerifierResult] = <factory>, verification_plan: list[PlannedCheck] | None = None, declared_change_kinds: list[str] | None = None, current_plan: list[str] = <factory>, open_questions: list[str] = <factory>, latest_error: str | None = None, final_answer: str | None = None) -> None
 ```
 
 **Fields**
@@ -143,12 +153,17 @@ TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <fact
 | `goal` | `str` | yes |
 | `constraints` | `list[str]` | no |
 | `task_kind` | `Literal['edit', 'investigate', 'test_only']` | no |
+| `mode_source` | `str | None` | no |
 | `phase` | `Literal['investigating', 'editing', 'verifying']` | no |
 | `outcome` | `Literal['success', 'incomplete', 'blocked', 'failed'] | None` | no |
 | `iterations` | `int` | no |
 | `consecutive_failures` | `int` | no |
 | `repair_failures` | `int` | no |
+| `declaration_nudges` | `int` | no |
 | `smoke_floor_attempted` | `bool` | no |
+| `escalated` | `bool` | no |
+| `escalation_thrash_streak` | `int` | no |
+| `escalation_nudged` | `bool` | no |
 | `prompt_tokens` | `int` | no |
 | `completion_tokens` | `int` | no |
 | `files_read` | `set[str]` | no |
@@ -159,6 +174,7 @@ TaskState(*, task_id: str = <factory>, goal: str, constraints: list[str] = <fact
 | `decisions` | `list[DecisionRecord]` | no |
 | `verifier_results` | `list[VerifierResult]` | no |
 | `verification_plan` | `list[PlannedCheck] | None` | no |
+| `declared_change_kinds` | `list[str] | None` | no |
 | `current_plan` | `list[str]` | no |
 | `open_questions` | `list[str]` | no |
 | `latest_error` | `str | None` | no |
@@ -172,6 +188,36 @@ Args:
     summary: One-line evidence the next context build surfaces.
     detail: Optional verbatim detail kept out of the model's summary view.
     kind: Evidence category, e.g. `feedback` or `blocker`.
+
+#### `TaskState.amend_declared_contract(self, checks: list[PlannedCheck]) -> None`
+
+Replace the model-declared checks in the frozen plan, preserving the floor (ADR-0038).
+
+The one sanctioned mid-run rewrite of a declared contract, applied by the runner only
+after a gated `alter_verification` is approved. Entries whose kind is not `"declared"`
+(the immutable floor, any detected checks) are preserved — the model can move its own
+goalposts, never the harness's floor.
+
+Args:
+    checks: The new declared checks (`kind="declared"`) replacing the old ones.
+
+Raises:
+    RuntimeError: When there is no frozen plan to amend.
+
+#### `TaskState.append_verification_floor(self, check: PlannedCheck) -> None`
+
+Append the immutable non-vacuity floor beneath a model-declared contract (ADR-0038).
+
+The floor is a harness-authored check the model can never declare or amend; it is
+appended (`kind="floor"`) to the frozen plan so `success` always requires it *in
+addition* to whatever the model declared. Applied at most once — a plan that already
+carries a floor is left untouched.
+
+Args:
+    check: The floor check to append (`kind="floor"`).
+
+Raises:
+    RuntimeError: When no plan is frozen yet.
 
 #### `TaskState.block(self, reason: str) -> None`
 

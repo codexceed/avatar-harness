@@ -58,8 +58,10 @@
               "api-reference/permission",
               "api-reference/planner",
               "api-reference/runner",
+              "api-reference/sandbox",
               "api-reference/session",
               "api-reference/session_state",
+              "api-reference/shell_syntax",
               "api-reference/state",
               "api-reference/tools",
               "api-reference/tools-base",
@@ -67,6 +69,7 @@
               "api-reference/tools-edit",
               "api-reference/tools-filesystem",
               "api-reference/tools-search",
+              "api-reference/tools-verification",
               "api-reference/verifier",
               "api-reference/workspace"
             ]
