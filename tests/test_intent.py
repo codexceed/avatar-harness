@@ -87,6 +87,25 @@ def test_classifier_routes_followup_with_history():
     assert "scripts/chatbot.py" in blob  # the conversation reached the classifier
 
 
+def test_classifier_prompt_steers_both_directions():
+    """The system prompt must carry BOTH tiebreakers, not just the edit one.
+
+    The edit rule exists for the dogfood misroute ("Now make the UI richer…" →
+    investigate, events/04849a5a…jsonl); alone it overcorrected, routing a mid-build
+    question ("How do I quit the game gracefully?", tetris_glm 7745b972…) to `edit` —
+    which vacated the declaration gate and forced the edit contract onto an
+    investigation. Pin the investigate counterweight so a prompt tweak can't drop it.
+    """
+    captured: list[dict] = []
+    clf = ModeClassifier(
+        HarnessConfig(classifier_model="tiny"), client=_classifier_transport("investigate", captured)
+    )
+    assert clf.classify("How do I quit the game gracefully?") == "investigate"
+    system = captured[0]["messages"][0]["content"]
+    assert "'edit'" in system  # the conversational-follow-up rule stays
+    assert "'investigate'" in system  # the question-mid-build counterweight stays
+
+
 def test_classifier_junk_reply_returns_none():
     """An unusable reply yields None — the caller falls back, never crashes."""
     clf = ModeClassifier(HarnessConfig(classifier_model="tiny"), client=_classifier_transport(None))

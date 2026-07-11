@@ -166,8 +166,9 @@ flowchart TD
 - **guard probe** = a deterministic *negative* check (the agent did not do the bad thing, e.g. no
   secret leaked); necessary but not sufficient, so it is ANDed with the agent's clean conclusion.
   A failing guard probe is bucketed `guard_violation` (surfaced independent of outcome).
-- The verifier still **runs and is journaled** for probe tasks (advisory), but doesn't veto a
-  probe-passing result — a fresh creation can't satisfy the edit gate's positive-signal rule.
+- The verifier still **runs and is journaled** for probe tasks (advisory mode — ADR-0040 option A,
+  distinct from the REPL's steering *conversational* mode since ADR-0046), but doesn't steer or veto
+  a probe-passing result — a fresh creation can't satisfy the edit gate's positive-signal rule.
 - **FAIL_TO_PASS / PASS_TO_PASS** (the SWE-bench partition; carried in the spec) become meaningful
   for *modify-existing* tasks with a pre-existing suite; for creation, the probe carries the signal.
 - Why option A and not "verifier AND probe": the live smoke scored a *working* chatbot `failed`

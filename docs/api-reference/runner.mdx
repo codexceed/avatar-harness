@@ -30,11 +30,19 @@ Args:
         `VerificationPlanner(config)`.
     event_sink: Optional typed-event sink (a `Session`); absent on the batch/sync path.
     approval_controller: Optional awaited gate for tier-3 `ask` calls (a `Session`).
-    conversational: Verification authority (§23.5). `False` (default) is the strict §12
-        gate; `True` runs the verifier as advisory and delivers without repairing.
+    conversational: Terminal-boundary authority (§23.5, ADR-0046). The verifier steers
+        (repair loop) in both strict and conversational modes; this flag only changes the
+        disposition at repair exhaustion — `False` (default, `--auto`) pronounces `failed`;
+        `True` (interactive) defers to the human, blocking with an `open_question`. It never
+        makes a failed verdict advisory.
+    advisory: External-grading authority (ADR-0040 option A). `True` runs the verifier as
+        advisory — it reports but does not steer or gate, and a failed verdict is delivered
+        as `success` for a held-out grader (the eval probe) to judge. Off by default; set
+        only by external-grading callers (the eval harness), never the REPL. Takes precedence
+        over `conversational`.
 
 ```python
-AgentRunner(*, model_client: ModelClient, registry: ToolRegistry, deps: RunDeps, context_builder: ContextBuilder, verifier: Verifier, emitter: Emitter, config: HarnessConfig, policy: PermissionPolicy | None = None, planner: VerificationPlanner | None = None, event_sink: EventSink | None = None, approval_controller: ApprovalController | None = None, conversational: bool = False) -> None
+AgentRunner(*, model_client: ModelClient, registry: ToolRegistry, deps: RunDeps, context_builder: ContextBuilder, verifier: Verifier, emitter: Emitter, config: HarnessConfig, policy: PermissionPolicy | None = None, planner: VerificationPlanner | None = None, event_sink: EventSink | None = None, approval_controller: ApprovalController | None = None, conversational: bool = False, advisory: bool = False) -> None
 ```
 
 #### `AgentRunner.arun(self, state: TaskState) -> TaskState`
@@ -56,6 +64,9 @@ Raises:
     TransportError: When a model call fails at the transport layer (timeout / NUL body)
         past the client's retries — a system failure surfaced to the caller, never fed
         back to the model or masked as a soft `incomplete` (§16, ADR-0028 R4).
+    asyncio.CancelledError: When the run task itself is cancelled (the signal /
+        `_run_task.cancel()` path, ADR-0030) — re-raised after aborting the in-flight
+        model call so the loop unwinds without orphaning the request.
 
 #### `AgentRunner.run(self, state: TaskState) -> TaskState`
 

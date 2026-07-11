@@ -73,8 +73,8 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 
 - **Meta commands** (handled locally, never hit the model): `/help`, `/mode <edit|investigate|test_only|plan>`, `/plan`, `/diff`, `/state`, `/permissions`, `/quit`.
 - **Ground a goal** in a file with `@path/to/file`.
-- **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`delete_file`) auto-allow when their paths validate inside the workspace.
-- **Conversational by default** — verification runs and is reported, but the reply isn't gated on it (you're the terminal authority); `--auto` keeps the strict gate.
+- **Approval prompts** for `run_command` and sensitive-path calls (`[y]` once · `[a]` always this session · `[d]` deny); the edit tools (`str_replace`/`write_file`/`delete_file`) auto-allow when their paths validate inside the workspace. Exception: a verification-contract amendment (`alter_verification`) never offers `[a]` — each amendment is ratified individually.
+- **Conversational by default** — the verifier steers every turn (a failing check drives repair, or a gated contract amendment); at repair exhaustion the turn defers to you (blocks with a question) instead of pronouncing failure. `--auto` makes exhaustion a hard `failed`.
 - **Prompt history** — `↑`/`↓` recall the prompts you submitted this sitting (stepping past the newest restores your in-progress draft).
 - **`Ctrl+C`** copies the current selection if one is active, else interrupts the in-flight run — **instantly**, even mid model call (it aborts the request and frees the cockpit) — else quits.
 - **Copying text** — to copy with your OS clipboard shortcut (e.g. `Cmd+C`), use your terminal's native selection: in **iTerm2** hold **Option** while drag-selecting, in **Terminal.app** / **GNOME Terminal** / **Windows Terminal** hold **Shift**, then copy as usual. (A plain mouse drag selects *within* the app — copy that with `Ctrl+C`.)
@@ -84,7 +84,7 @@ A full-screen multi-turn REPL — status bar (mode · phase · outcome), streami
 | Flag | Command | Default | Meaning |
 | --- | --- | --- | --- |
 | `--task-kind {edit,investigate,test_only}` | `avatar` | `investigate` | Selects the verification contract for this one-shot task. |
-| `--auto` | `jo` | off | Keep the strict verification gate (default: conversational — verify runs + reports, you decide). |
+| `--auto` | `jo` | off | Strict gate — repair exhaustion is `failed` (default: conversational — the verifier steers, then defers to you at exhaustion). |
 | `--log PATH` | both | `events/<session_id>.jsonl` | Where to write the append-only JSONL event log. |
 | `--allow-dirty` | both | off | Run despite uncommitted **tracked** changes in the workspace. |
 

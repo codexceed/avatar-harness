@@ -37,10 +37,17 @@ class EventBase(BaseModel):
 
 
 class AgentStart(EventBase):
-    """A run has begun on `goal`."""
+    """A run has begun on `goal`.
+
+    `task_kind` is the resolved kind the run opens with; `mode_source` records how it was
+    decided ("override"/"classifier"/"heuristic", or `None` when the core was driven directly)
+    so a dogfood journal can distinguish a classifier miss from a classifier outage.
+    """
 
     type: Literal["agent_start"] = "agent_start"
     goal: str = ""
+    task_kind: str = ""
+    mode_source: str | None = None
 
 
 class AgentEnd(EventBase):
@@ -181,11 +188,15 @@ class VerificationPlanFrozen(EventBase):
     Journaled at the investigating → editing boundary, before any verification:
     each check carries its command and provenance, so every run's rubric — and
     where each check came from — is auditable. An empty `checks` records that
-    nothing was discovered (the verifier will fail legibly).
+    nothing was discovered (the verifier will fail legibly). `change_kinds`
+    records the kinds a model-declared contract covers (ADR-0044) — the model's
+    stated intent, auditable against the diff; `None` = no declaration (tiers 1-3),
+    including journals written before the field existed.
     """
 
     type: Literal["verification_plan_frozen"] = "verification_plan_frozen"
     checks: list[PlannedCheck] = Field(default_factory=list)
+    change_kinds: list[str] | None = None
 
 
 class VerificationStart(EventBase):
@@ -209,6 +220,24 @@ class CancellationObserved(EventBase):
     reason: str = ""
 
 
+class TaskEscalated(EventBase):
+    """The task was escalated `investigate → edit` mid-run (ADR-0048).
+
+    Emitted when a consented `switch_to_editing` (model-requested, or a thrash-nudged request)
+    flips the task **kind only** — deliberately not the phase, and not the frozen plan. The task
+    becomes a normal edit task still sitting in `investigating`, so the standard edit-intent
+    bootstrap runs the declaration gate and advances the phase on the next edit: escalation never
+    *jumps* that gate. `trigger` records what caused it (`model` = the model asked unprompted;
+    `thrash` = the harness's thrash detector nudged it there). The transition is one-directional
+    and once-only, so this only ever reads `investigate → edit`.
+    """
+
+    type: Literal["task_escalated"] = "task_escalated"
+    from_kind: str = "investigate"
+    to_kind: str = "edit"
+    trigger: str = "model"
+
+
 HarnessEvent = Annotated[
     AgentStart
     | AgentEnd
@@ -227,7 +256,8 @@ HarnessEvent = Annotated[
     | VerificationPlanFrozen
     | VerificationStart
     | VerificationEnd
-    | CancellationObserved,
+    | CancellationObserved
+    | TaskEscalated,
     Field(discriminator="type"),
 ]
 

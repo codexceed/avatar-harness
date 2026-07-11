@@ -30,7 +30,14 @@ from avatar.workspace import Workspace
 
 
 def _runner(
-    tmp_path, registry: ToolRegistry, decisions, *, emitter=None, planner=None, **config_kw
+    tmp_path,
+    registry: ToolRegistry,
+    decisions,
+    *,
+    emitter=None,
+    planner=None,
+    conversational=False,
+    **config_kw,
 ) -> AgentRunner:
     config = HarnessConfig(**config_kw)
     deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
@@ -43,6 +50,7 @@ def _runner(
         emitter=emitter or Emitter(),
         config=config,
         planner=planner,
+        conversational=conversational,
     )
 
 
@@ -796,6 +804,34 @@ def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
     report = result.verifier_results[-1]
     assert report.passed is True
     assert any(c.name == "smoke" and c.status == "pass" for c in report.checks)
+
+
+def test_conversational_floor_failure_never_reports_success(git_repo):
+    # ADR-0038/0046: the immutable floor can never be weakened, and a FAILING floor must never
+    # read as `success` — not even in conversational mode, where the old advisory path buried it.
+    # A greenfield edit whose authored floor fails (a broken file that won't compile) steers to
+    # repair exhaustion, then defers to the human (`blocked`) — it is never laundered to success.
+    reg = _edit_registry()
+    reg.register(write_file)
+    broken = "def oops(\n"  # a syntax error → `py_compile` exits non-zero
+    decisions = [
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "main.py", "content": broken})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    state = TaskState(goal="write a module", task_kind="edit")
+    result = _runner(
+        git_repo,
+        reg,
+        decisions,
+        conversational=True,
+        planner=_smoke_planner("python -m py_compile main.py"),
+        max_declaration_nudges=0,
+    ).run(state)
+
+    assert result.outcome != "success"  # the failing floor is never laundered to success
+    assert result.outcome == "blocked"  # conversational exhaustion defers to the human
+    assert result.verifier_results[-1].passed is False
+    assert any(c.name == "smoke" and c.status == "fail" for c in result.verifier_results[-1].checks)
 
 
 # --- declared verification contract fold-in (ADR-0038) -----------------------

@@ -73,6 +73,43 @@ Returns:
     anywhere (the verifier then fails legibly — never an invented default).
 
 ## Functions
+### `check_covers_content(command: str) -> bool`
+
+Whether a declared check covers a `content` change: anchored + falsifiable (ADR-0044).
+
+The `content` rulebook replaces "must run what you build" (meaningless for a textual
+deliverable) with two demands, judged together per stage (`_stage_inspects_content`):
+**anchored** — some stage receives a content artifact (`.md`/`.rst`/`.txt`/`.adoc`,
+behavior-bearing manifests excluded) as a real operand, so a plain `pytest` check
+never silently "covers" the docs half of a mixed change and a quoted filename inside
+a code string anchors nothing; **falsifiable** — that stage asserts (an assertive
+inspector with an operand, or a real executor), and no trailing `||` alternative that
+cannot fail (`|| true`, `|| echo fine`) neutralizes the line to exit 0. The stage
+split is quote-blind like `vacuous_declared_check` — live declared checks are single
+argvs by the time they reach here (the ADR-0045 gate rejects/splits operators first),
+so the multi-stage handling is defense-in-depth for direct callers, kept so the two
+layers can be edited independently. The immutable floor beneath the contract is the
+ultimate anchor.
+
+Args:
+    command: The declared check command to classify.
+
+Returns:
+    `True` when the command satisfies the `content` rulebook.
+### `classify_change_paths(paths: Iterable[str]) -> set[Literal['code', 'content']]`
+
+The change kinds present in a set of changed paths (ADR-0044).
+
+The verification-time half of the declared-kind audit: `.md`/`.rst`/`.txt`/`.adoc`
+classify as `content`; every other suffix — and behavior-bearing `.txt` manifests
+(`requirements*.txt`, `CMakeLists.txt`) — classifies as `code`, so ambiguity fails
+toward the stricter rulebook.
+
+Args:
+    paths: Workspace-relative changed paths (from the diff / `files_modified`).
+
+Returns:
+    The subset of `&#123;"code", "content"&#125;` present; empty for no paths.
 ### `config_override_checks(config: HarnessConfig | None) -> list[PlannedCheck]`
 
 The override tier: checks declared explicitly in config (always win, per slot).
@@ -98,3 +135,24 @@ Args:
 
 Returns:
     `(program, args)` — program is the basename (empty when nothing remains).
+### `vacuous_declared_check(command: str) -> bool`
+
+Whether a model-declared verification command is vacuous (proves nothing — ADR-0038).
+
+A check is vacuous when it is empty or when *every* executed program on the line —
+each `&&`/`||`/`;` segment and each `|` pipeline stage, after unwrapping
+env/`sudo`/`uv run`/`npx`/`python -m` — is a no-op/inspector (`true`, `echo`, `grep`, …).
+Such a line exits 0 regardless of the artifact, so it can't be a real contract. One real
+stage redeems the line: `printf 'q' | python -m game` drives the program under test via
+stdin and must not be rejected for its `printf` head (dogfood 7e49b161 — the rejection
+cost a turn plus a tier-3 amendment approval for an equivalent check). The split is
+quote-blind, so an in-quote `|`/`;` can only mis-split toward *accepting* — e.g.
+`echo "a | b"` now passes because its phantom second stage `b"` reads as an unknown
+(real) program. That is the safe direction for a lower-bound guard: the immutable
+floor beneath the declared contract is what ultimately anchors non-vacuity.
+
+Args:
+    command: The declared check command to validate.
+
+Returns:
+    `True` when the command is vacuous and must be rejected.

@@ -27,11 +27,12 @@ import json
 import re
 import shlex
 import tomllib
-from collections.abc import Callable
-from pathlib import Path
+from collections.abc import Callable, Iterable
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from avatar.config import HarnessConfig
+from avatar.shell_syntax import argv_segments
 from avatar.state import PlannedCheck
 from avatar.workspace import Workspace
 
@@ -192,10 +193,14 @@ _SMOKE_SYSTEM = (
     "For SAFETY the harness runs only NON-executing checkers — pick one of: "
     "`python -m py_compile <files>`, `ruff check`, `node --check <file>`, `tsc --noEmit`, "
     "`go vet ./...` / `go build ./...`, `gofmt -l <files>`, `ruby -c <file>`, `perl -c <file>`, "
-    "`php -l <file>`, `deno check <file>`. Reference the files just written, and prefer a "
-    "DEPENDENCY-FREE check (compiling/parsing won't fail on uninstalled third-party imports). "
-    "Do NOT use code runners (`python -c`, `node -e`, `pytest`, a shell `-c` wrapper) — they are "
-    "rejected. If none of these fit the stack, make no call."
+    "`php -l <file>`, `deno check <file>`. Name ONLY the files that make up the DELIVERABLE — the "
+    "artifact the task was asked to produce and the code reachable from its real entry point. "
+    "EXCLUDE your own throwaway scaffolding: scratch files and ad-hoc `verify_*` / `test_*` "
+    "scripts or manual harnesses you wrote to check your own work are NOT the deliverable and must "
+    "not gate it (a broken scratch file must never fail the floor). Prefer a DEPENDENCY-FREE check "
+    "(compiling/parsing won't fail on uninstalled third-party imports). Do NOT use code runners "
+    "(`python -c`, `node -e`, `pytest`, a shell `-c` wrapper) — they are rejected. If none of "
+    "these fit the stack, make no call."
 )
 
 # The floor runs a MODEL-AUTHORED command unattended, outside the before_tool_call permission
@@ -307,10 +312,22 @@ class VerificationPlanner:
                 continue
             if not _citation_valid(root, command, source):
                 continue  # no validated provenance → rejected (ADR-0007 tier 3)
+            # ADR-0045 applies to proposals too (PR #112 review P1): a cited `a && b`
+            # frozen whole would run argv-mangled (the tetris_glm false-pass class).
+            # `&&` splits into chained per-segment checks; other operators have no
+            # no-shell equivalent — discard the proposal (detection-only degradation).
+            segments, reason = argv_segments(command)
+            if reason:
+                continue
             taken.add(kind)
-            accepted.append(
-                PlannedCheck(name=_SLOT_NAMES[kind], command=command, kind=kind, provenance=f"llm:{source}")
-            )
+            chain = f"llm:{kind}" if len(segments) > 1 else None
+            for i, segment in enumerate(segments):
+                name = _SLOT_NAMES[kind] if i == 0 else f"{_SLOT_NAMES[kind]}_{i + 1}"
+                accepted.append(
+                    PlannedCheck(
+                        name=name, command=segment, kind=kind, provenance=f"llm:{source}", chain=chain
+                    )
+                )
         return accepted
 
     def _ensure_client(self) -> Any:
@@ -555,6 +572,7 @@ def effective_invocation(command: str) -> tuple[str, list[str]]:
 _VACUOUS_PROGRAMS = frozenset(
     {"true", "false", ":", "echo", "printf", "cat", "ls", "pwd", "test", "["}
     | {"grep", "rg", "head", "tail", "wc", "sleep", "sort", "uniq", "cut", "tr", "stat"}
+    | {"cmp", "diff"}  # inspectors: assertive for content (with operands), never executing code
     | {"exit", "return", "command", "type", "which", "hash", "cd", "export", "set", "unset"}
     | {"mkdir", "touch", "rm", "cp", "mv", "chmod", "dirname", "basename"}
 )
@@ -601,6 +619,175 @@ def vacuous_declared_check(command: str) -> bool:
         if stage.strip()
     ]
     return not stages or all(_vacuous_segment(stage) for stage in stages)
+
+
+# Inspectors whose exit code reflects artifact/filesystem state (given an operand): for a
+# textual deliverable these ARE the verification (ADR-0044) — `grep -q <section> DESIGN.md`
+# is the strongest external evidence a markdown artifact admits. Distinct from the emitters
+# left in `_VACUOUS_PROGRAMS` (`true`, `echo`, `printf`, …), whose exit is state-independent.
+_ASSERTIVE_INSPECTORS = frozenset(
+    {"test", "[", "grep", "rg", "cmp", "diff", "cat", "ls", "stat", "head", "tail", "wc"}
+)
+
+# Path suffixes classified as `content` (non-functional textual artifacts). Anything else —
+# including behavior-bearing config (`pyproject.toml`, CI yaml) — classifies as `code`:
+# murky fails toward the stricter rulebook (ADR-0044).
+_CONTENT_SUFFIXES = frozenset({".md", ".rst", ".txt", ".adoc"})
+
+# `.txt` basenames that carry behavior (dependency/build manifests): they classify as
+# `code` despite the suffix, in BOTH the path classifier and the content anchor, so a
+# dependency change can never ship under a `content` declaration with zero executing
+# check (PR #112 review DO).
+_BEHAVIOR_TXT_RE = re.compile(r"(?:requirements[^/]*|constraints[^/]*|CMakeLists)\.txt$", re.IGNORECASE)
+
+# A content-artifact operand of a declared-check stage — the anchor a `content`-covering
+# check must carry (same suffix set the diff-side classifier uses, so the two halves
+# agree). Matched against whole argv tokens (`fullmatch`), never searched as a substring:
+# a filename inside a string literal (`python -c "print('README.md')"`) anchors nothing
+# (PR #112 review P1).
+_CONTENT_PATH_RE = re.compile(
+    r"[\w./-]+\.(?:" + "|".join(s.lstrip(".") for s in sorted(_CONTENT_SUFFIXES)) + r")",
+    re.IGNORECASE,
+)
+
+
+def _is_content_path(path: str) -> bool:
+    """Whether `path` classifies as a `content` artifact (suffix in, behavior-bearing out).
+
+    Args:
+        path: A workspace-relative path (or a check's operand token).
+
+    Returns:
+        `True` for textual-artifact suffixes, unless the basename is a known
+        behavior-bearing manifest (`requirements*.txt`, `constraints*.txt`, `CMakeLists.txt`).
+    """
+    p = PurePosixPath(path)
+    return p.suffix.lower() in _CONTENT_SUFFIXES and not _BEHAVIOR_TXT_RE.search(p.name)
+
+
+def _stages(text: str) -> list[str]:
+    """All command stages of `text` — `&&`/`||`/`;` segments split again on `|`.
+
+    Args:
+        text: A shell line (or fragment) to decompose.
+
+    Returns:
+        The non-empty stages, stripped, in order.
+    """
+    return [
+        stage.strip() for segment in _split_segments(text) for stage in segment.split("|") if stage.strip()
+    ]
+
+
+def _segment_asserts(stage: str) -> bool:
+    """Whether one stage's exit code can depend on the state of an artifact.
+
+    True for a real executor (any program outside `_VACUOUS_PROGRAMS`, fail-open like
+    `_vacuous_segment`) or an assertive inspector (`test`, `grep`, `cmp`, …) given at
+    least one non-flag operand to inspect. False for emitters (`true`, `echo`, …) and
+    bare inspectors with nothing to look at.
+
+    Args:
+        stage: One command stage (no `&&`/`;`/`|` chaining).
+
+    Returns:
+        `True` when the stage asserts something about world state.
+    """
+    program, args = effective_invocation(stage)
+    if not program:
+        return False
+    if program not in _VACUOUS_PROGRAMS:
+        return True  # unknown/real program — fails open, consistent with `_vacuous_segment`
+    return program in _ASSERTIVE_INSPECTORS and any(not arg.startswith("-") for arg in args)
+
+
+def _stage_inspects_content(stage: str) -> bool:
+    """Whether one stage asserts something AND receives a content artifact as an operand.
+
+    The anchored-and-falsifiable conjunction, judged per stage (PR #112 review P1): the
+    artifact must be a real argv operand the program receives — `grep -q S DESIGN.md`,
+    `python check_docs.py README.md` — never a substring of the line, so a filename
+    inside a string literal (`python -c "print('README.md')"`, which always exits 0
+    without reading the file) anchors nothing. Behavior-bearing `.txt` manifests are not
+    content operands (`_is_content_path`), keeping the anchor and the diff-side path
+    classifier in agreement.
+
+    Args:
+        stage: One command stage (no `&&`/`;`/`|` chaining).
+
+    Returns:
+        `True` when the stage is assertive/executing and names a content operand.
+    """
+    if not _segment_asserts(stage):
+        return False
+    _, args = effective_invocation(stage)
+    return any(
+        not arg.startswith("-") and _CONTENT_PATH_RE.fullmatch(arg) and _is_content_path(arg) for arg in args
+    )
+
+
+def check_covers_content(command: str) -> bool:
+    """Whether a declared check covers a `content` change: anchored + falsifiable (ADR-0044).
+
+    The `content` rulebook replaces "must run what you build" (meaningless for a textual
+    deliverable) with two demands, judged together per stage (`_stage_inspects_content`):
+    **anchored** — some stage receives a content artifact (`.md`/`.rst`/`.txt`/`.adoc`,
+    behavior-bearing manifests excluded) as a real operand, so a plain `pytest` check
+    never silently "covers" the docs half of a mixed change and a quoted filename inside
+    a code string anchors nothing; **falsifiable** — that stage asserts (an assertive
+    inspector with an operand, or a real executor), and no trailing `||` alternative that
+    cannot fail (`|| true`, `|| echo fine`) neutralizes the line to exit 0. The stage
+    split is quote-blind like `vacuous_declared_check` — live declared checks are single
+    argvs by the time they reach here (the ADR-0045 gate rejects/splits operators first),
+    so the multi-stage handling is defense-in-depth for direct callers, kept so the two
+    layers can be edited independently. The immutable floor beneath the contract is the
+    ultimate anchor.
+
+    Args:
+        command: The declared check command to classify.
+
+    Returns:
+        `True` when the command satisfies the `content` rulebook.
+    """
+    alternatives = [alt for alt in command.split("||") if alt.strip()]
+    if len(alternatives) > 1 and not any(_segment_asserts(s) for s in _stages(alternatives[-1])):
+        return False  # the fallback arm can't fail — the line always exits 0
+    return any(_stage_inspects_content(stage) for stage in _stages(command))
+
+
+# The declared change kinds (ADR-0044) — one definition, shared by the rulebook registry,
+# the `declare_verification`/`alter_verification` input models (whose JSON schema advertises
+# the enum to the model), and the path classifier, so a typo'd kind anywhere fails the type
+# checker. Journaled fields (`TaskState`/`VerificationPlanFrozen`) deliberately stay
+# `list[str]`: journals are durable and read across version skew — a kind added later must
+# not make an older harness unable to parse a newer journal.
+ChangeKind = Literal["code", "content"]
+
+# Per-kind coverage rulebooks (ADR-0044): what one declared check must satisfy to count
+# toward a declared change kind. `code` is the ADR-0038 rule unchanged; `content` is
+# anchored + falsifiable. Keyed by `ChangeKind`; a test guards exhaustiveness (a dict
+# literal missing a kind still typechecks — keys may be a subset of the annotated type).
+CHANGE_KIND_COVERAGE: dict[ChangeKind, Callable[[str], bool]] = {
+    "code": lambda command: not vacuous_declared_check(command),
+    "content": check_covers_content,
+}
+
+
+def classify_change_paths(paths: Iterable[str]) -> set[ChangeKind]:
+    """The change kinds present in a set of changed paths (ADR-0044).
+
+    The verification-time half of the declared-kind audit: `.md`/`.rst`/`.txt`/`.adoc`
+    classify as `content`; every other suffix — and behavior-bearing `.txt` manifests
+    (`requirements*.txt`, `CMakeLists.txt`) — classifies as `code`, so ambiguity fails
+    toward the stricter rulebook.
+
+    Args:
+        paths: Workspace-relative changed paths (from the diff / `files_modified`).
+
+    Returns:
+        The subset of `{"code", "content"}` present; empty for no paths.
+    """
+    return {"content" if _is_content_path(path) else "code" for path in paths}
 
 
 def _first_positional(args: list[str]) -> str:

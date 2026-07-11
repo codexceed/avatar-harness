@@ -142,3 +142,41 @@ def test_edit_mission_prompts_declaration():
     packet = ContextPacket(goal="build a module", phase="investigating", task_kind="edit")
     system = build_messages(packet)[0]["content"]
     assert "declare_verification" in system
+
+
+def test_claim_done_without_editing_is_forced_to_declare(tmp_path):
+    # grok4: an edit task that reaches `final_answer` with NO edit and NO contract must be nudged to
+    # declare — while still in `investigating`, where declare is reachable — instead of freezing an
+    # empty plan, failing "no contract", and being forced through `alter_verification` in repair.
+    bus = EventBus(session_id="s")
+    decisions = [
+        # claim done with the deliverable pasted inline — no file written, no contract declared
+        ModelDecision(action=FinalAnswer(answer="# Design Spec\n(inline, nothing written)")),
+        # after the nudge: declare a real contract, write the file, finalize
+        _declare(_PASS),
+        _write(),
+        ModelDecision(action=FinalAnswer(answer="wrote main.py")),
+    ]
+    runner = _gate_runner(tmp_path, decisions, event_sink=bus, max_declaration_nudges=3)
+
+    state = runner.run(TaskState(goal="provide a design spec in markdown", task_kind="edit"))
+
+    # The first final_answer was refused with a declaration nudge (nothing edited before it, so the
+    # nudge can only be the claim-done gate), NOT verified against an empty plan.
+    assert any(isinstance(e, DeclarationRequired) for e in bus.history)
+    assert state.declaration_nudges == 1  # refused once, then the model complied
+    # It verified on the DECLARED contract — no empty-plan failure, no alter_verification thrash.
+    assert state.outcome == "success"
+    assert state.verification_plan and all(c.kind == "declared" for c in state.verification_plan)
+
+
+def test_claim_done_gate_respects_nudge_budget(tmp_path):
+    # A model that keeps claiming done without declaring is nudged up to the cap, then `final_answer`
+    # proceeds to verification (empty plan → floor) — refused a bounded number of times, never forever.
+    decisions = [ModelDecision(action=FinalAnswer(answer="done, trust me"))]  # ScriptedModel repeats it
+    runner = _gate_runner(tmp_path, decisions, max_declaration_nudges=2, max_iterations=8)
+
+    state = runner.run(TaskState(goal="build a module", task_kind="edit"))
+
+    assert state.declaration_nudges == 2  # nudged up to the cap, then stopped refusing
+    assert state.outcome is not None  # reached a terminal verdict — did not loop forever on the gate
