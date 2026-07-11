@@ -101,6 +101,24 @@ def _action_key(action: ToolCall | FinalAnswer | AskUser) -> str:
     return action.question
 
 
+# The greenfield declaration nudge (ADR-0038), shared by the edit-intent bootstrap and the
+# claim-done gate. Two phrasings for the two boundaries — "before you edit" vs "before you
+# finalize" — since a claim-done-with-no-diff task must also *make* the change, not only declare.
+_DECLARE_BEFORE_EDIT_MSG = (
+    "This is a from-scratch task and the harness detected no test/lint contract. "
+    "Before you edit, declare how your work will be verified: call declare_verification with "
+    "one or more commands that RUN what you build and exit non-zero if it is broken "
+    "(e.g. `python -m pytest test_x.py`)."
+)
+_DECLARE_BEFORE_DONE_MSG = (
+    "You claimed done, but this from-scratch task has no test/lint contract the harness can "
+    "detect. Declare how your deliverable is verified FIRST — call declare_verification with "
+    "executing checks that fail on breakage (for a docs/content deliverable, an anchored check "
+    "like `grep -q '<required section>' FILE.md`, with change_kinds=['content']) — then produce "
+    "the file(s) with write_file and finalize. Do not answer with the content inline; write it."
+)
+
+
 class AgentRunner:
     """The bounded loop that owns all state mutation and ends on verification (§5, §8).
 
@@ -439,9 +457,23 @@ class AgentRunner:
             if isinstance(action, ToolCall):
                 await self._arun_tool_call(state, runtime, ws, action, record)
             elif isinstance(action, FinalAnswer):
-                state.final_answer = action.answer
-                await self._averify(state, ws)
-                record.outcome = "verified" if state.outcome == "success" else "verification rejected"
+                if self._must_declare_before_edit(state, ws) and (
+                    state.declaration_nudges < self.config.max_declaration_nudges
+                ):
+                    # Claim-done gate (grok4): an edit task that reaches `final_answer` with no
+                    # detected/declared contract would otherwise freeze an empty plan, fail with the
+                    # cryptic "no contract" verdict, and — pushed into `editing` by the repair loop —
+                    # be unable to reach `declare_verification` (investigating-only), forcing a
+                    # backwards contract-via-`alter` thrash. Force the declaration NOW, while still in
+                    # `investigating` where declare is reachable, instead of after the doomed verify.
+                    record.outcome = "declaration required"
+                    self._refuse_for_declaration(
+                        state, action_name="final_answer", message=_DECLARE_BEFORE_DONE_MSG
+                    )
+                else:
+                    state.final_answer = action.answer
+                    await self._averify(state, ws)
+                    record.outcome = "verified" if state.outcome == "success" else "verification rejected"
             elif isinstance(action, AskUser):
                 # Interactive answering rides the control plane (resolve via the session);
                 # with no controller wired, any ask blocks the run as before.
@@ -530,6 +562,32 @@ class AgentRunner:
             True iff the edit should be refused pending a declared contract.
         """
         return state.task_kind == "edit" and not self.deps.declared_contract and not self._resolve_plan(ws)
+
+    def _refuse_for_declaration(self, state: TaskState, *, action_name: str, message: str) -> None:
+        """Refuse an action pending a declared contract and nudge the model (ADR-0038, grok4).
+
+        Shared by the edit-intent bootstrap (refuses the first edit) and the claim-done gate
+        (refuses a no-contract `final_answer`). Increments the bounded nudge budget, feeds the
+        message back as a recoverable error, and journals `declaration_required` on both channels
+        (legacy emitter → EventLog JSONL, typed bus → cockpit). The caller keeps the phase in
+        `investigating`, where `declare_verification` is reachable.
+
+        Args:
+            state: The task state whose nudge budget is spent and whose feedback is appended.
+            action_name: The refused action, for the journal (`str_replace` / `final_answer` / …).
+            message: The declaration nudge to feed back (edit-boundary vs claim-done phrasing).
+        """
+        state.declaration_nudges += 1
+        state.latest_error = message
+        state.add_feedback(message, kind="declare_required")
+        self.emitter.emit("declaration_required", tool=action_name, nudge=state.declaration_nudges)
+        self._publish(
+            DeclarationRequired(
+                task_id=state.task_id,
+                nudge=state.declaration_nudges,
+                max_nudges=self.config.max_declaration_nudges,
+            )
+        )
 
     def _freeze_plan(self, state: TaskState, ws: Workspace) -> None:
         """Resolve and freeze the verification plan at the phase boundary (ADR-0007).
@@ -630,27 +688,9 @@ class AgentRunner:
             # times; at the cap, fall through and let the smoke floor cover the run (ADR-0014).
             if self._must_declare_before_edit(state, ws):
                 if state.declaration_nudges < self.config.max_declaration_nudges:
-                    state.declaration_nudges += 1
                     record.outcome = "declaration required"
-                    msg = (
-                        "This is a from-scratch task and the harness detected no test/lint contract. "
-                        "Before you edit, declare how your work will be verified: call "
-                        "declare_verification with one or more commands that RUN what you build and "
-                        "exit non-zero if it is broken (e.g. `python -m pytest test_x.py`)."
-                    )
-                    state.latest_error = msg
-                    state.add_feedback(msg, kind="declare_required")
-                    # Dual-emit like PhaseChanged/VerificationPlanFrozen: legacy emitter → EventLog
-                    # JSONL, typed bus → the cockpit transcript.
-                    self.emitter.emit(
-                        "declaration_required", tool=action.name, nudge=state.declaration_nudges
-                    )
-                    self._publish(
-                        DeclarationRequired(
-                            task_id=state.task_id,
-                            nudge=state.declaration_nudges,
-                            max_nudges=self.config.max_declaration_nudges,
-                        )
+                    self._refuse_for_declaration(
+                        state, action_name=action.name, message=_DECLARE_BEFORE_EDIT_MSG
                     )
                     return  # refuse: do NOT freeze the plan or advance the phase
                 if self.config.max_declaration_nudges:
