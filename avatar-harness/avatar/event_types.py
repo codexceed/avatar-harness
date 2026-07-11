@@ -213,6 +213,21 @@ class CancellationObserved(EventBase):
     reason: str = ""
 
 
+class TaskEscalated(EventBase):
+    """The task was escalated `investigate → edit` mid-run (ADR-0048).
+
+    Emitted when a consented `switch_to_editing` (model-requested, or a thrash-nudged request)
+    flips the task kind and advances the phase to `editing`, binding a verification contract via
+    the standard gate. `trigger` records what caused it (`model` / `thrash`); the transition is
+    one-directional, so this only ever reads `investigate → edit`.
+    """
+
+    type: Literal["task_escalated"] = "task_escalated"
+    from_kind: str = "investigate"
+    to_kind: str = "edit"
+    trigger: str = "model"
+
+
 HarnessEvent = Annotated[
     AgentStart
     | AgentEnd
@@ -231,7 +246,8 @@ HarnessEvent = Annotated[
     | VerificationPlanFrozen
     | VerificationStart
     | VerificationEnd
-    | CancellationObserved,
+    | CancellationObserved
+    | TaskEscalated,
     Field(discriminator="type"),
 ]
 

@@ -254,4 +254,5 @@ class Harness:
             unattended=unattended,
             approval_timeout=self.config.approval_timeout_seconds,
             amendment_policy=self.config.autonomous_amendment_policy,
+            escalation_policy=self.config.autonomous_escalation_policy,
         )

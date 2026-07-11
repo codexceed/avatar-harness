@@ -325,6 +325,8 @@ From §21, one at a time, each justified by friction actually hit.
   - [ ] **external comparability** (Eval-2, later): SWE-bench Verified · Terminal-Bench · Aider polyglot.
   - Landscape + rationale in the 2026-06-07 decision-log entry.
 
+- [x] **verification steers in every mode + escalation** — dogfood (`tetris_grok*` journals, 2026-07-10/11) exposed two composing holes. (1) Conversational verification was *advisory*, so a failed verdict — even a failed immutable floor — was laundered to `outcome="success"` (self-certification). **ADR-0046**: the verifier now steers in every mode; conversational defers to the human (`blocked`) only at repair exhaustion; the eval's external-grading path became a distinct `advisory` flag (ADR-0040). The greenfield floor scopes to the deliverable, excluding model-authored scratch scaffolding (**ADR-0047**). (2) A fix goal misrouted to `investigate` never reaches verification — it edits blind (no execution; net-zero-diff) and thrashes. **ADR-0048**: `run_command` admitted in `investigating` (side effects stay in the baseline diff); a consented `switch_to_editing` flips `investigate → edit` (model-requested or harness thrash-nudge), freezing a baseline-clean contract through the standard gate. `TaskEscalated` event; `AVATAR_AUTONOMOUS_ESCALATION_POLICY` / `AVATAR_ESCALATION_THRASH_REPEATS` config.
+
 ---
 
 ## Standing design principles (complexity guardrails)

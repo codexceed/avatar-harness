@@ -267,8 +267,11 @@ _KIND_FRAMING = {
     "investigate": (
         "Your mission: ANSWER the question. Inspect with read tools and cite the concrete "
         "evidence (paths/lines) you actually read. You may instrument transiently (a debug "
-        "print, a scratch probe), but the repo must be unchanged when you answer — revert "
-        "any instrumentation first."
+        "print, a scratch probe) and run code to observe it with run_command, but the repo "
+        "must be unchanged when you answer — revert any instrumentation first. If the task "
+        "actually requires a CODE FIX (not just an explanation), do not edit-and-answer here: "
+        "call switch_to_editing to escalate to an edit task, which keeps your changes, lets you "
+        "run and verify them, and holds them to a real contract."
     ),
     "edit": (
         "Your mission: make a WORKING code change. Inspect what you will modify, then edit "

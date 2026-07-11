@@ -35,7 +35,7 @@ _GRANT_MAX_TIER = 4
 # the session (ADR-0038/0039 — the semi-frozen contract is amendable only through a gate a
 # human answers each time; only the config-gated *unattended* policy may auto-approve).
 # Enforced at grant storage AND grant matching, so even a hand-built grant is inert.
-UNGRANTABLE_TOOLS = frozenset({"alter_verification"})
+UNGRANTABLE_TOOLS = frozenset({"alter_verification", "switch_to_editing"})
 
 
 def _grant_prefix(tool: str, tool_input: dict) -> str:
@@ -127,6 +127,9 @@ class Session:
         amendment_policy: The unattended disposition for an `alter_verification` amendment
             (ADR-0039). `"deny"` (default) keeps ADR-0016's deny-only posture; `"approve"` lets
             an autonomous run self-ratify that one action (never any other `ask`).
+        escalation_policy: The unattended disposition for a `switch_to_editing` escalation
+            (ADR-0048). `"deny"` (default) refuses the mid-run investigate→edit switch with no
+            human; `"auto"` lets an autonomous run self-approve that one action.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only DI of the run's collaborators + approval-mode seams
@@ -140,6 +143,7 @@ class Session:
         unattended: bool = False,
         approval_timeout: float | None = None,
         amendment_policy: str = "deny",
+        escalation_policy: str = "deny",
     ) -> None:
         self.runner = runner
         self.state = state
@@ -153,6 +157,9 @@ class Session:
         # ADR-0039: an unattended run auto-denies every `ask` EXCEPT — when this is "approve" —
         # `alter_verification`, the one non-destructive action an autonomous run may self-ratify.
         self._amendment_policy = amendment_policy
+        # ADR-0048: the parallel unattended disposition for `switch_to_editing` — "auto" lets an
+        # autonomous run self-approve the investigate→edit escalation; "deny" (default) refuses it.
+        self._escalation_policy = escalation_policy
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
@@ -247,6 +254,11 @@ class Session:
         # Scoped by TOOL NAME, never tier: `run_command` (also tier 3) always denies here.
         if self._unattended:
             if tool == "alter_verification" and self._amendment_policy == "approve":
+                self._auto_approve(approval_id)
+                return True
+            if tool == "switch_to_editing" and self._escalation_policy == "auto":
+                # ADR-0048: the scoped autonomous escalation disposition, parallel to the amendment
+                # one above — a misrouted fix may recover on its own when the operator opts in.
                 self._auto_approve(approval_id)
                 return True
             self._auto_deny(approval_id)

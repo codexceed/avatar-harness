@@ -73,6 +73,15 @@ class HarnessConfig(BaseSettings):
     # amendment — scoped to that one action, and only safe paired with held-out eval grading.
     autonomous_amendment_policy: Literal["deny", "approve"] = "deny"
 
+    # Unattended disposition for a `switch_to_editing` escalation (ADR-0048). "deny" (default)
+    # refuses the mid-run investigate→edit escalation when no human is present; "auto" self-approves
+    # it — for autonomous runs where a misrouted fix should recover on its own. Scoped by tool name.
+    autonomous_escalation_policy: Literal["deny", "auto"] = "deny"
+    # Repeat-with-persistent-diff count that trips the harness thrash-escalation nudge (ADR-0048):
+    # after this many repeated no-progress actions while an investigate run holds a non-empty diff,
+    # the harness surfaces the (harness-only) signal and directs the model to `switch_to_editing`.
+    escalation_thrash_repeats: int = 3
+
     # Verification commands — the OVERRIDE tier of plan resolution (§12, ADR-0007).
     # A non-empty value always wins: the user's stated contract is never overridden.
     # Empty (the default) means "unset" — the `VerificationPlanner` then detects the

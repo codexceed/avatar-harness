@@ -132,6 +132,12 @@ class TaskState(BaseModel):
     # The greenfield smoke floor (ADR-0014) is resolved with a live model call; attempt it
     # at most once per run so the repair loop doesn't re-spend it each iteration (PR #50).
     smoke_floor_attempted: bool = False
+    # Whether this run was escalated `investigate → edit` mid-run (ADR-0048). One-directional and
+    # once-only: guards a second escalation and lets the artifact/journal read the transition.
+    escalated: bool = False
+    # Consecutive repeated no-progress actions while a non-empty diff persists (ADR-0048): trips the
+    # thrash-escalation nudge at `config.escalation_thrash_repeats`. Reset when a fresh action lands.
+    escalation_thrash_streak: int = 0
     prompt_tokens: int = 0  # provider-reported usage totals (in-client retries included)
     completion_tokens: int = 0
     files_read: set[str] = Field(default_factory=set)

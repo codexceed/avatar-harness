@@ -27,6 +27,7 @@ from avatar.event_types import (
     ModelDecisionEvent,
     ModelUsage,
     PhaseChanged,
+    TaskEscalated,
     ToolEnd,
     ToolStart,
     TurnEnd,
@@ -273,6 +274,13 @@ class AgentRunner:
         self._resolved_plan = None  # re-resolve the verification plan fresh for this run
         self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
         self._publish(AgentStart(task_id=state.task_id, goal=state.goal))
+        if state.task_kind == "investigate":
+            # ADR-0048: resolve (and memoize) the plan while the tree is at its pinned baseline —
+            # BEFORE any transient edit or run_command side effect can plant a contract file. If this
+            # investigation later escalates to an edit, its freeze reuses this baseline-clean
+            # resolution, so a Makefile/test the agent wrote mid-run can never become its own passing
+            # contract (§5 no self-certification). Edit tasks resolve lazily as before (unchanged).
+            self._resolve_plan(ws)
 
         # The effective deadline slides forward by time spent blocked on human approval, so the
         # wall-clock budget bounds agent work only. Read it fresh each turn — the credit grows
@@ -605,6 +613,9 @@ class AgentRunner:
                 f"'{record.chosen}' repeats an earlier call — try a different approach or finalize.",
                 kind="repeat",
             )
+            self._maybe_nudge_escalation(state, ws)
+        else:
+            state.escalation_thrash_streak = 0  # a fresh action broke the loop
         tool = self.registry.get(action.name)
         if tool is not None and not self._phase_admits(state, tool):
             record.outcome = "out of phase"
@@ -666,6 +677,11 @@ class AgentRunner:
             # The gate approved it (attended human, or ADR-0039 scoped auto-approve) and the tool
             # buffered the new checks — apply the amendment to the frozen plan, floor preserved.
             self._apply_amendment(state)
+        if action.name == "switch_to_editing" and result.success:
+            # The gate approved the escalation (attended human, or ADR-0048 scoped auto-approve).
+            # Perform the investigate→edit flip — same post-approval, runner-owned pattern as the
+            # amendment above (tools never mutate TaskState, §8).
+            self._escalate_to_edit(state, trigger="model")
         record.outcome = result.summary if result.success else (result.error or "failed")
         self.emitter.emit(
             "tool_execution_end",
@@ -843,6 +859,61 @@ class AgentRunner:
                 change_kinds=state.declared_change_kinds,
             )
         )
+
+    def _escalate_to_edit(self, state: TaskState, *, trigger: str) -> None:
+        """Escalate `investigate → edit` mid-run after a consented `switch_to_editing` (ADR-0048).
+
+        Flips `task_kind` only — deliberately *not* the phase or the frozen plan. The task becomes a
+        normal edit task sitting in `investigating`, exactly the state every edit task starts in, so
+        the standard edit-intent bootstrap (§ADR-0038) runs the declaration gate and advances to
+        `editing` on the next edit — escalation never *jumps* that gate. Detection is already
+        baseline-clean (resolved at run open), so a contract file the agent wrote mid-investigation
+        cannot be frozen as its own rubric. One-directional and once-only.
+
+        Args:
+            state: The task state whose kind is flipped (guarded: no-op unless investigating).
+            trigger: What caused the escalation (`model` request, or a `thrash` nudge that led here).
+        """
+        if state.escalated or state.task_kind != "investigate":
+            return
+        state.escalated = True
+        state.task_kind = "edit"
+        state.escalation_thrash_streak = 0
+        state.add_feedback(
+            "Escalated to an EDIT task: your changes are kept and will be verified. If this repo has "
+            "no test/lint contract the harness can detect, declare one with declare_verification "
+            "before you finalize.",
+            kind="escalation",
+        )
+        self.emitter.emit("task_escalated", from_kind="investigate", to_kind="edit", trigger=trigger)
+        self._publish(TaskEscalated(task_id=state.task_id, trigger=trigger))
+
+    def _maybe_nudge_escalation(self, state: TaskState, ws: Workspace) -> None:
+        """Surface the harness-only thrash signal and direct the model to `switch_to_editing` (ADR-0048).
+
+        The signal the model cannot see: it is *repeating* actions (already detected by the caller)
+        *while* an investigation holds a non-empty diff against the pinned baseline. Repeats alone are
+        normal instrumentation; repeats-with-a-persistent-diff past `escalation_thrash_repeats` are the
+        `tetris_grok3` spiral. This does NOT auto-escalate (that would change the user's contract
+        without consent, §ADR-0048) — it injects a directive nudge so the model routes through the
+        consent-gated `switch_to_editing`. Only fires for a not-yet-escalated investigation.
+
+        Args:
+            state: The task state whose thrash streak is tracked.
+            ws: The run-scoped workspace, to test divergence from the pinned baseline.
+        """
+        if state.escalated or state.task_kind != "investigate" or not ws.status_paths():
+            return
+        state.escalation_thrash_streak += 1
+        if state.escalation_thrash_streak >= self.config.escalation_thrash_repeats:
+            state.add_feedback(
+                "You are looping while leaving changes in the tree — an investigation must revert "
+                "them to answer. If you are FIXING this rather than explaining it, call "
+                "switch_to_editing to escalate to an edit task: that keeps your changes, lets you "
+                "run and verify them, and holds them to a real contract.",
+                kind="escalation_nudge",
+            )
+            state.escalation_thrash_streak = 0  # nudged; don't re-fire until N more thrash repeats
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).
