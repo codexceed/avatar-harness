@@ -37,10 +37,17 @@ class EventBase(BaseModel):
 
 
 class AgentStart(EventBase):
-    """A run has begun on `goal`."""
+    """A run has begun on `goal`.
+
+    `task_kind` is the resolved kind the run opens with; `mode_source` records how it was
+    decided ("override"/"classifier"/"heuristic", or `None` when the core was driven directly)
+    so a dogfood journal can distinguish a classifier miss from a classifier outage.
+    """
 
     type: Literal["agent_start"] = "agent_start"
     goal: str = ""
+    task_kind: str = ""
+    mode_source: str | None = None
 
 
 class AgentEnd(EventBase):

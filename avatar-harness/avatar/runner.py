@@ -290,8 +290,21 @@ class AgentRunner:
         deadline = time.monotonic() + wall if wall is not None else None  # None ⇒ no wall-clock bound
         self._approval_wait_seconds = 0.0  # reset the human-wait credit for this run
         self._resolved_plan = None  # re-resolve the verification plan fresh for this run
-        self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
-        self._publish(AgentStart(task_id=state.task_id, goal=state.goal))
+        self.emitter.emit(
+            "agent_start",
+            goal=state.goal,
+            task_id=state.task_id,
+            task_kind=state.task_kind,
+            mode_source=state.mode_source,
+        )
+        self._publish(
+            AgentStart(
+                task_id=state.task_id,
+                goal=state.goal,
+                task_kind=state.task_kind,
+                mode_source=state.mode_source,
+            )
+        )
         if state.task_kind == "investigate":
             # ADR-0048: resolve (and memoize) the plan while the tree is at its pinned baseline —
             # BEFORE any transient edit or run_command side effect can plant a contract file. If this

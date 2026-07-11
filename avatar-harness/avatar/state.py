@@ -118,6 +118,12 @@ class TaskState(BaseModel):
     goal: str
     constraints: list[str] = Field(default_factory=list)
     task_kind: Literal["edit", "investigate", "test_only"] = "edit"
+    # How `task_kind` was decided, for post-hoc routing analysis: "override" (explicit /mode
+    # or CLI flag), "classifier" (LLM verdict), "heuristic" (first-word fallback). `None` when
+    # the core was driven directly (kind given, no REPL classification). Journaled on AgentStart
+    # so a dogfood run can tell a classifier miss from a classifier outage (both surface as the
+    # heuristic's verdict otherwise). Set by the REPL SessionManager; the core only echoes it.
+    mode_source: str | None = None
 
     # Two independent axes (§7): phase = WHERE the work is; outcome = HOW it ended.
     phase: Literal["investigating", "editing", "verifying"] = "investigating"
