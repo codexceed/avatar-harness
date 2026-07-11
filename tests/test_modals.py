@@ -208,3 +208,28 @@ async def test_plan_modal_revise_returns_edit():
         await pilot.click("#revise")
         await pilot.pause()
     assert host.result == PlanChoice(approved=False, text="revised plan")  # revise returns the edit
+
+
+async def test_approval_modal_survives_markup_metacharacters_in_command():
+    # Regression (tetris_grok4): a model-authored command with Textual markup metacharacters
+    # (`[a=1 b=]` — multiple key= pairs, trailing empty value) crashed the modal with a
+    # `MarkupError` during layout, tearing down the whole cockpit. It must render verbatim.
+    host = _Host(
+        ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "grep -E '[a=1 b=]' f"})
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()  # layout runs here — pre-fix this raised MarkupError
+        assert "[a=1 b=]" in cast(ApprovalModal, host.screen)._command_text()  # shown verbatim
+        await pilot.press("y")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=True, remember=False)  # mounted, rendered, routed
+
+
+async def test_diff_modal_survives_markup_metacharacters():
+    # A diff routinely contains `[` (list literals, regex classes); the viewer must not parse it.
+    host = _Host(DiffModal(diff_text="+ pattern = grep -E '[a=1 b=]'  # markup metacharacters"))
+    async with host.run_test() as pilot:
+        await pilot.pause()  # layout runs here — pre-fix this raised MarkupError
+        await pilot.press("escape")
+        await pilot.pause()
+    assert host.result is None  # rendered + dismissed cleanly, no MarkupError
