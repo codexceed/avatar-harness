@@ -21,6 +21,7 @@ from avatar.event_types import (
     ModelDecisionEvent,
     ModelUpdate,
     PhaseChanged,
+    TaskEscalated,
     ToolEnd,
     ToolStart,
     VerificationEnd,
@@ -59,6 +60,32 @@ async def test_status_bar_reflects_phase_and_mode():
         assert app.phase == "editing" and app.mode == "edit"
         status = app._status_text()
         assert "editing" in status and "edit" in status  # the bar reflects both
+
+
+async def test_status_bar_follows_mid_run_escalation():
+    # A consented `switch_to_editing` (ADR-0048) flips the kind mid-run. The bar's shown
+    # classification must follow it — dogfood `tetris_grok4` escalated investigate→edit but
+    # the bar kept reading "investigate" while the run edited.
+    events = [
+        AgentStart(goal="implement it"),
+        TaskEscalated(from_kind="investigate", to_kind="edit", trigger="model"),
+        PhaseChanged(old="investigating", new="editing"),
+    ]
+    app = CockpitApp(ReplaySession(events), mode="investigate")
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert app.mode == "edit"  # the escalation updated the tracked kind, not just the phase
+        assert "edit" in app._status_text()  # and the bar shows the new classification
+
+
+async def test_status_bar_sits_in_the_footer_by_the_input():
+    # The mode·phase indicator must be by the text box, not stranded at the screen top —
+    # so the live task kind and phase are in view where the human is typing.
+    app = CockpitApp(ReplaySession([AgentStart(goal="g")]))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        footer = app.query_one("#footer")
+        assert app.query_one("#status") in footer.walk_children()  # co-located with the input
 
 
 async def test_declaration_required_renders_as_transcript_line():
