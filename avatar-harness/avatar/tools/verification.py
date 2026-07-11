@@ -220,3 +220,42 @@ alter_verification = ToolDefinition(
     phases=_ALTER_PHASES,
     permission_tier=3,
 )
+
+
+class SwitchToEditingInput(BaseModel):
+    """Input for `switch_to_editing`: why this investigation is actually a fix (ADR-0048)."""
+
+    reason: str = Field(
+        description="Why this task needs code changes verified — it is a fix, not just a question."
+    )
+
+
+def _switch_to_editing(args: SwitchToEditingInput, deps: RunDeps) -> ToolResult:  # noqa: ARG001 — ToolHandler shape; the runner performs the escalation on success
+    # A pure control signal: the runner performs the escalation itself AFTER the permission gate
+    # approves and this returns success — tools never mutate TaskState (§8), same as
+    # `alter_verification`, whose amendment the runner applies post-approval. The runner flips
+    # `task_kind → edit` and NOTHING else: no phase jump, no plan freeze. The task becomes a normal
+    # edit task still in `investigating`, so the standard edit-intent bootstrap runs the declaration
+    # gate and advances the phase on the next edit — escalation never jumps that gate (ADR-0048).
+    return ToolResult(
+        tool_name="switch_to_editing",
+        success=True,
+        content=f"escalating this investigation to an edit task: {args.reason}",
+        summary="escalate to edit",
+    )
+
+
+switch_to_editing = ToolDefinition(
+    name="switch_to_editing",
+    description=(
+        "Escalate this INVESTIGATION to an edit task, when the goal actually requires changing "
+        "code (a fix), not just explaining. An investigation must leave the repo unchanged (net-zero "
+        "diff); switching keeps your changes, unlocks running and verifying them, and binds a real "
+        "verification contract. Gated: a human approves it, or an autonomous run applies its "
+        "configured policy. One-directional — you cannot switch back to an investigation."
+    ),
+    input_model=SwitchToEditingInput,
+    handler=_switch_to_editing,
+    phases=frozenset({"investigating"}),
+    permission_tier=3,
+)

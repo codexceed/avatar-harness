@@ -16,6 +16,12 @@ from avatar.tools.base import ToolDefinition, ToolResult
 
 # Verification tools load in the editing and verifying phases (§21).
 _VERIFY_PHASES = frozenset({"editing", "verifying"})
+# run_command ALSO loads in investigating (ADR-0048): reproducing/observing a failure is core
+# investigation, and run_command attributes+stages its side effects (below), so anything it writes
+# stays inside the baseline diff the investigate net-zero contract enforces. run_tests/run_linter do
+# NOT join it — they execute without that side-effect accounting and need a plan that doesn't exist
+# pre-escalation, so they stay verify-only until that follow-up lands.
+_COMMAND_PHASES = frozenset({"investigating", "editing", "verifying"})
 
 _USAGE_ERROR_EXIT = 4  # pytest convention: usage error / target not found (model-correctable).
 
@@ -239,11 +245,12 @@ run_command = ToolDefinition(
     ),
     input_model=RunCommandInput,
     handler=_run_command,
-    # editing/verifying only (ADR-0002): phase governs the *workflow contract* even though
-    # tier-3 is the security boundary. Deliberately NOT admitted in investigate tasks:
-    # ADR-0005 relaxes tier-1 writes only, so no command tool runs from `investigating` —
-    # the recorded ADR-0005 limitation (a true instrument→run→observe→revert loop needs a
-    # follow-up decision). A pure-execution task is a later, explicit mode, not this tool.
-    phases=_VERIFY_PHASES,
+    # investigating/editing/verifying (ADR-0048, resolving the ADR-0005 follow-up this docstring
+    # used to defer): admitted in `investigating` so an investigation can reproduce/observe a
+    # failure — the instrument→run→observe→revert loop. Safe because `_run_command` snapshots,
+    # attributes, and stages its side effects (above), so its outputs participate in the baseline
+    # diff the investigate net-zero contract enforces. Still tier-3 (approval-gated). run_tests/
+    # run_linter stay `_VERIFY_PHASES` — they lack that accounting and have no pre-escalation plan.
+    phases=_COMMAND_PHASES,
     permission_tier=3,
 )

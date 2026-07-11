@@ -185,6 +185,8 @@ local `.env`):
 | `AVATAR_MAX_WALL_CLOCK_SECONDS` | `1800` | Per-agent-run timeout → `incomplete` (reset each run, not cumulative across a sitting). Batch/eval keep the cap; the interactive cockpit (`jo`) **disables it by default** (unset ⇒ no clock — the human's Ctrl-C and `AVATAR_MAX_ITERATIONS` are the backstops). Set it explicitly to re-impose a cap in the cockpit. |
 | `AVATAR_MAX_CONSECUTIVE_FAILURES` | `5` | Thrash guard (tool errors in a row) → `incomplete`. |
 | `AVATAR_MAX_REPAIR_ATTEMPTS` | `3` | Verification rejections in a row → `failed`. |
+| `AVATAR_AUTONOMOUS_ESCALATION_POLICY` | `deny` | Unattended disposition for a `switch_to_editing` escalation (ADR-0048): `deny` refuses the mid-run `investigate → edit` switch with no human present; `approve` self-ratifies it so a misrouted fix can recover on its own (same vocabulary as the amendment knob). Attended runs always ask. |
+| `AVATAR_ESCALATION_THRASH_REPEATS` | `3` | Repeated no-progress actions (while an investigation holds a non-empty diff) that trip the harness thrash nudge directing the model to `switch_to_editing` (ADR-0048). |
 | `AVATAR_MAX_CONTEXT_TOKENS` | `100000` | Hard bound on the per-turn context packet. |
 | `AVATAR_TEST_COMMAND` | *(empty)* | The verification plan's **override tier** (ADR-0007): a non-empty value always wins. Empty = unset → the planner detects the repo's declared test contract (CI workflows > manifests > Makefile). The harness runs the resolved command itself — never model-mediated. |
 | `AVATAR_LINT_COMMAND` | *(empty)* | Same, for the lint/type slot of the verification plan. |

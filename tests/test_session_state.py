@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from avatar.config import HarnessConfig
 from avatar.harness import Harness
+from avatar.intent import ModeClassifier
 from avatar.model_client import AskUser, FinalAnswer, ModelDecision, ToolCall
 from avatar.session_state import ReplSession, default_mode
 from avatar.tools.base import ToolDefinition, ToolRegistry, ToolResult
@@ -160,6 +161,38 @@ def test_explicit_mode_overrides_heuristic(tmp_path):
     repl = _repl(tmp_path, [])
     repl.set_mode("edit")
     assert repl.start("explain how X works").state.task_kind == "edit"
+
+
+class _StubClassifier(ModeClassifier):
+    """A ModeClassifier with a fixed verdict (None → the caller falls to the heuristic)."""
+
+    def __init__(self, verdict: str | None) -> None:
+        self._verdict = verdict
+
+    def classify(self, prompt: str, history=()) -> str | None:
+        return self._verdict
+
+
+def test_mode_source_is_stamped_on_the_task(tmp_path):
+    # The task carries HOW its kind was decided, journaled on AgentStart — so a dogfood run can
+    # tell a classifier miss (verdict was "investigate") from a classifier outage (degraded to
+    # heuristic), which otherwise look identical. This is the gap the tetris_grok4 analysis hit.
+    #
+    # Heuristic fallback (no classifier verdict): source records "heuristic".
+    repl = ReplSession(_harness(tmp_path, []), classifier=_StubClassifier(None))
+    assert repl.start("why does it hang?").state.mode_source == "heuristic"
+
+    # A classifier verdict that overrides the first-word heuristic: source records "classifier".
+    # "go ahead and implement itt" → heuristic would say investigate (first word "go"); the
+    # classifier says edit, and the source proves the classifier — not the fallback — decided.
+    repl = ReplSession(_harness(tmp_path, []), classifier=_StubClassifier("edit"))
+    started = repl.start("go ahead and implement itt")
+    assert started.state.task_kind == "edit" and started.state.mode_source == "classifier"
+
+    # Explicit /mode override wins and is labeled as such — never mistaken for a classifier call.
+    repl = ReplSession(_harness(tmp_path, []), classifier=_StubClassifier("edit"))
+    repl.set_mode("investigate")
+    assert repl.start("go ahead and implement itt").state.mode_source == "override"
 
 
 # --- grants & event stream across the session --------------------------------------------

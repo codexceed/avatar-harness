@@ -375,7 +375,12 @@ class ReplSession:
         Returns:
             A not-yet-started `Session` wired with the session-scoped grants.
         """
-        task = TaskState(goal=prompt, task_kind=kind, constraints=list(extra_constraints or ()))
+        task = TaskState(
+            goal=prompt,
+            task_kind=kind,
+            constraints=list(extra_constraints or ()),
+            mode_source=self.last_mode_source,  # how resolve_mode decided this sitting's kind
+        )
         self._seed_history(task)  # prior turns become the task's conversation (before this turn is added)
         self._ground_paths(task, prompt)  # @path references seed the named files as context
         # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.
