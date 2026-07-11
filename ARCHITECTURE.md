@@ -293,9 +293,9 @@ Key properties:
 - **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.
 - Smart **test-target inference** ("which tests cover this diff?") remains **deferred** (`§9`, `§21`); the plan is per-session, not per-diff.
 
-### 4.4 Interactive vs. autonomous authority (`§23.5`)
+### 4.4 Interactive vs. autonomous authority (`§23.5`, ADR-0046)
 
-Verification always *runs and reports*. **Who decides on the result** shifts: in an autonomous (`--auto`) run the verifier sets `outcome`; in a conversational turn `final_answer` is delivered as a reply and the human is the terminal authority. `task_kind` still picks *which* checks run.
+Verification always *runs, reports, and steers*. A failing verdict drives the repair loop in **every** mode — the model repairs, or proposes a gated `alter_verification` amendment (the mid-loop human-consent path). What shifts is only *who is deferred to at the terminal boundary*: an autonomous (`--auto`) run pronounces repair exhaustion `failed`; a conversational turn **blocks** at exhaustion (an `open_question` hand-off to the human), the last reply + failing verdict left on the state. A failed verdict is never laundered to `success`. `task_kind` still picks *which* checks run — that (not an advisory mode) is what keeps an "explain this" turn from facing an edit-shaped gate.
 
 ## 5. Dry run — one task, end to end
 

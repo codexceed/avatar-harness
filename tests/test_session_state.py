@@ -224,7 +224,11 @@ async def test_follow_up_goal_tolerates_session_owned_dirt(git_repo):
         ModelDecision(action=ToolCall(name="read_file", input={"path": "util.py"})),
         ModelDecision(action=FinalAnswer(answer="util.py sets x")),
     ]
-    repl = _repl(git_repo, decisions, registry=_edit_then_read_registry())
+    # A passing contract so goal 1's edit genuinely verifies (the REPL now steers on a failed
+    # verdict instead of delivering it as vacuous success — §23.5, ADR-0046).
+    repl = _repl(
+        git_repo, decisions, registry=_edit_then_read_registry(), test_command="true", lint_command="true"
+    )
     first = await repl.submit("create util.py with x = 1")
     assert first.outcome == "success"
     follow_up = await repl.submit("explain x in util.py")  # must NOT raise DirtyWorkspaceError

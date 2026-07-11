@@ -394,6 +394,26 @@ def test_smoke_floor_rejects_executing_or_unlisted_commands(tmp_path):
         assert _propose_smoke(tmp_path, _CountingClient([{"command": cmd}])) is None, cmd
 
 
+def test_smoke_prompt_scopes_to_deliverable_excludes_scaffolding(tmp_path):
+    # ADR-0046: the floor anchors the DELIVERABLE, not the model's throwaway verification
+    # scaffolding. The authoring prompt actually sent must steer the model to name only the
+    # delivered artifact and exclude scratch/`verify_*` scripts it wrote to check its own work,
+    # so a broken scratch file can't poison the immutable floor (the tetris_grok2 regression).
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    captured: dict = {}
+
+    def _create(**kw):
+        captured["messages"] = kw["messages"]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=None))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=_create)))
+    _propose_smoke(tmp_path, client)
+
+    system = captured["messages"][0]["content"].lower()
+    assert "deliverable" in system
+    assert "scaffolding" in system or "scratch" in system
+
+
 def test_smoke_floor_none_when_model_makes_no_call(tmp_path):
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
     assert _propose_smoke(tmp_path, _CountingClient()) is None

@@ -119,8 +119,16 @@ class AgentRunner:
             `VerificationPlanner(config)`.
         event_sink: Optional typed-event sink (a `Session`); absent on the batch/sync path.
         approval_controller: Optional awaited gate for tier-3 `ask` calls (a `Session`).
-        conversational: Verification authority (§23.5). `False` (default) is the strict §12
-            gate; `True` runs the verifier as advisory and delivers without repairing.
+        conversational: Terminal-boundary authority (§23.5, ADR-0046). The verifier steers
+            (repair loop) in both strict and conversational modes; this flag only changes the
+            disposition at repair exhaustion — `False` (default, `--auto`) pronounces `failed`;
+            `True` (interactive) defers to the human, blocking with an `open_question`. It never
+            makes a failed verdict advisory.
+        advisory: External-grading authority (ADR-0040 option A). `True` runs the verifier as
+            advisory — it reports but does not steer or gate, and a failed verdict is delivered
+            as `success` for a held-out grader (the eval probe) to judge. Off by default; set
+            only by external-grading callers (the eval harness), never the REPL. Takes precedence
+            over `conversational`.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only dependency injection of the run's collaborators
@@ -138,6 +146,7 @@ class AgentRunner:
         event_sink: EventSink | None = None,
         approval_controller: ApprovalController | None = None,
         conversational: bool = False,
+        advisory: bool = False,
     ) -> None:
         self.model_client = model_client
         self.registry = registry
@@ -146,10 +155,18 @@ class AgentRunner:
         self.verifier = verifier
         self.emitter = emitter
         self.config = config
-        # Verification authority (§23.5): strict (`False`, default) runs the §12 gate that
-        # sets `outcome` and drives the repair loop; conversational (`True`) runs + reports
-        # the verifier as advisory and delivers the reply without repairing (human is authority).
+        # Terminal-boundary authority (§23.5, ADR-0046): the verifier steers (repair loop) in
+        # both the strict and conversational modes. This flag only settles the disposition at
+        # repair exhaustion — strict (`False`, default) → `failed`; conversational (`True`) →
+        # `blocked`, deferring to the human. It is NOT an advisory switch; a failed verdict is
+        # never laundered to `success`.
         self.conversational = conversational
+        # Advisory authority (ADR-0040 option A): the verifier runs + reports for the journal but
+        # does NOT steer or gate — a held-out grader (the eval success-probe) is authoritative, so
+        # the reply is delivered as `success` without a repair loop. This is the ONE mode where a
+        # failed verdict does not steer; it exists for external-grading callers (the eval harness),
+        # never the REPL. Precedence: `advisory` short-circuits before `conversational` in `_averify`.
+        self.advisory = advisory
         # The before-tool-call control gate (§11); defaults to the standard tier policy,
         # threaded with the configured sensitive-path denylist (§11, Phase 2.5).
         self.policy = policy or PermissionPolicy(config.sensitive_path_globs)
@@ -429,7 +446,7 @@ class AgentRunner:
 
         self._record_commands(state, ws)
         if not state.terminal:
-            state.outcome = self._exit_reason(state)
+            self._settle_terminal_outcome(state)
         self.emitter.emit("agent_end", outcome=state.outcome, task_id=state.task_id)
         self._publish(AgentEnd(task_id=state.task_id, outcome=state.outcome))
         return state
@@ -722,14 +739,22 @@ class AgentRunner:
         )
         self._publish(VerificationEnd(task_id=state.task_id, passed=report.passed, summary=report.summary))
         state.verifier_results.append(report)
-        if self.conversational:
-            # §23.5: the verifier ran + reported (above); in conversational mode it is advisory.
-            # Deliver the reply and end the turn — the human is terminal authority. The verdict
-            # stays on `verifier_results[-1]` for the cockpit to render; never repair.
+        if report.passed:
             state.outcome = "success"
-        elif report.passed:
+        elif self.advisory:
+            # Advisory (ADR-0040 option A): the verifier ran + reported (journaled above), but a
+            # held-out grader (the eval probe) decides — deliver the reply without steering so a
+            # fresh creation isn't thrashed toward a gate the probe, not the harness, will judge.
+            # The real verdict stays on `verifier_results[-1]`. This is external-grading only.
             state.outcome = "success"
         else:
+            # A failing verdict STEERS in every mode (§23.5, ADR-0046). The verifier's job is to
+            # drive the model toward functional correctness, so a rejection feeds the evidence +
+            # next-action back and drops to editing — the model repairs, or proposes a gated
+            # `alter_verification` amendment (the human-consent path, §11/ADR-0038). Conversational
+            # mode does NOT short-circuit a failed verdict to `success`; who is deferred to at the
+            # terminal boundary — a `failed` autonomy verdict vs. a `blocked` hand-off to the human
+            # at repair exhaustion — is settled in `_settle_terminal_outcome`, not here.
             state.repair_failures += 1
             state.add_feedback(report.summary, kind="verification")
             if report.recommended_next_action:
@@ -906,6 +931,32 @@ class AgentRunner:
         """
         estimated_tokens = len(context.model_dump_json()) // _CHARS_PER_TOKEN
         return estimated_tokens > self.config.max_context_tokens
+
+    def _settle_terminal_outcome(self, state: TaskState) -> None:
+        """Assign the terminal outcome for a loop that fell out without self-terminating (§5).
+
+        Repair exhaustion means the verifier steered the model to the repair budget and it still
+        won't pass. Autonomy pronounces that `failed` (§12). Conversational mode instead DEFERS to
+        the human as a first-class ask (§23.5, ADR-0046): the verifier has done its steering job,
+        so the turn `blocks` — the last reply + failing verdict are already on the state, and the
+        block reason doubles as an `open_question` the REPL/cockpit surface — rather than reporting
+        a bare failure. Every non-repair exit (iteration/wall-clock/context budget) keeps the §5
+        disposition: `failed` on repair exhaustion, else `incomplete`.
+
+        Args:
+            state: The task state whose terminal outcome is being settled.
+        """
+        exhausted_repair = state.repair_failures >= self.config.max_repair_attempts
+        if self.conversational and exhausted_repair:
+            verdict = state.verifier_results[-1].summary if state.verifier_results else "verification failed"
+            question = (
+                f"Verification is still failing after {state.repair_failures} repair attempt(s) "
+                f"({verdict}). How should I proceed?"
+            )
+            state.open_questions.append(question)
+            state.block(question)
+            return
+        state.outcome = self._exit_reason(state)
 
     def _exit_reason(self, state: TaskState) -> Literal["failed", "incomplete"]:
         if state.repair_failures >= self.config.max_repair_attempts:

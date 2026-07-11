@@ -49,7 +49,8 @@ def main(
     parser.add_argument(
         "--auto",
         action="store_true",
-        help="Keep the strict §12 verification gate (default: conversational — the human decides).",
+        help="Strict gate: repair exhaustion is 'failed' (default: conversational — the verifier "
+        "steers, then defers to you at exhaustion).",
     )
     parser.add_argument(
         "--log",

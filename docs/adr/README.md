@@ -51,6 +51,8 @@ Format: Nygard-style with MADR touches. Flow/sequence detail is given in [Mermai
 | [0043](0043-nullable-wall-clock-cockpit-default-off.md) | Nullable per-run wall-clock (`None` = unbounded); the attended cockpit defaults it off — Ctrl-C + `max_iterations` are the backstops; an explicit cap (env or `.env`) always wins | Accepted |
 | [0044](0044-declared-change-kinds-per-kind-vacuity-rulebooks.md) | Declared `change_kinds` (list) select per-kind vacuity rulebooks — `code` keeps "must execute", `content` gets anchored+falsifiable; the diff audits the declaration at verify time (amends 0038) | Proposed |
 | [0045](0045-shell-syntax-rejected-at-command-boundaries.md) | Shell syntax is rejected, not interpreted, at model-authored command boundaries — `&&` normalizes to per-segment check conjunction; `;`/`\|`/`\|\|`/redirects/heredocs reject model-correctably (`Workspace.run` stays pure argv) | Proposed |
+| [0046](0046-verification-steers-in-every-mode.md) | Verification steers in every mode — a failing verdict always drives the repair loop; conversational exhaustion defers to the human (`blocked` + open question) instead of laundering a failed verdict to `success` (supersedes the advisory stance of §23.5 / ADR-0002 D7) | Proposed |
+| [0047](0047-deliverable-scoped-smoke-floor.md) | The greenfield smoke floor scopes to the deliverable, excluding model-authored throwaway scaffolding (`verify_*`/scratch scripts) — enforced at authoring time in `_SMOKE_SYSTEM` (amends 0014/0038) | Proposed |
 
 ## Conventions
 

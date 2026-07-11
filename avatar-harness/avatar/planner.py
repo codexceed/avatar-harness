@@ -193,10 +193,14 @@ _SMOKE_SYSTEM = (
     "For SAFETY the harness runs only NON-executing checkers — pick one of: "
     "`python -m py_compile <files>`, `ruff check`, `node --check <file>`, `tsc --noEmit`, "
     "`go vet ./...` / `go build ./...`, `gofmt -l <files>`, `ruby -c <file>`, `perl -c <file>`, "
-    "`php -l <file>`, `deno check <file>`. Reference the files just written, and prefer a "
-    "DEPENDENCY-FREE check (compiling/parsing won't fail on uninstalled third-party imports). "
-    "Do NOT use code runners (`python -c`, `node -e`, `pytest`, a shell `-c` wrapper) — they are "
-    "rejected. If none of these fit the stack, make no call."
+    "`php -l <file>`, `deno check <file>`. Name ONLY the files that make up the DELIVERABLE — the "
+    "artifact the task was asked to produce and the code reachable from its real entry point. "
+    "EXCLUDE your own throwaway scaffolding: scratch files and ad-hoc `verify_*` / `test_*` "
+    "scripts or manual harnesses you wrote to check your own work are NOT the deliverable and must "
+    "not gate it (a broken scratch file must never fail the floor). Prefer a DEPENDENCY-FREE check "
+    "(compiling/parsing won't fail on uninstalled third-party imports). Do NOT use code runners "
+    "(`python -c`, `node -e`, `pytest`, a shell `-c` wrapper) — they are rejected. If none of "
+    "these fit the stack, make no call."
 )
 
 # The floor runs a MODEL-AUTHORED command unattended, outside the before_tool_call permission

@@ -160,9 +160,11 @@ What it gives you over raw sessions:
   approve/revise → build, with the approved plan seeding the edit task as a
   constraint.
 - **Verification authority** — the REPL default is *conversational*: the
-  verifier always runs and reports, but the reply is delivered without the
-  repair gate; the human is the terminal authority. `ReplSession(harness,
-  auto=True)` restores the strict gate.
+  verifier always runs and **steers** (a failing check drives repair, or a
+  gated contract amendment), and at repair exhaustion the turn defers to the
+  human (`blocked` with a question) instead of pronouncing failure.
+  `ReplSession(harness, auto=True)` makes exhaustion a hard `failed`. A failed
+  verdict is never delivered as `success` (§23.5, ADR-0046).
 
 The Textual cockpit (the separate `jo-cli` package, the `jo` command — a
 consumer of the core, never part of it) is exactly this surface rendered

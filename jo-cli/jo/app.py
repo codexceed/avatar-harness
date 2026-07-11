@@ -249,7 +249,7 @@ class CockpitApp(App):
         self.mode = (repl.mode or mode) if repl is not None else mode
         self.phase = "investigating"
         self.outcome: str | None = None
-        self.verdict: bool | None = None  # the verifier's real verdict (advisory in chat mode)
+        self.verdict: bool | None = None  # the verifier's real verdict (it steers the turn, §23.5)
         self._on_submit = on_submit or (lambda _prompt: None)
         self.rendered: list[str] = []  # mirror of transcript lines, for headless assertions
         self._run_task: asyncio.Task[TaskState] | None = None  # the in-flight per-goal run, for ctrl+c
@@ -489,8 +489,8 @@ class CockpitApp(App):
             kind = "retried" if event.recovered else "turn lost"
             return f"↩ malformed decision ({kind}): {event.error}"
         if isinstance(event, VerificationEnd):
-            # The real verdict, always — in conversational mode the outcome alone would
-            # read "success" even when verification failed (§23.5: the human decides).
+            # The real verdict, always — a mid-repair verdict or an advisory (eval) run can show
+            # `outcome: success` while a check failed, so render the verdict itself (§23.5).
             mark = "✓" if event.passed else "⚠"
             verb = "passed" if event.passed else "failed"
             line = Text(mark, style="green" if event.passed else "yellow")
