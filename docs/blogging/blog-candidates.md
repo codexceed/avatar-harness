@@ -107,10 +107,60 @@ Deduplicated by article concept (overlapping doc refs folded, noted in the last 
 | **NC4** — human-gated loop (route on blast radius) | — | 4 | 4 | 3 | 2 | **Unwritten** | net-new; the loop is now built |
 | **NC5** — deterministic grader (concurrency) | — | 3 | 5 | 3 | 4 | **Unwritten** | net-new; strongest differentiation |
 | **NC6** — score the attempt | — | 5 | 4 | 2 | 3 | **Unwritten** (concept) | net-new; cite affordance paper |
+| **NC7** — guardrail false lessons (fail open at the gate) | — | 3 | 4 | 3 | 4 | **Unwritten** (kit ready) | full kit: [`blog_kits/vacuity-guard-false-lesson.md`](blog_kits/vacuity-guard-false-lesson.md) |
+| **NC8** — self-certification arms race (saga, #110–114) | — | 4 | 4 | 3 | 3 | **Unwritten** (kit ready) | full kit: [`blog_kits/self-certification-arms-race.md`](blog_kits/self-certification-arms-race.md); NC3's teaser |
+| **NC9** — shell-syntax boundary (the quiet false pass) | — | 3 | 5 | 4 | 4 | **Unwritten** (kit ready) | full kit: [`blog_kits/shell-syntax-boundary.md`](blog_kits/shell-syntax-boundary.md); repro in research note |
+| **NC10** — eval-probe false rejections (tetris-tui development) | — | 3 | 5 | 4 | 4 | **Unwritten** (kit ready) | full kit: [`blog_kits/eval-probe-false-rejections.md`](blog_kits/eval-probe-false-rejections.md); NC7's grader-side companion |
 
-> **Snapshot:** 2 published, 5 scaffolded, 15 unwritten. The published/scaffolded set already covers
-> the original spine (Posts 0→5 + flagship); the highest-value *unstarted* work is **NC5** (unique +
-> ready), **A.1** (fresh, cases now exist), and finishing the **06-oracle-gaming** demo (**NC3**).
+> **Snapshot:** 2 published, 5 scaffolded, 19 unwritten. The published/scaffolded set already covers
+> the original spine (Posts 0→5 + flagship); the highest-value *unstarted* work is **NC5**, **NC9**,
+> and **NC10** (unique + ready, kits written), **A.1** (fresh, cases now exist), and finishing the
+> **06-oracle-gaming** demo (**NC3** — with **NC8** as its evidence-ready teaser).
+
+## 2026-07-11 update — the verification-integrity saga wave (NC7–NC9)
+
+**What changed.** PRs **#110** (2026-07-09) and the stacked **#112/#113/#114** (2026-07-11) landed the
+declared-verification hardening arc on the `feat/declared-verification-contract` line — six ADRs
+(0044–0049), each motivated by a *Tetris dogfood journal* (`tetris_glm`/`grok2`/`grok3`/`grok4`), each
+fix adversarially reviewed with the review findings themselves part of the story (review files
+`PR-110-2026-07-09.md`, `PR-112-2026-07-10.md`, `PR-114-2026-07-11.md` at repo root). Two sagas fall
+out: PR #110 alone (a guard that was wrong in *both* directions), and #112–114 collectively (the
+self-certification arms race). Three candidates, **each with a full writing kit** under
+[`blog_kits/`](blog_kits/). All respect the two guardrails.
+
+| ID | Title | Core (what + why it matters) | Evidence + kit | R | E | P | U | Ready? |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **NC7** | "The guardrail that taught the model a lie" | The vacuity guard judged token 0 only: it rejected a *real* check (`printf 'q' \| python3 -m …`), burned a turn **and a tier-3 human approval**, accepted the replacement by parse accident — and the model *internalized* the false verdict (its amendment rationale echoes it). **Matters:** integrity discourse is all about too-lax guards; this is the counterweight — a guard's rejection message is in-context training data. Principle: fail **open** at the lexical gate, fail **closed** at the executing floor; judge the unit the model authored (the contract). | PR #110 + review file, journal `tetris_glm/7e49b161`, ADR-0038/0014 · **kit:** [`blog_kits/vacuity-guard-false-lesson.md`](blog_kits/vacuity-guard-false-lesson.md) | 3 | 4 | 3 | **4** | ✓ |
+| **NC8** | "One task, four models, four self-certification holes" (the arms-race saga) | One repeated dogfood objective across model families acted as an **integrity fuzzer**: each journal found a different seam where the model could grade itself — guard miscalibration (#110), hollow contract semantics + argv-mangled execution (#112, ADR-0044/0045), advisory verdicts laundering a failing *immutable floor* into `success` (#113, ADR-0046/0047), a misrouted task trapped without escalation (#114, ADR-0048/0049). Through-line: verification as a **governed protocol** — declared appropriately, executed faithfully, enforced on failure, reachable from the wrong mode. Each fix's review found the class re-emerging → the arms race *is* the story. **Matters:** the harness-side prequel to NC3, evidence already in hand. | PRs #110–#114, ADRs 0044–0049, all three review files, `research/2026-07-10-shell-mangling-false-pass.md`, journals · **kit:** [`blog_kits/self-certification-arms-race.md`](blog_kits/self-certification-arms-race.md) | 4 | 4 | 3 | **3** | ✓ |
+| **NC9** | "Your agent's shell command was never running in a shell" | `Workspace.run` execs `shlex.split(cmd)` with `shell=False`, so model-authored `&&` chains become argv garbage: a 10-section grep chain **passed verification having verified 1 section** (quiet false pass), and a heredoc check hung → a 24-turn finalization spiral → `incomplete` (loud). Fix (ADR-0045): quote-aware **normalize-or-reject boundary** at every model-authored command seam — not a shell, not silent stripping. **Matters:** applies to any harness exec'ing model strings; deterministic one-line repro; best bite-sized standalone of the wave. | Research note (measured + repro), ADR-0045/0042, PR #112 + review addendum, `tests/test_shell_syntax_boundary.py` · **kit:** [`blog_kits/shell-syntax-boundary.md`](blog_kits/shell-syntax-boundary.md) | 3 | 5 | 4 | **4** | ✓ |
+
+**Strategic read.** **NC9 is this wave's NC5** — unique, ready, deterministic-repro-backed, hard to
+nitpick; slot it right after NC5 in the publish queue (or ahead of it: its hook is sharper). **NC8 is
+the flag-planting teaser amendment #3 asked for**: it makes the oracle-integrity claim with journal
+evidence *before* the NC3 demo exists, and links forward to it — publish it as the bridge from the
+empirical posts to the flagship. **NC7 is the credibility post**: showing we fight *both* failure
+directions (too-lax and too-strict) inoculates the whole series against "safety theater" pushback.
+The three interlink (NC7 and NC9 are chapters 1–2 of NC8 in depth); publishable as a mini-series or
+standalone in any order. **Methodology sub-angle worth a sidebar in NC8:** "a repeated dogfood
+objective is a cheap integrity fuzzer" + "adversarially review your own fixes" — the reusable arc.
+
+**Publication gates:** (1) the four PRs are merged to the *feature branch*, not `main` — hold until
+landed; (2) several review findings shipped as follow-ups (`.txt` classifier, `&&` short-circuit,
+planner-fallback bypass, thrash signal) — verify status at draft time and report plainly; (3) the
+eval-integrity caveat from the research note (prior `&&`-era baselines suspect) belongs *in* the
+posts, not hidden.
+
+**NC10 (2026-07-12 follow-up to this wave)** — "My eval was wrong five times before any model
+was": developing the `tetris-tui` single-shot task (the saga's eval-side sequel). Five probe
+artifacts found by real cells (three README-wording false rejections, a farewell-frame count, a
+streaming under-specification) plus one false *pass* (the raw-mode staircase, caught by human
+screenshots, closed with a stdlib-pty terminal emulator) — against which **three models flipped
+FAIL→PASS on spec changes alone**, while the genuine defects (reverse-order bag, budget
+exhaustion, malformed tool calls) survived every fix. The practitioner companion to NC7 (same
+false-rejection lesson, grader-side) and a live instance of blog 01's scaffold-not-model thesis
+as *task*-not-model. Evidence: `research/2026-07-11-tetris-tui-eval-development.md` (design
+record + 4 addenda, 27 graded cells, 9 models). R 3 · E 5 · P 4 · U **4** · Ready ✓ — **kit:**
+[`blog_kits/eval-probe-false-rejections.md`](blog_kits/eval-probe-false-rejections.md).
 
 ## Distribution plan (the layer amendment #1 names)
 
