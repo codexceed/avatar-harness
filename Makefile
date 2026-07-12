@@ -38,11 +38,11 @@ eval:
 eval-diff:
 	uv run python -m evals.diff $(BASELINE) $(CANDIDATE)
 
-# Standing reliability matrix: the four tracked models, 5 seeds, 8-way concurrent, output kept.
+# Standing reliability matrix: the four tracked models, 3 seeds, 8-way concurrent, output kept.
 # A named shortcut for the recurring regression run (delegates to `eval` via target-specific vars).
 # Command-line vars still win, so any knob is overridable:
-#   make eval-matrix                        # the pinned set: 4 models x 5 seeds, CONCURRENCY=8
-#   make eval-matrix SEEDS=3 CONCURRENCY=4  # override seeds/concurrency
+#   make eval-matrix                        # the pinned set: 4 models x 3 seeds, CONCURRENCY=8
+#   make eval-matrix SEEDS=5 CONCURRENCY=4  # override seeds/concurrency
 #   make eval-matrix MATRIX_MODELS="a,b"    # swap the model set
 MATRIX_MODELS ?= x-ai/grok-4.5,openai/gpt-oss-120b,openai/gpt-5.6-sol,z-ai/glm-5.2
 eval-matrix: MODELS = $(MATRIX_MODELS)

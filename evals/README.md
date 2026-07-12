@@ -39,9 +39,9 @@ make eval
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 
 # The standing reliability matrix — a named shortcut for the recurring regression run:
-#   the four tracked models × 5 seeds, 8-way concurrent, output kept (--no-cleanup).
+#   the four tracked models × 3 seeds, 8-way concurrent, output kept (--no-cleanup).
 make eval-matrix
-make eval-matrix SEEDS=3 CONCURRENCY=4                       # any knob is overridable
+make eval-matrix SEEDS=5 CONCURRENCY=4                       # any knob is overridable
 make eval-matrix MATRIX_MODELS="minimax/minimax-m3,z-ai/glm-5.2"  # swap the model set
 
 # A subset of tasks (comma-separated ids; an unknown id errors, never silently skips):
@@ -55,7 +55,7 @@ uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
 
 > **`make eval-matrix`** pins the four models we track for regressions
-> (`minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
+> (`x-ai/grok-4.5,openai/gpt-oss-120b,openai/gpt-5.6-sol,z-ai/glm-5.2`) at `SEEDS=3`,
 > `CONCURRENCY=8`, `NO_CLEANUP=1`. It delegates to `eval` via target-specific variables, so a
 > command-line `SEEDS=`/`CONCURRENCY=`/`MODELS=` (or `MATRIX_MODELS=` for the model set) still wins.
 
