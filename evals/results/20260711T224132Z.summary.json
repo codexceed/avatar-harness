@@ -1,0 +1,19 @@
+{
+  "stamp": "20260711T224132Z",
+  "n": 1,
+  "temperature": 0.7,
+  "seeds": 1,
+  "models": [
+    "x-ai/grok-4.5"
+  ],
+  "overall_pass_at_1": 1.0,
+  "per_model": [
+    {
+      "model": "x-ai/grok-4.5",
+      "pass_at_1": 1.0,
+      "pass_caret_k": 1.0,
+      "n": 1
+    }
+  ],
+  "failure_histogram": {}
+}

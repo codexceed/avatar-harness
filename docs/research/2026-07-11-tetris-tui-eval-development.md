@@ -228,4 +228,8 @@ options; grok's cell passes all nine phases; the golden (curses interactive) pas
 verified cells would flip PASS→FAIL, so recorded pass@1 for both matrices is stale pending a
 fresh run against the nine-phase probe. Presentation-quality of the other passing cells
 (qwen ×3, opus seeds 1–2, sol seeds 0/2, deepseek seed 2, minimax seed 2, grok seeds 0–1) is
-unmeasured until then.
+unmeasured until then. First nine-phase-native cell: a fresh `openai/gpt-5.6-sol` seed-0 run
+**passed all nine phases** (`evals/results/20260712T110513Z.jsonl`; 11 turns, 88 s) — its new
+implementation uses `tty.setcbreak` *and* writes `\r\n` line endings, both remedies the amended
+goal names. All result rows cited by this note are committed (`.gitignore` whitelist), so the
+reported verdicts are auditable without re-running paid cells.
