@@ -47,6 +47,17 @@ deterministic-scoring contract (ADR-0004: no LLM judge). The load-bearing choice
    addendum 4): stdlib `os.openpty` + a minimal terminal emulator assert vertically aligned
    board rows (no raw-mode staircase) and a prompt `q` exit — presentation only; the
    timer-driven mode's gameplay stays ungraded.
+7. **The goal states requirements, never remedies** (maintainer ruling, 2026-07-12). The task
+   mirrors real human intent: a well-defined acceptance spec the model must *reason* against.
+   Interface pins (frame format, key bytes, seeded bag, scoring, spawn shapes) and behavioral
+   requirements ("playable on a real terminal — rows aligned"; "process keys as they arrive")
+   belong in the goal, because the probe may only fail what the goal pins. Implementation
+   how-tos distilled from observed failures do **not**: a briefly-shipped "beware `tty.setraw`…
+   use `setcbreak` / write `\r\n` / use curses" hint was removed for leaking the recipe —
+   with the hint, the phase measured instruction-following; without it, it measures whether
+   the model knows terminal semantics unprompted. The hint's effect was itself measured:
+   models that shipped the staircase against the unhinted goal fixed it immediately under the
+   hinted one (see addendum 4 note on comparability).
 
 **Rejected:** model-provided hooks (above); pexpect/pty *gameplay* driving (heavy, flaky, and
 still needs a pinned rendering contract — the presentation smoke is the deliberate partial
@@ -230,6 +241,16 @@ fresh run against the nine-phase probe. Presentation-quality of the other passin
 (qwen ×3, opus seeds 1–2, sol seeds 0/2, deepseek seed 2, minimax seed 2, grok seeds 0–1) is
 unmeasured until then. First nine-phase-native cell: a fresh `openai/gpt-5.6-sol` seed-0 run
 **passed all nine phases** (`evals/results/20260712T110513Z.jsonl`; 11 turns, 88 s) — its new
-implementation uses `tty.setcbreak` *and* writes `\r\n` line endings, both remedies the amended
-goal names. All result rows cited by this note are committed (`.gitignore` whitelist), so the
-reported verdicts are auditable without re-running paid cells.
+implementation uses `tty.setcbreak` *and* writes `\r\n` line endings. All result rows cited by
+this note are committed (`.gitignore` whitelist), so the reported verdicts are auditable
+without re-running paid cells.
+
+**Hinted-goal caveat (design-record item 7):** between 2026-07-12 ~11:00Z and the same-day
+revision, the goal carried an explicit raw-mode remedy hint ("beware `tty.setraw` … use
+`setcbreak` / `\r\n` / curses"). Cells run against that goal — `20260712T110513Z` (sol) and
+`20260712T113045Z` (the maintainer's wave, where previously-staircasing models rendered
+correctly, e.g. opus-4.8 seed 0 shipping `setcbreak` + `\r\n` with a comment paraphrasing the
+hint) — measured *instruction-following*, not unprompted terminal-semantics knowledge, and are
+not comparable with cells before or after. The hint is removed; the requirement ("playable on
+a real terminal — rows aligned") stays. Incidentally, the hinted cells are a clean natural
+experiment: naming the pitfall in the spec flipped the failing models within one run.

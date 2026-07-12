@@ -15,10 +15,9 @@ the Python standard library, plus a `README.md` documenting it. The game has two
 
 Interactive mode — `python3 tetris.py` — a real-time terminal game: Left/Right arrows move \
 the falling piece, Up rotates it, Down soft-drops, space hard-drops, `q` quits promptly, and \
-gravity runs on a timer. It must render correctly on a real terminal: board rows start at \
-the same column on screen. Beware the classic raw-mode pitfall — `tty.setraw` disables the \
-terminal's `\\n` -> `\\r\\n` translation, so bare-`\\n` frames "staircase" diagonally; use \
-`tty.setcbreak`, write `\\r\\n` line endings, or position the cursor explicitly (curses).
+gravity runs on a timer. It must be genuinely playable on a real terminal: every board row \
+must start at the same screen column (no diagonal drift), in whatever terminal mode the \
+implementation chooses.
 
 Scripted mode — `python3 tetris.py --no-raw --seed <int>` — the same game, turn-based and \
 fully deterministic, so it can be driven programmatically over stdin/stdout (e.g. \
