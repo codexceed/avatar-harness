@@ -314,6 +314,20 @@ its canned reply on which article appears in the request, so a hardcoded or reus
 cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
 `docs/research/2026-07-04-news-analyzer-eval-development.md`.
 
+The `tetris-tui` probe (`probes/tetris_tui_smoke.py`) grades a **terminal UI by simulating a
+human player**: it writes real ANSI arrow-key bytes to the game's pinned `--no-raw --seed`
+scripted mode (turn-based, one flushed frame per key, a frame sentinel) and asserts
+*differentially* on the rendered frames — arrow moves translate the falling piece's cells
+exactly, rotation steps the pinned clockwise orientations, a hard drop locks flush and scores
+2 x descent, `q` exits 0, unsteered drops top out into `GAME OVER`, and an adaptive packing
+planner fills the bottom row so the clear must score exactly +100 against the probe's running
+ledger. A final phase runs the *interactive* mode on a stdlib pseudo-terminal and asserts the
+reconstructed screen shows aligned board rows (catching the raw-mode `\n` "staircase" that
+pipe-driven phases cannot see) and that `q` exits. The rendered UI is the only grading surface
+(no model-provided hooks — the README the agent writes is itself graded for documenting the
+contract, but never obeyed). Contract rationale + development-run evidence:
+`docs/research/2026-07-11-tetris-tui-eval-development.md`.
+
 ---
 
 ## Layout

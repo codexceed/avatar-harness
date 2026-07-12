@@ -1957,3 +1957,433 @@ def test_bundled_pricing_covers_the_tracked_models():
     p = load_pricing()
     for m in ("openai/gpt-5.3-codex", "openai/gpt-oss-120b", "deepseek/deepseek-v4-pro"):
         assert p[m]["prompt"] > 0 and p[m]["completion"] > 0
+
+
+# --- M. tetris-tui probe: golden game + surgical counter-examples ---------------------
+# (design record: docs/research/2026-07-11-tetris-tui-eval-development.md)
+
+# Exact substrings of the golden game, mutated surgically by tests to derive counter-examples
+# (containment is asserted before each replace, so drift fails loud).
+_TETRIS_MOVE_LEFT_MARKER = "game.move(0, -1)"
+_TETRIS_ROTATE_MARKER = 'elif key == "UP":\n            game.rotate()'
+_TETRIS_SCORE_MARKER = 'f"Score: {self.score}"'
+_TETRIS_CLEAR_MARKER = "        self._clear_full_rows()\n"
+_TETRIS_RNG_MARKER = "random.Random(seed)"
+_TETRIS_STREAM_MARKER = "    stream = sys.stdin.buffer\n"
+_TETRIS_CURSES_MARKER = "    curses.wrapper(loop)\n    return 0\n"
+
+# A reference solution for `tetris-tui` (stdlib-only, both modes, the pinned scripted-mode
+# contract: ANSI arrow bytes, turn-based gravity, exact frame layout + sentinel, 7-bag RNG,
+# guideline scoring): the probe must pass it — proof the task is achievable exactly as the
+# goal pins it. Embedded raw so the \x1b escape-sequence literals survive verbatim.
+_GOLDEN_TETRIS = r'''"""ASCII Tetris — arrow-key navigation, with a deterministic scripted mode.
+
+Interactive:  python3 tetris.py            (raw terminal, real-time gravity)
+Scripted:     python3 tetris.py --no-raw --seed 42   (turn-based, graded surface)
+
+See README.md for the full contract (keys, frame format, scoring, 7-bag RNG).
+"""
+
+import random
+import sys
+
+WIDTH = 10
+HEIGHT = 20
+SENTINEL = "-- end frame --"
+LINE_SCORES = {1: 100, 2: 300, 3: 500, 4: 800}
+
+# Standard tetromino spawn shapes as (row, col) offsets, row 0 at the top.
+SHAPES = {
+    "I": ((0, 0), (0, 1), (0, 2), (0, 3)),
+    "O": ((0, 0), (0, 1), (1, 0), (1, 1)),
+    "T": ((0, 1), (1, 0), (1, 1), (1, 2)),
+    "S": ((0, 1), (0, 2), (1, 0), (1, 1)),
+    "Z": ((0, 0), (0, 1), (1, 1), (1, 2)),
+    "J": ((0, 0), (1, 0), (1, 1), (1, 2)),
+    "L": ((0, 2), (1, 0), (1, 1), (1, 2)),
+}
+SPAWN_COL = 3
+
+
+def rotate_cw(cells):
+    """Rotate a normalized cell set clockwise within its bounding box."""
+    max_r = max(r for r, _ in cells)
+    rotated = {(c, max_r - r) for r, c in cells}
+    min_r = min(r for r, _ in rotated)
+    min_c = min(c for _, c in rotated)
+    return {(r - min_r, c - min_c) for r, c in rotated}
+
+
+class Game:
+    def __init__(self, seed):
+        self.rng = random.Random(seed)
+        self.bag = []
+        self.board = set()
+        self.score = 0
+        self.lines = 0
+        self.over = False
+        self.next_letter = self._draw()
+        self.current = set()
+        self._spawn()
+
+    def _draw(self):
+        if not self.bag:
+            self.bag = list("IJLOSTZ")
+            self.rng.shuffle(self.bag)
+        return self.bag.pop(0)
+
+    def _spawn(self):
+        letter = self.next_letter
+        self.next_letter = self._draw()
+        cells = {(r, c + SPAWN_COL) for r, c in SHAPES[letter]}
+        if cells & self.board:
+            self.over = True
+            self.current = set()
+            return
+        self.current = cells
+
+    def _fits(self, cells):
+        return all(0 <= r < HEIGHT and 0 <= c < WIDTH for r, c in cells) and not (cells & self.board)
+
+    def move(self, dr, dc):
+        moved = {(r + dr, c + dc) for r, c in self.current}
+        if self._fits(moved):
+            self.current = moved
+            return True
+        return False
+
+    def rotate(self):
+        min_r = min(r for r, _ in self.current)
+        min_c = min(c for _, c in self.current)
+        rel = {(r - min_r, c - min_c) for r, c in self.current}
+        rotated = {(r + min_r, c + min_c) for r, c in rotate_cw(rel)}
+        if self._fits(rotated):
+            self.current = rotated
+
+    def soft_drop(self):
+        if self.move(1, 0):
+            self.score += 1
+
+    def hard_drop(self):
+        dropped = 0
+        while self.move(1, 0):
+            dropped += 1
+        self.score += 2 * dropped
+        self._lock()
+
+    def _lock(self):
+        self.board |= self.current
+        self._clear_full_rows()
+        self._spawn()
+
+    def _clear_full_rows(self):
+        full = [r for r in range(HEIGHT) if all((r, c) in self.board for c in range(WIDTH))]
+        if not full:
+            return
+        self.score += LINE_SCORES[len(full)]
+        self.lines += len(full)
+        kept = {(r, c) for r, c in self.board if r not in full}
+        self.board = {(r + sum(1 for f in full if f > r), c) for r, c in kept}
+
+    def render(self, out):
+        rows = [f"Score: {self.score}", f"Lines: {self.lines}", f"Next: {self.next_letter}"]
+        border = "+" + "-" * WIDTH + "+"
+        rows.append(border)
+        for r in range(HEIGHT):
+            line = "|"
+            for c in range(WIDTH):
+                if (r, c) in self.current:
+                    line += "@"
+                elif (r, c) in self.board:
+                    line += "#"
+                else:
+                    line += "."
+            rows.append(line + "|")
+        rows.append(border)
+        rows.append(SENTINEL)
+        out.write("\n".join(rows) + "\n")
+        out.flush()
+
+
+def read_key(stream):
+    """Read one key from a byte stream: arrows (ANSI), space, q. None on EOF."""
+    while True:
+        b = stream.read(1)
+        if not b:
+            return None
+        if b == b"\x1b":
+            seq = stream.read(2)
+            if seq == b"[D":
+                return "LEFT"
+            if seq == b"[C":
+                return "RIGHT"
+            if seq == b"[B":
+                return "DOWN"
+            if seq == b"[A":
+                return "UP"
+            continue
+        if b == b" ":
+            return "SPACE"
+        if b == b"q":
+            return "QUIT"
+        # Anything else (including newlines) is ignored: no frame is rendered.
+
+
+def run_scripted(seed):
+    game = Game(seed)
+    out = sys.stdout
+    game.render(out)
+    stream = sys.stdin.buffer
+    while True:
+        key = read_key(stream)
+        if key is None or key == "QUIT":
+            return 0
+        if key == "LEFT":
+            game.move(0, -1)
+        elif key == "RIGHT":
+            game.move(0, 1)
+        elif key == "DOWN":
+            game.soft_drop()
+        elif key == "UP":
+            game.rotate()
+        elif key == "SPACE":
+            game.hard_drop()
+        game.render(out)
+        if game.over:
+            out.write("GAME OVER\n")
+            out.flush()
+            return 0
+
+
+def run_interactive(seed):
+    import curses
+    import io
+    import time
+
+    def loop(screen):
+        curses.curs_set(0)
+        screen.nodelay(True)
+        game = Game(seed)
+        last_tick = time.monotonic()
+        while not game.over:
+            key = screen.getch()
+            if key == ord("q"):
+                return
+            if key == curses.KEY_LEFT:
+                game.move(0, -1)
+            elif key == curses.KEY_RIGHT:
+                game.move(0, 1)
+            elif key == curses.KEY_DOWN:
+                game.soft_drop()
+            elif key == curses.KEY_UP:
+                game.rotate()
+            elif key == ord(" "):
+                game.hard_drop()
+            if time.monotonic() - last_tick > 0.5:
+                if not game.move(1, 0):
+                    game._lock()
+                last_tick = time.monotonic()
+            screen.erase()
+            buf = io.StringIO()
+            game.render(buf)
+            for i, line in enumerate(buf.getvalue().splitlines()[:-1]):
+                screen.addstr(i, 0, line)
+            screen.refresh()
+            time.sleep(0.02)
+        screen.addstr(HEIGHT + 5, 0, "GAME OVER")
+        screen.refresh()
+        time.sleep(1.0)
+
+    curses.wrapper(loop)
+    return 0
+
+
+def main(argv):
+    seed = 0
+    if "--seed" in argv:
+        seed = int(argv[argv.index("--seed") + 1])
+    if "--no-raw" in argv:
+        return run_scripted(seed)
+    return run_interactive(seed)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+# A README documenting the pinned contract (what the goal requires the agent to write).
+_GOLDEN_TETRIS_README = r"""# ASCII Tetris
+
+A terminal Tetris with arrow-key navigation, in a single stdlib-only file: `tetris.py`.
+
+## Running
+
+| Mode | Command | Notes |
+| --- | --- | --- |
+| Interactive | `python3 tetris.py` | Real-time gravity, raw terminal, arrow keys. |
+| Scripted | `python3 tetris.py --no-raw --seed 42` | Turn-based, deterministic; reads keys from stdin. |
+
+## Controls (both modes)
+
+| Key | Bytes (scripted mode) | Action |
+| --- | --- | --- |
+| Left arrow | `ESC [ D` (`\x1b[D`) | Move the piece one column left. |
+| Right arrow | `ESC [ C` (`\x1b[C`) | Move the piece one column right. |
+| Down arrow | `ESC [ B` (`\x1b[B`) | Soft drop: one row down, +1 point. |
+| Up arrow | `ESC [ A` (`\x1b[A`) | Rotate clockwise (blocked rotation is a no-op). |
+| Space | `0x20` | Hard drop: +2 points per row descended, then the piece locks. |
+| `q` | `0x71` | Quit immediately with exit code 0. |
+
+Blocked moves are no-ops. In scripted mode a blocked Down is a no-op too (only Space locks),
+gravity never runs on a timer, and every other byte (including newlines) is ignored.
+
+## Scripted-mode frame contract
+
+One frame is rendered at startup and after every recognized key, flushed immediately:
+`Score: <n>`, `Lines: <n>`, `Next: <letter>`, then the 10 x 20 playfield bordered by
+`+----------+` with `|` walls — `.` empty, `#` locked, `@` the falling piece — and the
+sentinel line `-- end frame --`. When a new piece cannot spawn, the final frame is
+followed by `GAME OVER` and a clean exit 0. EOF on stdin also exits 0.
+
+## Scoring
+
+| Event | Points |
+| --- | --- |
+| Soft drop | 1 per row |
+| Hard drop | 2 per row descended |
+| Single line clear | 100 |
+| Double | 300 |
+| Triple | 500 |
+| Tetris (4 lines) | 800 |
+
+`Lines:` counts total cleared rows.
+
+## Pieces
+
+The 7 standard tetrominoes (I, O, T, S, Z, J, L), spawned near the top center, drawn with a
+7-bag randomizer: `random.Random(seed)` shuffles a fresh `IJLOSTZ` bag per refill and pieces
+are drawn in order. Rotation is the clockwise bounding-box rotation (no wall kicks).
+"""
+
+# A hook-style cheat: renders the GENUINE seed-42 initial frame (so it survives the boot
+# phase) but never simulates state — every key echoes the same static frame. The probe's
+# differential movement assertions must kill it: this is the counter-example for "scan the
+# rendered UI, don't trust a renderer that isn't backed by game state".
+_CANNED_TETRIS = r"""import sys
+
+ROWS = ["...@......", "...@@@...."] + ["." * 10] * 18
+FRAME = (
+    "Score: 0\nLines: 0\nNext: O\n+----------+\n"
+    + "".join("|" + r + "|\n" for r in ROWS)
+    + "+----------+\n-- end frame --\n"
+)
+sys.stdout.write(FRAME)
+sys.stdout.flush()
+while True:
+    b = sys.stdin.buffer.read(1)
+    if not b or b == b"q":
+        raise SystemExit(0)
+    if b in (b" ", b"A", b"B", b"C", b"D"):
+        sys.stdout.write(FRAME)
+        sys.stdout.flush()
+"""
+
+
+def _tetris_repo(tmp_path, name, source, readme: str | None = _GOLDEN_TETRIS_README):
+    """A scratch dir shaped like a provisioned tetris-tui repo (game + README)."""
+    repo = tmp_path / name
+    repo.mkdir()
+    (repo / "tetris.py").write_text(source, encoding="utf-8")
+    if readme is not None:
+        (repo / "README.md").write_text(readme, encoding="utf-8")
+    return repo
+
+
+def test_tetris_task_spec_loads_and_points_at_probe():
+    spec = load_task_spec(Path(__file__).resolve().parent.parent / "evals" / "tasks" / "tetris-tui.toml")
+    assert spec.id == "tetris-tui"
+    assert spec.task_kind == "edit"
+    assert spec.success_probe == "python evals/probes/tetris_tui_smoke.py tetris.py"
+    assert spec.probe_timeout_seconds == 300
+
+
+def test_tetris_probe_passes_golden_game(tmp_path):
+    # All eight phases (README docs, seeded-bag boot, movement + wall clamp, rotation cycle,
+    # flush hard drop with 2x scoring, quit, top-out GAME OVER, packed bottom-row clear)
+    # against a correct game — proof the task is achievable exactly as the goal pins it.
+    repo = _tetris_repo(tmp_path, "good", _GOLDEN_TETRIS)
+    assert run_probe(f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+
+
+def test_tetris_probe_tolerates_farewell_frame_on_quit(tmp_path):
+    # Whether `q` renders one last frame before exiting is a compliant implementation
+    # choice the goal does not pin — two matrix models chose it and must not fail for it
+    # (the probe's count-sensitive phases end on EOF, not on 'q', for exactly this reason).
+    marker = '        if key is None or key == "QUIT":\n            return 0\n'
+    assert marker in _GOLDEN_TETRIS
+    farewell = _GOLDEN_TETRIS.replace(
+        marker,
+        "        if key is None:\n            return 0\n"
+        '        if key == "QUIT":\n            game.render(out)\n            return 0\n',
+    )
+    repo = _tetris_repo(tmp_path, "farewell", farewell)
+    assert run_probe(f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+
+
+def test_tetris_probe_counter_examples(tmp_path):
+    # Each pinned behavior, violated by surgical mutation of the otherwise-passing golden
+    # game, so exactly one property differs per case.
+    cmd = f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py"
+    cases = [
+        # 1. Left moves the piece right: the differential movement assertion flips.
+        ("inverted_left", _TETRIS_MOVE_LEFT_MARKER, "game.move(0, 1)"),
+        # 2. Rotation is a no-op: the clockwise-orientation cycle never advances.
+        ("rotation_noop", _TETRIS_ROTATE_MARKER, 'elif key == "UP":\n            pass'),
+        # 3. The score display lies (a hardcoded number): caught at boot (Score must be 0).
+        ("fake_score", _TETRIS_SCORE_MARKER, '"Score: 9999"'),
+        # 4. Full rows never clear: the packed bottom row survives and the ledger diverges.
+        ("no_line_clear", _TETRIS_CLEAR_MARKER, "        pass  # no clear\n"),
+        # 5. A deviating randomizer (seed + 1): the first piece contradicts the pinned bag.
+        ("wrong_rng", _TETRIS_RNG_MARKER, "random.Random(seed + 1)"),
+        # 6. Reads stdin to EOF before responding (the grok-4.5 dev-cell shape): every batch
+        #    phase passes (they close stdin), so the interactive packing phase must catch it —
+        #    quickly, via its per-frame deadline, with the slurp diagnosis in the reason.
+        (
+            "slurps_stdin",
+            _TETRIS_STREAM_MARKER,
+            '    stream = __import__("io").BytesIO(sys.stdin.buffer.read())\n',
+        ),
+        # 7. The raw-mode staircase (the opus/sol matrix shape): interactive mode calls
+        #    tty.setraw and writes bare \n, so a real terminal renders the board diagonally.
+        #    Scripted phases can't see it (pipes have no tty); the pty presentation phase must.
+        (
+            "staircase_interactive",
+            _TETRIS_CURSES_MARKER,
+            "    import termios\n"
+            "    import tty\n"
+            "\n"
+            "    fd = sys.stdin.fileno()\n"
+            "    old = termios.tcgetattr(fd)\n"
+            "    game = Game(seed)\n"
+            "    try:\n"
+            "        tty.setraw(fd)\n"
+            "        game.render(sys.stdout)\n"
+            "        while True:\n"
+            "            ch = sys.stdin.buffer.read(1)\n"
+            '            if not ch or ch == b"q":\n'
+            "                return 0\n"
+            "            game.render(sys.stdout)\n"
+            "    finally:\n"
+            "        termios.tcsetattr(fd, termios.TCSADRAIN, old)\n",
+        ),
+    ]
+    for name, marker, replacement in cases:
+        assert marker in _GOLDEN_TETRIS
+        repo = _tetris_repo(tmp_path, name, _GOLDEN_TETRIS.replace(marker, replacement))
+        assert run_probe(cmd, repo, timeout_seconds=120) == 1, f"probe passed the {name} counter-example"
+    # 7. The hook-style cheat: a static renderer with no game state behind it.
+    repo = _tetris_repo(tmp_path, "canned", _CANNED_TETRIS)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed the canned-frames cheat"
+    # 8. The README is part of the graded contract.
+    repo = _tetris_repo(tmp_path, "no_readme", _GOLDEN_TETRIS, readme=None)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed without a README"
