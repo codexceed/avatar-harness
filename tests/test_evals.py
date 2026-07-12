@@ -1319,9 +1319,11 @@ def test_median_wall_clock_ignores_missing():
 
 
 def test_bundled_pricing_covers_the_tracked_models():
-    # The shared source of truth the dashboard also reads; must price the matrix models.
+    # The shared source of truth the dashboard also reads; must price every model in the
+    # PINNED matrix set (Makefile MATRIX_MODELS) or `make eval-matrix` cost columns render
+    # "—" and the grand total silently under-reports.
     p = load_pricing()
-    for m in ("openai/gpt-5.3-codex", "openai/gpt-oss-120b", "deepseek/deepseek-v4-pro"):
+    for m in ("x-ai/grok-4.5", "openai/gpt-oss-120b", "openai/gpt-5.6-sol", "z-ai/glm-5.2"):
         assert p[m]["prompt"] > 0 and p[m]["completion"] > 0
 
 
@@ -1373,26 +1375,35 @@ def test_tetris_task_spec_loads_and_points_at_probe():
 
 
 def test_tetris_probe_passes_golden_game(tmp_path):
-    # All eight phases (README docs, seeded-bag boot, movement + wall clamp, rotation cycle,
-    # flush hard drop with 2x scoring, quit, top-out GAME OVER, packed bottom-row clear)
-    # against a correct game — proof the task is achievable exactly as the goal pins it.
+    # All nine phases (README docs, seeded-bag boot, movement + wall clamp, rotation cycle,
+    # flush hard drop with 2x scoring, quit, top-out GAME OVER, packed bottom-row clear,
+    # pty presentation) against a correct game — the task is achievable as the goal pins it.
     repo = _tetris_repo(tmp_path, "good", _GOLDEN_TETRIS)
     assert run_probe(f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
 
 
-def test_tetris_probe_tolerates_farewell_frame_on_quit(tmp_path):
-    # Whether `q` renders one last frame before exiting is a compliant implementation
-    # choice the goal does not pin — two matrix models chose it and must not fail for it
-    # (the probe's count-sensitive phases end on EOF, not on 'q', for exactly this reason).
+def test_tetris_probe_tolerates_farewell_frames(tmp_path):
+    # Whether `q` OR EOF renders one last frame before exiting is a compliant implementation
+    # choice the goal does not pin — two matrix models shipped the q-farewell and must not
+    # fail for it. Count-sensitive phases end on EOF and tolerate exactly one trailing frame,
+    # so this variant renders a farewell on BOTH exits (the maximal tolerated shape).
     marker = '        if key is None or key == "QUIT":\n            return 0\n'
     assert marker in _GOLDEN_TETRIS
     farewell = _GOLDEN_TETRIS.replace(
         marker,
-        "        if key is None:\n            return 0\n"
-        '        if key == "QUIT":\n            game.render(out)\n            return 0\n',
+        '        if key is None or key == "QUIT":\n            game.render(out)\n            return 0\n',
     )
     repo = _tetris_repo(tmp_path, "farewell", farewell)
     assert run_probe(f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+
+
+def test_tetris_probe_immune_to_hostile_term(tmp_path):
+    # The probe owns its pty (window size AND terminal type): a CI runner exporting TERM=dumb
+    # must not leak into the presentation phase and falsely reject a correct curses-style
+    # interactive mode (reproduced regression, PR #115 review).
+    repo = _tetris_repo(tmp_path, "dumb_term", _GOLDEN_TETRIS)
+    cmd = f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py"
+    assert run_probe(cmd, repo, env={"TERM": "dumb"}, timeout_seconds=120) == 0
 
 
 def test_tetris_probe_counter_examples(tmp_path):
@@ -1441,14 +1452,27 @@ def test_tetris_probe_counter_examples(tmp_path):
             "    finally:\n"
             "        termios.tcsetattr(fd, termios.TCSADRAIN, old)\n",
         ),
+        # 8. A fake interactive mode: five static aligned rows and no game behind them (the
+        #    PR #115 review's exploit). Scripted phases pass (they never see this path), so
+        #    the presentation phase must demand the full 20-row board the goal pins.
+        (
+            "static_interactive",
+            _TETRIS_CURSES_MARKER,
+            '    sys.stdout.write("\\n".join("|" + "." * 10 + "|" for _ in range(5)) + "\\n")\n'
+            "    sys.stdout.flush()\n"
+            "    while True:\n"
+            "        ch = sys.stdin.buffer.read(1)\n"
+            '        if not ch or ch == b"q":\n'
+            "            return 0\n",
+        ),
     ]
     for name, marker, replacement in cases:
         assert marker in _GOLDEN_TETRIS
         repo = _tetris_repo(tmp_path, name, _GOLDEN_TETRIS.replace(marker, replacement))
         assert run_probe(cmd, repo, timeout_seconds=120) == 1, f"probe passed the {name} counter-example"
-    # 7. The hook-style cheat: a static renderer with no game state behind it.
+    # 9. The hook-style cheat: a static renderer with no game state behind it.
     repo = _tetris_repo(tmp_path, "canned", _CANNED_TETRIS)
     assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed the canned-frames cheat"
-    # 8. The README is part of the graded contract.
+    # 10. The README is part of the graded contract.
     repo = _tetris_repo(tmp_path, "no_readme", _GOLDEN_TETRIS, readme=None)
     assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed without a README"

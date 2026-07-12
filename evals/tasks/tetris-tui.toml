@@ -63,9 +63,11 @@ the `.`/`#`/`@` glyphs, the scoring table, the 10 x 20 board size, the 7-bag \
 task_kind = "edit"
 fixture = "empty"
 success_probe = "python evals/probes/tetris_tui_smoke.py tetris.py"
-# Eight sequential game launches (batch phases + one interactive packing plan), all local
-# subprocesses — generous headroom over the observed ~0.2 s golden runtime so a slow-but-
-# correct game never becomes a false timeout.
+# Nine sequential game launches (seven batch phases, one interactive packing plan, one pty
+# presentation capture), all local subprocesses — generous headroom over the observed ~5 s
+# golden runtime. A pathologically-slow-but-correct game could in principle stack the
+# per-phase deadlines past this total; in practice healthy games answer in milliseconds and
+# the per-phase deadlines exist to make hangs fail with a legible per-phase reason first.
 probe_timeout_seconds = 300
 
 [budgets]

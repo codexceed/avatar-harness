@@ -37,6 +37,9 @@ that deviates from the pinned contract fails even if it is internally self-consi
 Phase 7's planner is adaptive (it reads spawn position/orientation from the frames), so
 it is robust to any compliant spawn choice.
 
+Platform note: phase 8 uses Unix pty facilities (os.openpty/termios/fcntl; imported at
+module top), so the probe is Unix-only — matching where evals run today.
+
 Exit codes: 0 = every phase passed; 1 = a phase failed (reason printed).
 """
 
@@ -106,10 +109,16 @@ _README_REQUIREMENTS: list[tuple[str, str]] = [
     ("the arrow keys", "arrow|esc\\s*\\[\\s*[abcd]|x1b\\[|[←-↓]"),
     ("the Left key", r"left"),
     ("the Right key", r"right"),
+    ("the Down key (soft drop)", r"down|soft[\s-]?drop"),
     ("the rotate key", r"rotat"),
     ("the drop key (space)", r"space"),
     ("the quit key", r"quit|\bq\b"),
+    ("the cell glyphs (. / # / @)", r"@"),
+    ("the GAME OVER behavior", r"game\s*over"),
     ("the frame sentinel", r"--\s*end\s*frame\s*--"),
+    # Known laxity, on purpose: the score values substring-match ("1000" satisfies "100") —
+    # a fail-open lower-bound gate; tightening it risks the false-rejection regression this
+    # list has already produced three times.
     ("the single-line clear score (100)", r"100"),
     ("the double-line clear score (300)", r"300"),
     ("the triple-line clear score (500)", r"500"),
@@ -334,12 +343,15 @@ def _check_movement(entry: str) -> str | None:  # noqa: PLR0911 — a flat step 
     # No trailing 'q': whether a game renders a farewell frame for `q` is a compliant
     # implementation choice (the goal doesn't pin it), so count-sensitive phases end on
     # EOF instead — matrix cells from two models failed here on that extra frame alone.
+    # The goal is equally silent about a farewell frame ON EOF, so tolerate exactly one
+    # trailing extra frame too (assertions index a strict prefix; same artifact shape).
     keys = _LEFT + _RIGHT + _DOWN + _LEFT * 12 + _RIGHT
     frames, _code, _tail, err = _drive(entry, keys)
     if isinstance(frames, str):
         return f"movement: {frames} (stderr tail: {err.strip()[-300:]!r})"
-    if len(frames) != 17:
-        return f"movement: expected 17 frames (1 initial + 16 keys), got {len(frames)}"
+    if len(frames) not in (17, 18):
+        return f"movement: expected 17 frames (1 initial + 16 keys, + <=1 EOF farewell), got {len(frames)}"
+    frames = frames[:17]
     f0 = frames[0]
     checks = [
         ("after LEFT", frames[1].active, _shift(f0.active, 0, -1)),
@@ -366,8 +378,9 @@ def _check_rotation(entry: str) -> str | None:
     frames, _code, _tail, err = _drive(entry, _UP * 4)  # EOF-terminated: see movement note
     if isinstance(frames, str):
         return f"rotation: {frames} (stderr tail: {err.strip()[-300:]!r})"
-    if len(frames) != 5:
-        return f"rotation: expected 5 frames (1 initial + 4 UPs), got {len(frames)}"
+    if len(frames) not in (5, 6):
+        return f"rotation: expected 5 frames (1 initial + 4 UPs, + at most 1 EOF farewell), got {len(frames)}"
+    frames = frames[:5]
     letter = _bag_sequence(_SEED, 1)[0]
     expected_shape = _norm(frozenset(_SHAPES[letter]))
     for step, frame in enumerate(frames):
@@ -390,9 +403,9 @@ def _check_drop(entry: str) -> str | None:  # noqa: PLR0911 — a flat step gaun
     frames, _code, _tail, err = _drive(entry, _SPACE)  # EOF-terminated: see movement note
     if isinstance(frames, str):
         return f"drop: {frames} (stderr tail: {err.strip()[-300:]!r})"
-    if len(frames) != 2:
-        return f"drop: expected 2 frames (initial + SPACE), got {len(frames)}"
-    before, after = frames
+    if len(frames) not in (2, 3):
+        return f"drop: expected 2 frames (initial + SPACE, + at most 1 EOF farewell), got {len(frames)}"
+    before, after = frames[:2]
     descent = _drop_distance(before.active, before.locked)
     expected_locked = _shift(before.active, descent, 0)
     if after.locked != expected_locked:
@@ -587,7 +600,11 @@ def _emulate_screen(data: bytes) -> dict[int, str]:  # noqa: C901 — a characte
     r"""Reconstruct what a terminal displays from a captured pty byte stream.
 
     A deliberately tiny emulator: `\r`/`\n`/backspace/tab cursor motion, CSI cursor
-    positioning (`H`/`f` — what curses-style UIs use), every other escape ignored. This is
+    positioning (`H`/`f` — what curses-style UIs use), every other escape ignored. Known
+    coarseness in the "ignored" bucket: non-CSI escapes are consumed as ESC + one char, so a
+    3-byte charset sequence like `ESC ( B` leaves one stray printable in the grid — harmless
+    for the alignment assertion (curses positions rows via CSI `H`), but keep it in mind
+    before tightening these checks. This is
     what makes the check fair across implementation styles: cooked-mode output, explicit
     `\r\n` writers, and cursor-addressed (curses) UIs all reconstruct to aligned rows;
     only genuinely mis-rendering output (e.g. bare `\n` while the tty is in raw mode, the
@@ -637,10 +654,11 @@ def _emulate_screen(data: bytes) -> dict[int, str]:  # noqa: C901 — a characte
 def _capture_interactive(entry: str) -> tuple[bytes, bool]:
     """Run the interactive mode on a pseudo-terminal; returns (pty bytes, exited-after-q)."""
     master, slave = os.openpty()
-    # A sane window and TERM so curses-style UIs can initialize under a headless runner.
+    # A sane window, and a FORCED terminal type: the probe owns this pty (it sets the window
+    # size too), and the runner's inherited TERM carries no legitimate signal — a CI `dumb`
+    # would make curses-style UIs draw nothing and falsely reject a correct game.
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    env = {**os.environ}
-    env.setdefault("TERM", "xterm")
+    env = {**os.environ, "TERM": "xterm"}
     proc = subprocess.Popen(
         [sys.executable, entry], stdin=slave, stdout=slave, stderr=subprocess.DEVNULL, env=env
     )
@@ -690,16 +708,18 @@ def _check_presentation(entry: str) -> str | None:
         match = re.search(r"\|.{10}\|", text)
         if match:
             starts.append(match.start())
-    if len(starts) < 5:
-        return (
-            f"presentation: interactive mode (`python3 {entry}`) never drew a playfield on a "
-            f"real terminal (found {len(starts)} board rows; expected a 20-row board)"
-        )
-    if len(set(starts)) != 1:
+    # Diagnose the staircase FIRST (misaligned rows are still "found" rows), then demand the
+    # full 20-row board the goal pins — five aligned rows with no game behind them must fail.
+    if len(starts) >= 2 and len(set(starts)) != 1:
         return (
             f"presentation: interactive mode staircases on a real terminal — board rows start at "
             f"columns {sorted(set(starts))[:6]}; raw mode (tty.setraw) disables the \\n -> \\r\\n "
             f"translation, so write \\r\\n line endings, use tty.setcbreak, or position the cursor"
+        )
+    if len(starts) < _HEIGHT:
+        return (
+            f"presentation: interactive mode (`python3 {entry}`) drew {len(starts)} aligned board "
+            f"rows on a real terminal; the goal pins a {_HEIGHT}-row playfield"
         )
     if not exited:
         return f"presentation: interactive mode did not exit within {_PRESENTATION_EXIT_SECONDS:.0f}s of 'q'"
