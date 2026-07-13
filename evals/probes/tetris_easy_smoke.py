@@ -90,7 +90,7 @@ _PHASE_DEADLINE_SECONDS = 60.0
 _FRAME_DEADLINE_SECONDS = 15.0
 # Phase 8 watches the INTERACTIVE mode draw on a real pseudo-terminal: capture this long
 # (a few gravity ticks' worth of redraws), then send `q` and give it this long to exit.
-_PRESENTATION_CAPTURE_SECONDS = 2.0
+_PRESENTATION_CAPTURE_SECONDS = 10.0
 _PRESENTATION_EXIT_SECONDS = 8.0
 
 # What README.md must document (mirrors the goal's explicit README checklist), as
@@ -685,7 +685,15 @@ def _capture_interactive(entry: str) -> tuple[bytes, bool]:
                     return
                 data += chunk
 
-    drain(time.monotonic() + _PRESENTATION_CAPTURE_SECONDS)
+    # Wait for the first FULL paint rather than a fixed window: a loaded CI runner can take
+    # seconds to reach curses' first refresh, and a truncated capture would read as a missing
+    # board. Healthy games break out of this loop in well under a second.
+    paint_deadline = time.monotonic() + _PRESENTATION_CAPTURE_SECONDS
+    while time.monotonic() < paint_deadline:
+        drain(time.monotonic() + 0.25)
+        screen = _emulate_screen(data)
+        if sum(1 for text in screen.values() if re.search(r"\|.{10}\|", text)) >= _HEIGHT:
+            break
     with contextlib.suppress(OSError):
         os.write(master, b"q\r")  # raw/cbreak readers see 'q' at once; cooked readers on the CR
     drain(time.monotonic() + _PRESENTATION_EXIT_SECONDS)
