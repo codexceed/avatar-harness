@@ -686,15 +686,32 @@ def _screen_board(data: bytes) -> _Frame | str:
 def _check_interactive(entry: str) -> str | None:  # noqa: C901, PLR0911, PLR0912, PLR0915
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    # TERM is forced (the runner's inherited value carries no signal) and so is the terminfo
+    # search chain: python-build-standalone's bundled ncurses misses Debian's /etc/terminfo
+    # and /lib/terminfo, which otherwise kills curses UIs at setupterm on exactly the
+    # machines CI runs on (the trailing empty entry keeps the compiled-in default paths).
     proc = subprocess.Popen(
         [sys.executable, entry],
         stdin=slave,
         stdout=slave,
-        stderr=subprocess.DEVNULL,
-        env={**os.environ, "TERM": "xterm"},
+        stderr=subprocess.PIPE,
+        env={
+            **os.environ,
+            "TERM": "xterm",
+            "TERMINFO_DIRS": "/etc/terminfo:/lib/terminfo:/usr/share/terminfo:",
+        },
     )
     os.close(slave)
     data = b""
+
+    def stderr_tail() -> str:
+        if proc.stderr is None:
+            return ""
+        with contextlib.suppress(OSError, ValueError):
+            os.set_blocking(proc.stderr.fileno(), False)
+            tail = (proc.stderr.read() or b"").decode("utf-8", errors="replace").strip()
+            return f" (stderr tail: {tail[-300:]!r})" if tail else ""
+        return ""
 
     def drain(seconds: float) -> None:
         nonlocal data
@@ -717,7 +734,7 @@ def _check_interactive(entry: str) -> str | None:  # noqa: C901, PLR0911, PLR091
             drain(0.8)  # a slow first paint is not a defect; look again before judging
             initial = _screen_board(data)
         if isinstance(initial, str):
-            return f"interactive: {initial}"
+            return f"interactive: {initial}{stderr_tail()}"
         if not _plausible_piece(initial.active):
             return f"interactive: startup board shows falling cells {sorted(initial.active)}"
         direction = _LEFT if min(c for _, c in initial.active) > 0 else _RIGHT
