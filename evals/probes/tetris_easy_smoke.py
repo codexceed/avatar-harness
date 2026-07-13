@@ -596,59 +596,107 @@ def _check_line_clear(entry: str) -> str | None:  # noqa: C901, PLR0911, PLR0912
 _CSI_FINAL = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ`abcdefghijklmnopqrstuvwxyz{|}~"
 
 
-def _emulate_screen(data: bytes) -> dict[int, str]:  # noqa: C901 — a character-at-a-time terminal state machine
+def _emulate_screen(data: bytes) -> dict[int, str]:  # noqa: C901, PLR0912, PLR0915
     r"""Reconstruct what a terminal displays from a captured pty byte stream.
 
-    A deliberately tiny emulator: `\r`/`\n`/backspace/tab cursor motion, CSI cursor
-    positioning (`H`/`f` — what curses-style UIs use), every other escape ignored. Known
-    coarseness in the "ignored" bucket: non-CSI escapes are consumed as ESC + one char, so a
-    3-byte charset sequence like `ESC ( B` leaves one stray printable in the grid — harmless
-    for the alignment assertion (curses positions rows via CSI `H`), but keep it in mind
-    before tightening these checks. This is
-    what makes the check fair across implementation styles: cooked-mode output, explicit
-    `\r\n` writers, and cursor-addressed (curses) UIs all reconstruct to aligned rows;
-    only genuinely mis-rendering output (e.g. bare `\n` while the tty is in raw mode, the
-    "staircase") reconstructs misaligned — exactly what a human sees.
+    Ported from the tetris-hard probe (the two must not diverge): a mini terminal state
+    machine covering `\r`/`\n`/backspace/tab, CSI absolute addressing (`H`/`f`) AND the
+    relative-motion forms Linux ncurses actually emits for TERM=xterm — `A/B/C/D` moves,
+    `G` (CHA), `d` (VPA), `J/K` erases, `r` scroll regions, and `ESC M`/`ESC D`/`ESC E`
+    index motions. macOS ncurses paints almost entirely with `H`, which is how an
+    H-only emulator passed locally for a week while collapsing the whole board onto one
+    line on the CI runner. Cooked-mode output, explicit `\r\n` writers, and
+    cursor-addressed UIs all reconstruct to aligned rows; only genuinely mis-rendered
+    output (the raw-mode `\n` staircase) reconstructs misaligned — what a human sees.
     """
     grid: dict[int, dict[int, str]] = {}
     row = col = 0
+    scroll_top = 0
+    scroll_bottom = 39
     text = data.decode("utf-8", errors="replace")
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if ch == "\x1b":
-            j = i + 1
-            if j < len(text) and text[j] == "[":
-                j += 1
-                start = j
-                while j < len(text) and text[j] not in _CSI_FINAL:
-                    j += 1
-                if j < len(text) and text[j] in "Hf":
-                    parts = text[start:j].split(";")
-                    nums = [int(p) for p in parts if p.isdigit()]
-                    row = (nums[0] - 1) if nums else 0
-                    col = (nums[1] - 1) if len(nums) > 1 else 0
-                i = j + 1
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\x1b":
+            end = index + 1
+            if end < len(text) and text[end] == "[":
+                end += 1
+                start = end
+                while end < len(text) and text[end] not in _CSI_FINAL:
+                    end += 1
+                final = text[end] if end < len(text) else ""
+                raw_params = text[start:end].lstrip("?")
+                nums = [int(part) if part.isdigit() else 0 for part in raw_params.split(";")]
+                amount = (nums[0] or 1) if nums else 1
+                if final in "Hf":
+                    row = (nums[0] or 1) - 1 if nums else 0
+                    col = (nums[1] or 1) - 1 if len(nums) > 1 else 0
+                elif final == "A":
+                    row = max(0, row - amount)
+                elif final == "B":
+                    row += amount
+                elif final == "C":
+                    col += amount
+                elif final == "D":
+                    col = max(0, col - amount)
+                elif final == "G":
+                    col = amount - 1
+                elif final == "d":
+                    row = amount - 1
+                elif final == "J" and nums and nums[0] == 2:
+                    grid.clear()
+                    row = col = 0
+                elif final == "K":
+                    mode = nums[0] if nums else 0
+                    cells = grid.setdefault(row, {})
+                    if mode == 2:
+                        cells.clear()
+                    elif mode == 1:
+                        for cell_col in [c for c in cells if c <= col]:
+                            del cells[cell_col]
+                    else:
+                        for cell_col in [c for c in cells if c >= col]:
+                            del cells[cell_col]
+                elif final == "r":
+                    scroll_top = (nums[0] or 1) - 1 if nums else 0
+                    scroll_bottom = (nums[1] or 40) - 1 if len(nums) > 1 else 39
+                index = end + 1
             else:
-                i = j + 1
+                control = text[end] if end < len(text) else ""
+                if control == "M":  # reverse index; scroll down inside the active margins
+                    if row == scroll_top:
+                        for scroll_row in range(scroll_bottom, scroll_top, -1):
+                            grid[scroll_row] = dict(grid.get(scroll_row - 1, {}))
+                        grid[scroll_top] = {}
+                    else:
+                        row = max(0, row - 1)
+                elif control == "D":  # index; scroll up inside the active margins
+                    if row == scroll_bottom:
+                        for scroll_row in range(scroll_top, scroll_bottom):
+                            grid[scroll_row] = dict(grid.get(scroll_row + 1, {}))
+                        grid[scroll_bottom] = {}
+                    else:
+                        row += 1
+                elif control == "E":
+                    row += 1
+                    col = 0
+                index = end + 1
             continue
-        if ch == "\r":
+        if char == "\r":
             col = 0
-        elif ch == "\n":
+        elif char == "\n":
             row += 1
-        elif ch == "\b":
+        elif char == "\b":
             col = max(0, col - 1)
-        elif ch == "\t":
+        elif char == "\t":
             col = (col // 8 + 1) * 8
-        elif ch.isprintable():
-            grid.setdefault(row, {})[col] = ch
+        elif char.isprintable():
+            grid.setdefault(row, {})[col] = char
             col += 1
-        i += 1
-    lines: dict[int, str] = {}
-    for r, cells in grid.items():
-        width = max(cells) + 1
-        lines[r] = "".join(cells.get(c, " ") for c in range(width))
-    return lines
+        index += 1
+    return {
+        r: "".join(cells.get(c, " ") for c in range(max(cells) + 1)) for r, cells in grid.items() if cells
+    }
 
 
 def _capture_interactive(entry: str) -> tuple[bytes, bool]:
