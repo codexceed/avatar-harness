@@ -654,19 +654,18 @@ def _emulate_screen(data: bytes) -> dict[int, str]:  # noqa: C901 — a characte
 def _capture_interactive(entry: str) -> tuple[bytes, bool]:
     """Run the interactive mode on a pseudo-terminal; returns (pty bytes, exited-after-q)."""
     master, slave = os.openpty()
-    # A sane window, and a FORCED terminal type: the probe owns this pty (it sets the window
-    # size too), and the runner's inherited TERM carries no legitimate signal — a CI `dumb`
-    # would make curses-style UIs draw nothing and falsely reject a correct game. The
-    # terminfo search chain is forced for the same reason: python-build-standalone's bundled
-    # ncurses misses Debian's /etc/terminfo and /lib/terminfo, which otherwise kills curses
-    # UIs at setupterm on exactly the machines CI runs on (the trailing empty entry keeps
-    # the compiled-in default paths).
+    # A sane window, and a FORCED terminal identity: the probe owns this pty, so the
+    # inherited environment carries no legitimate signal about it. TERM is forced (a CI
+    # `dumb` would make curses-style UIs draw nothing), the terminfo search chain is forced
+    # (some Python builds bundle an ncurses that misses Debian's /etc/terminfo and
+    # /lib/terminfo; the trailing empty entry keeps the compiled-in defaults), and inherited
+    # LINES/COLUMNS are stripped — ncurses lets them OVERRIDE the pty's real 40x120 window,
+    # and CI test environments export values small enough to crash a correct curses UI
+    # mid-paint (addwstr() returned ERR).
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    env = {
-        **os.environ,
-        "TERM": "xterm",
-        "TERMINFO_DIRS": "/etc/terminfo:/lib/terminfo:/usr/share/terminfo:",
-    }
+    env = {k: v for k, v in os.environ.items() if k not in ("LINES", "COLUMNS")}
+    env["TERM"] = "xterm"
+    env["TERMINFO_DIRS"] = "/etc/terminfo:/lib/terminfo:/usr/share/terminfo:"
     proc = subprocess.Popen(
         [sys.executable, entry], stdin=slave, stdout=slave, stderr=subprocess.DEVNULL, env=env
     )

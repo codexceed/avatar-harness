@@ -686,20 +686,21 @@ def _screen_board(data: bytes) -> _Frame | str:
 def _check_interactive(entry: str) -> str | None:  # noqa: C901, PLR0911, PLR0912, PLR0915
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    # TERM is forced (the runner's inherited value carries no signal) and so is the terminfo
-    # search chain: python-build-standalone's bundled ncurses misses Debian's /etc/terminfo
-    # and /lib/terminfo, which otherwise kills curses UIs at setupterm on exactly the
-    # machines CI runs on (the trailing empty entry keeps the compiled-in default paths).
+    # The probe owns this pty, so the terminal identity is forced end to end: TERM (the
+    # runner's inherited value carries no signal), the terminfo search chain (some Python
+    # builds bundle an ncurses that misses Debian's /etc/terminfo and /lib/terminfo; the
+    # trailing empty entry keeps the compiled-in defaults), and — critically — no inherited
+    # LINES/COLUMNS, which ncurses lets OVERRIDE the pty's real 40x120 window and which CI
+    # test environments export small enough to crash a correct curses UI mid-paint.
+    child_env = {k: v for k, v in os.environ.items() if k not in ("LINES", "COLUMNS")}
+    child_env["TERM"] = "xterm"
+    child_env["TERMINFO_DIRS"] = "/etc/terminfo:/lib/terminfo:/usr/share/terminfo:"
     proc = subprocess.Popen(
         [sys.executable, entry],
         stdin=slave,
         stdout=slave,
         stderr=subprocess.PIPE,
-        env={
-            **os.environ,
-            "TERM": "xterm",
-            "TERMINFO_DIRS": "/etc/terminfo:/lib/terminfo:/usr/share/terminfo:",
-        },
+        env=child_env,
     )
     os.close(slave)
     data = b""
