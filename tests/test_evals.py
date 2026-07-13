@@ -1376,12 +1376,28 @@ def test_tetris_task_spec_loads_and_points_at_probe():
     assert spec.probe_timeout_seconds == 300
 
 
+def _run_probe_verbose(probe: Path, repo, env: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run a tetris probe directly so a failure's phase log lands in the assertion message."""
+    merged = {**__import__("os").environ, **(env or {})}
+    proc = subprocess.run(
+        [sys.executable, str(probe), "tetris.py"],
+        cwd=repo,
+        env=merged,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return proc.returncode, proc.stdout
+
+
 def test_tetris_probe_passes_golden_game(tmp_path):
     # All nine phases (README docs, seeded-bag boot, movement + wall clamp, rotation cycle,
     # flush hard drop with 2x scoring, quit, top-out GAME OVER, packed bottom-row clear,
     # pty presentation) against a correct game — the task is achievable as the goal pins it.
     repo = _tetris_repo(tmp_path, "good", _GOLDEN_TETRIS)
-    assert run_probe(f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+    code, out = _run_probe_verbose(_PROBES / "tetris_easy_smoke.py", repo)
+    assert code == 0, f"golden game rejected:\n{out}"
 
 
 def test_tetris_probe_tolerates_farewell_frames(tmp_path):
@@ -1396,7 +1412,8 @@ def test_tetris_probe_tolerates_farewell_frames(tmp_path):
         '        if key is None or key == "QUIT":\n            game.render(out)\n            return 0\n',
     )
     repo = _tetris_repo(tmp_path, "farewell", farewell)
-    assert run_probe(f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+    code, out = _run_probe_verbose(_PROBES / "tetris_easy_smoke.py", repo)
+    assert code == 0, f"farewell variant rejected:\n{out}"
 
 
 def test_tetris_probe_immune_to_hostile_term(tmp_path):
@@ -1404,8 +1421,8 @@ def test_tetris_probe_immune_to_hostile_term(tmp_path):
     # must not leak into the presentation phase and falsely reject a correct curses-style
     # interactive mode (reproduced regression, PR #115 review).
     repo = _tetris_repo(tmp_path, "dumb_term", _GOLDEN_TETRIS)
-    cmd = f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py"
-    assert run_probe(cmd, repo, env={"TERM": "dumb"}, timeout_seconds=120) == 0
+    code, out = _run_probe_verbose(_PROBES / "tetris_easy_smoke.py", repo, env={"TERM": "dumb"})
+    assert code == 0, f"hostile-TERM run rejected:\n{out}"
 
 
 def test_tetris_probe_counter_examples(tmp_path):
