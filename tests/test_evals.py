@@ -8,6 +8,8 @@ See docs/eval-harness-design.md.
 import json
 import math
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -1327,7 +1329,7 @@ def test_bundled_pricing_covers_the_tracked_models():
         assert p[m]["prompt"] > 0 and p[m]["completion"] > 0
 
 
-# --- M. tetris-tui probe: golden game + surgical counter-examples ---------------------
+# --- M. tetris-easy (formerly tetris-tui) probe: golden game + counter-examples -------
 # (design record: docs/research/2026-07-11-tetris-tui-eval-development.md)
 
 # Exact substrings of the golden game, mutated surgically by tests to derive counter-examples
@@ -1340,7 +1342,7 @@ _TETRIS_RNG_MARKER = "random.Random(seed)"
 _TETRIS_STREAM_MARKER = "    stream = sys.stdin.buffer\n"
 _TETRIS_CURSES_MARKER = "    curses.wrapper(loop)\n    return 0\n"
 
-# A reference solution for `tetris-tui` (stdlib-only, both modes, the pinned scripted-mode
+# A reference solution for `tetris-easy` (stdlib-only, both modes, the pinned scripted-mode
 # contract: ANSI arrow bytes, turn-based gravity, exact frame layout + sentinel, 7-bag RNG,
 # guideline scoring): the probe must pass it — proof the task is achievable exactly as the
 # goal pins it. Embedded raw so the \x1b escape-sequence literals survive verbatim.
@@ -1357,7 +1359,7 @@ _CANNED_TETRIS = (_GOLDENS / "canned_tetris.py").read_text(encoding="utf-8")
 
 
 def _tetris_repo(tmp_path, name, source, readme: str | None = _GOLDEN_TETRIS_README):
-    """A scratch dir shaped like a provisioned tetris-tui repo (game + README)."""
+    """A scratch dir shaped like a provisioned tetris repo (game + README)."""
     repo = tmp_path / name
     repo.mkdir()
     (repo / "tetris.py").write_text(source, encoding="utf-8")
@@ -1367,10 +1369,10 @@ def _tetris_repo(tmp_path, name, source, readme: str | None = _GOLDEN_TETRIS_REA
 
 
 def test_tetris_task_spec_loads_and_points_at_probe():
-    spec = load_task_spec(Path(__file__).resolve().parent.parent / "evals" / "tasks" / "tetris-tui.toml")
-    assert spec.id == "tetris-tui"
+    spec = load_task_spec(Path(__file__).resolve().parent.parent / "evals" / "tasks" / "tetris-easy.toml")
+    assert spec.id == "tetris-easy"
     assert spec.task_kind == "edit"
-    assert spec.success_probe == "python evals/probes/tetris_tui_smoke.py tetris.py"
+    assert spec.success_probe == "python evals/probes/tetris_easy_smoke.py tetris.py"
     assert spec.probe_timeout_seconds == 300
 
 
@@ -1379,7 +1381,7 @@ def test_tetris_probe_passes_golden_game(tmp_path):
     # flush hard drop with 2x scoring, quit, top-out GAME OVER, packed bottom-row clear,
     # pty presentation) against a correct game — the task is achievable as the goal pins it.
     repo = _tetris_repo(tmp_path, "good", _GOLDEN_TETRIS)
-    assert run_probe(f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+    assert run_probe(f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
 
 
 def test_tetris_probe_tolerates_farewell_frames(tmp_path):
@@ -1394,7 +1396,7 @@ def test_tetris_probe_tolerates_farewell_frames(tmp_path):
         '        if key is None or key == "QUIT":\n            game.render(out)\n            return 0\n',
     )
     repo = _tetris_repo(tmp_path, "farewell", farewell)
-    assert run_probe(f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
+    assert run_probe(f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py", repo, timeout_seconds=120) == 0
 
 
 def test_tetris_probe_immune_to_hostile_term(tmp_path):
@@ -1402,14 +1404,14 @@ def test_tetris_probe_immune_to_hostile_term(tmp_path):
     # must not leak into the presentation phase and falsely reject a correct curses-style
     # interactive mode (reproduced regression, PR #115 review).
     repo = _tetris_repo(tmp_path, "dumb_term", _GOLDEN_TETRIS)
-    cmd = f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py"
+    cmd = f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py"
     assert run_probe(cmd, repo, env={"TERM": "dumb"}, timeout_seconds=120) == 0
 
 
 def test_tetris_probe_counter_examples(tmp_path):
     # Each pinned behavior, violated by surgical mutation of the otherwise-passing golden
     # game, so exactly one property differs per case.
-    cmd = f"python {_PROBES / 'tetris_tui_smoke.py'} tetris.py"
+    cmd = f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py"
     cases = [
         # 1. Left moves the piece right: the differential movement assertion flips.
         ("inverted_left", _TETRIS_MOVE_LEFT_MARKER, "game.move(0, 1)"),
@@ -1474,5 +1476,188 @@ def test_tetris_probe_counter_examples(tmp_path):
     repo = _tetris_repo(tmp_path, "canned", _CANNED_TETRIS)
     assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed the canned-frames cheat"
     # 10. The README is part of the graded contract.
+    repo = _tetris_repo(tmp_path, "no_readme", _GOLDEN_TETRIS, readme=None)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed without a README"
+
+
+# --- N. tetris-hard (formerly tetris-playable) probe: broad gameplay invariants -------
+
+_PLAYABLE_PROBE = _PROBES / "tetris_hard_smoke.py"
+_PLAYABLE_README = """# Terminal Tetris
+
+Run the real-time game with `python3 tetris.py`. Left and Right move, Up rotates, Down
+soft-drops, Space hard-drops, and `q` quits. The game has gravity, scoring, line clears,
+and game-over behavior.
+
+For automation, `python3 tetris.py --no-raw --seed 7` runs deterministically without a
+timer and renders `Score`, `Lines`, and a 10 by 20 board using `.`, `@`, and `#`; each
+frame ends with `-- end frame --`.
+"""
+
+_CBREAK_INTERACTIVE = r"""def run_interactive(seed):
+    import select
+    import termios
+    import time
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    game = Game(seed)
+    last_tick = time.monotonic()
+    try:
+        tty.setcbreak(fd)
+        while not game.over:
+            if select.select([fd], [], [], 0.02)[0]:
+                key = read_key(sys.stdin.buffer)
+                if key is None or key == "QUIT":
+                    return 0
+                if key == "LEFT":
+                    game.move(0, -1)
+                elif key == "RIGHT":
+                    game.move(0, 1)
+                elif key == "DOWN":
+                    game.soft_drop()
+                elif key == "UP":
+                    game.rotate()
+                elif key == "SPACE":
+                    game.hard_drop()
+            if time.monotonic() - last_tick > 0.5:
+                if not game.move(1, 0):
+                    game._lock()
+                last_tick = time.monotonic()
+            sys.stdout.write("\x1b[H\x1b[2J")
+            game.render(sys.stdout)
+        return 0
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+"""
+
+
+def _with_interactive(source: str, replacement: str) -> str:
+    start = source.index("def run_interactive(seed):\n")
+    end = source.index("def main(argv):\n")
+    return source[:start] + replacement + source[end:]
+
+
+def test_tetris_hard_task_is_brief_and_points_at_probe():
+    spec = load_task_spec(Path(__file__).resolve().parent.parent / "evals" / "tasks" / "tetris-hard.toml")
+    assert spec.id == "tetris-hard"
+    assert spec.task_kind == "edit"
+    assert spec.success_probe == "python evals/probes/tetris_hard_smoke.py tetris.py"
+    assert spec.probe_timeout_seconds == 300
+    # This task measures building a playable game, not conformance to one reference ruleset.
+    for prescribed_detail in (
+        "random.Random",
+        "no wall kicks",
+        "(row, column)",
+        "100/300/500/800",
+        'fresh ["I","J","L","O","S","T","Z"]',
+    ):
+        assert prescribed_detail not in spec.goal
+
+
+def test_tetris_hard_probe_accepts_rule_variants(tmp_path):
+    cmd = f"python {_PLAYABLE_PROBE} tetris.py"
+    variants = {
+        "reference": _GOLDEN_TETRIS,
+        # A valid 7-bag can consume its shuffled list from either end; the task does not pin
+        # Python's list operation or the seed-to-piece mapping.
+        "reverse_bag": _GOLDEN_TETRIS.replace("return self.bag.pop(0)", "return self.bag.pop()"),
+        # Scoring must exist and respond to play, but point values are an implementation choice.
+        "different_scoring": _GOLDEN_TETRIS.replace(
+            "LINE_SCORES = {1: 100, 2: 300, 3: 500, 4: 800}",
+            "LINE_SCORES = {1: 40, 2: 100, 3: 300, 4: 1200}",
+        ),
+        # Up must rotate; clockwise versus counter-clockwise is deliberately not prescribed.
+        "counter_clockwise": _GOLDEN_TETRIS.replace(
+            "        rotated = {(r + min_r, c + min_c) for r, c in rotate_cw(rel)}\n",
+            "        rotated_rel = rel\n"
+            "        for _ in range(3):\n"
+            "            rotated_rel = rotate_cw(rotated_rel)\n"
+            "        rotated = {(r + min_r, c + min_c) for r, c in rotated_rel}\n",
+        ),
+        # The human-facing phase accepts a plain cbreak/ANSI renderer as well as curses.
+        "cbreak_ansi": _with_interactive(_GOLDEN_TETRIS, _CBREAK_INTERACTIVE),
+        # The goal pins GAME OVER "before a successful exit", not a position relative to the
+        # sentinel: printing it inside the final frame is a compliant choice (maintainer
+        # ruling, 2026-07-12 — six matrix cells were false-rejected on this).
+        "game_over_inside_frame": _GOLDEN_TETRIS.replace(
+            '        game.render(out)\n        if game.over:\n            out.write("GAME OVER\\n")\n',
+            '        if game.over:\n            out.write("GAME OVER\\n")\n        game.render(out)\n'
+            "        if game.over:\n",
+        ),
+    }
+    for name, source in variants.items():
+        repo = _tetris_repo(tmp_path, name, source, _PLAYABLE_README)
+        assert run_probe(cmd, repo, timeout_seconds=180) == 0, f"probe rejected valid {name} variant"
+
+
+def test_tetris_hard_probe_reports_slurped_stdin_without_gating(tmp_path):
+    # Option-3 hybrid (maintainer ruling, 2026-07-12): gameplay is graded over a replayed
+    # key prefix, so a stdin-slurping game still earns its gameplay verdict; the goal's
+    # streaming sentence is checked by a dedicated transport phase that reports on its own
+    # line and does not gate the exit code (see _STREAMING_GATES in the probe).
+    slurped = _GOLDEN_TETRIS.replace(
+        _TETRIS_STREAM_MARKER,
+        '    stream = __import__("io").BytesIO(sys.stdin.buffer.read())\n',
+    )
+    assert slurped != _GOLDEN_TETRIS
+    repo = _tetris_repo(tmp_path, "slurps_stdin", slurped, _PLAYABLE_README)
+    proc = subprocess.run(
+        [sys.executable, str(_PLAYABLE_PROBE), "tetris.py"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert proc.returncode == 0, f"slurped-stdin gameplay should still grade: {proc.stdout}"
+    assert "transport (streaming) FAILED [non-gating]" in proc.stdout
+    # The reference implementation streams, so its transport line must be clean.
+    repo = _tetris_repo(tmp_path, "streams", _GOLDEN_TETRIS, _PLAYABLE_README)
+    proc = subprocess.run(
+        [sys.executable, str(_PLAYABLE_PROBE), "tetris.py"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert "transport (streaming) ok" in proc.stdout
+
+
+def test_tetris_hard_probe_counter_examples(tmp_path):
+    cmd = f"python {_PLAYABLE_PROBE} tetris.py"
+    cases = [
+        ("inverted_left", _TETRIS_MOVE_LEFT_MARKER, "game.move(0, 1)"),
+        ("rotation_noop", _TETRIS_ROTATE_MARKER, 'elif key == "UP":\n            pass'),
+        ("one_piece_only", 'self.bag = list("IJLOSTZ")', 'self.bag = ["I"] * 7'),
+        ("no_line_clear", _TETRIS_CLEAR_MARKER, "        pass  # no clear\n"),
+        (
+            "no_interactive_gravity",
+            "            if time.monotonic() - last_tick > 0.5:\n",
+            "            if False:\n",
+        ),
+        (
+            "static_interactive",
+            _TETRIS_CURSES_MARKER,
+            '    sys.stdout.write("\\n".join("|" + "." * 10 + "|" for _ in range(20)) + "\\n")\n'
+            "    sys.stdout.flush()\n"
+            "    while True:\n"
+            "        ch = sys.stdin.buffer.read(1)\n"
+            '        if not ch or ch == b"q":\n'
+            "            return 0\n",
+        ),
+    ]
+    for name, marker, replacement in cases:
+        assert marker in _GOLDEN_TETRIS
+        repo = _tetris_repo(tmp_path, name, _GOLDEN_TETRIS.replace(marker, replacement), _PLAYABLE_README)
+        assert run_probe(cmd, repo, timeout_seconds=120) == 1, f"probe passed the {name} counter-example"
+
+    repo = _tetris_repo(tmp_path, "canned", _CANNED_TETRIS, _PLAYABLE_README)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed a canned-frame fake game"
     repo = _tetris_repo(tmp_path, "no_readme", _GOLDEN_TETRIS, readme=None)
     assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed without a README"

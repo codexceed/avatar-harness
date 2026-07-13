@@ -1,6 +1,6 @@
 {
   "_comment": "Single source of truth for per-model inference pricing. Read by evals/cost.py (Python report) AND tools/eval-dashboard (JS), so the two views never disagree on $. Values are a snapshot of OpenRouter list pricing; refresh via the openrouter MCP `model-get` (pricing.prompt / pricing.completion) and bump `as_of`.",
-  "as_of": "2026-07-12",
+  "as_of": "2026-07-13",
   "source": "OpenRouter model-get (pricing.prompt / pricing.completion)",
   "units": "USD per token",
   "models": {
@@ -39,6 +39,14 @@
     "openai/gpt-5.6-sol": {
       "prompt": 5e-06,
       "completion": 3e-05
+    },
+    "openai/gpt-5.6-terra": {
+      "prompt": 2.5e-06,
+      "completion": 1.5e-05
+    },
+    "openai/gpt-5.6-luna": {
+      "prompt": 1e-06,
+      "completion": 6e-06
     }
   }
 }

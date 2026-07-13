@@ -1,4 +1,4 @@
-id = "tetris-tui"
+id = "tetris-easy"
 guards = "single-shot TUI build graded by human-like keypress simulation — arrow-key input decoding, differential rendered-frame assertions, README-grounded contract (hermetic adaptation: the probe drives the pinned --no-raw scripted mode over stdin/stdout and scans the same frames a human sees; no model-provided state hooks — see docs/research/2026-07-11-tetris-tui-eval-development.md)"
 # The single-shot successor to the interactive ASCII-Tetris dogfood runs (tetris_glm /
 # tetris_grok*, the journals behind ADR-0038/0044-0049). Everything the probe relies on —
@@ -61,7 +61,7 @@ the `.`/`#`/`@` glyphs, the scoring table, the 10 x 20 board size, the 7-bag \
 `random.Random(seed)` randomizer, and the quit / GAME OVER behavior."""
 task_kind = "edit"
 fixture = "empty"
-success_probe = "python evals/probes/tetris_tui_smoke.py tetris.py"
+success_probe = "python evals/probes/tetris_easy_smoke.py tetris.py"
 # Nine sequential game launches (seven batch phases, one interactive packing plan, one pty
 # presentation capture), all local subprocesses — generous headroom over the observed ~5 s
 # golden runtime. A pathologically-slow-but-correct game could in principle stack the
@@ -73,4 +73,4 @@ probe_timeout_seconds = 300
 # A build task with an exacting rendering/input contract: comparable scope to
 # ecommerce-portal's single-file build, but no concurrency — fewer iterations suffice.
 max_iterations = 40
-max_wall_clock_seconds = 1800
+max_wall_clock_seconds = 1200

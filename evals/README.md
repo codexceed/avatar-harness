@@ -314,7 +314,7 @@ its canned reply on which article appears in the request, so a hardcoded or reus
 cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
 `docs/research/2026-07-04-news-analyzer-eval-development.md`.
 
-The `tetris-tui` probe (`probes/tetris_tui_smoke.py`) grades a **terminal UI by simulating a
+The `tetris-easy` probe (`probes/tetris_easy_smoke.py`; the task was formerly `tetris-tui`) grades a **terminal UI by simulating a
 human player**: it writes real ANSI arrow-key bytes to the game's pinned `--no-raw --seed`
 scripted mode (turn-based, one flushed frame per key, a frame sentinel) and asserts
 *differentially* on the rendered frames — arrow moves translate the falling piece's cells
@@ -327,6 +327,18 @@ pipe-driven phases cannot see) and that `q` exits. The rendered UI is the only g
 (no model-provided hooks — the README the agent writes is itself graded for documenting the
 contract, but never obeyed). Contract rationale + development-run evidence:
 `docs/research/2026-07-11-tetris-tui-eval-development.md`.
+
+The `tetris-hard` task (formerly `tetris-playable`) deliberately measures a broader construct than `tetris-easy`:
+**can the agent build a simple, genuinely playable terminal Tetris?** Its prompt pins only the
+small rendered-frame seam needed for deterministic black-box observation. The probe
+(`probes/tetris_hard_smoke.py`) infers behavior from those frames and checks seeded
+repeatability, directional movement, a working rotation, hard-drop physics, locking, adaptive
+play through a real line clear, scoring response, top-out, and `GAME OVER`. It does not prescribe
+the seed-to-piece mapping, spawn orientation, clockwise versus counter-clockwise rotation,
+wall kicks, or score values. A pseudo-terminal phase separately verifies the human surface:
+an actual terminal arrow moves the visible piece, timer gravity advances it, rows stay aligned,
+and `q` exits. The exact-contract and playable-game tasks remain separate so their signals are
+interpretable rather than silently changing the existing baseline.
 
 ---
 

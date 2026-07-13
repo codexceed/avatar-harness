@@ -1,0 +1,53 @@
+id = "tetris-hard"
+guards = "simple playable terminal Tetris graded through a small rendered-frame observation contract — broad gameplay invariants, seeded repeatability, and real pseudo-terminal interaction; rotation, randomizer order, scoring values, and terminal implementation remain agent choices (board glyphs are pinned in BOTH modes — maintainer ruling 2026-07-12; the goal's streaming sentence is graded as a separately reported, non-gating transport phase)"
+# This task deliberately complements `tetris-easy`: that task measures exact acceptance-contract
+# adherence, while this one measures the broader construct "can the agent build a playable
+# Tetris?". Only the black-box observation seam is pinned; the probe infers gameplay from the
+# rendered frames (adaptive phases drive by replayed key prefix over the pinned determinism, so
+# gameplay grading is transport-independent; the streaming requirement is checked and reported
+# on its own `transport` line without gating the verdict — the option-3 hybrid, 2026-07-12).
+# The `.`/`@`/`#` glyphs are pinned for the interactive board too, so the probe's screen
+# scanner grades one rendering vocabulary; layout, color, and decoration stay free.
+goal = """Build a playable terminal Tetris game in a single file named `tetris.py`, using only \
+the Python standard library, plus a short `README.md` explaining both run commands and the \
+controls.
+
+The game has two modes.
+
+Interactive mode — `python3 tetris.py` — a real-time terminal game:
+- A 10 x 20 board, the seven standard tetrominoes, and a conventional 7-bag randomizer.
+- Left/Right arrows move the falling piece, Up rotates it, Down soft-drops, space hard-drops, \
+and `q` quits promptly.
+- Automatic gravity, piece locking, line clearing, scoring, and game-over behavior.
+- It must be genuinely playable on a real terminal: the board renders as `|`-bordered rows \
+using `.` for empty cells, `@` for the falling piece, and `#` for locked cells (the same \
+glyphs as scripted mode), and every board row starts at the same screen column (no diagonal \
+drift), in whatever terminal mode the implementation chooses.
+
+Scripted mode — `python3 tetris.py --no-raw --seed <int>` — the same game, made deterministic \
+for black-box testing:
+- No gravity timer: the game advances only on input.
+- Input: read raw key bytes from stdin — Left `ESC [ D`, Right `ESC [ C`, Down `ESC [ B` \
+(soft drop), Up `ESC [ A` (rotate), the space byte (hard drop), and `q` (quit). Process keys \
+as they arrive — do not read stdin to EOF first: the frame answering a key must be written \
+and flushed before the next key is read, so a driver that holds stdin open sees each response \
+immediately.
+- Output: render one frame at startup and one after every recognized gameplay key (no-ops \
+included), flushing stdout each time. Each frame contains `Score: <n>`, `Lines: <n>`, and \
+exactly 20 board rows formatted as `|` plus 10 cell glyphs plus `|`, and ends with the line \
+`-- end frame --`.
+- Determinism: the same seed and key sequence must produce the same frames.
+- Exit: EOF on stdin or `q` exits with code 0, and top-out (a new piece cannot spawn) prints \
+`GAME OVER` before a successful exit.
+
+Everything else is your design: the bag order and implementation, spawn orientations, the \
+rotation system and wall-kick behavior, scoring values, and the terminal implementation. They \
+only need to form a consistent, playable Tetris game."""
+task_kind = "edit"
+fixture = "empty"
+success_probe = "python evals/probes/tetris_hard_smoke.py tetris.py"
+probe_timeout_seconds = 300
+
+[budgets]
+max_iterations = 40
+max_wall_clock_seconds = 1200

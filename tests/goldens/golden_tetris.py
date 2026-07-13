@@ -184,6 +184,7 @@ def run_interactive(seed):
 
     def loop(screen):
         curses.curs_set(0)
+        screen.keypad(True)
         screen.nodelay(True)
         game = Game(seed)
         last_tick = time.monotonic()

@@ -61,6 +61,14 @@ evals/results/*
 !evals/results/20260711T233131Z.summary.json
 !evals/results/20260712T110513Z.jsonl
 !evals/results/20260712T110513Z.summary.json
+# Cited by docs/research/2026-07-12-tetris-playable-glm-5.2-seed0.md and
+# docs/research/2026-07-12-tetris-playable-probe-hardening.md:
+!evals/results/20260712T132907Z.jsonl
+!evals/results/20260712T132907Z.summary.json
+!evals/results/20260712T140147Z.jsonl
+!evals/results/20260712T140147Z.summary.json
+!evals/results/20260712T171109Z.jsonl
+!evals/results/20260712T171109Z.summary.json
 eval_run*/
 
 # Generated visual reports (regenerated from scripts/build_eval_notebook.py)

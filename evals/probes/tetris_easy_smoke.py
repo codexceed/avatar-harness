@@ -1,6 +1,6 @@
-r"""Functional success probe for `tetris-tui` — plays the game the way a human would.
+r"""Functional success probe for `tetris-easy` (formerly `tetris-tui`) — plays the game the way a human would.
 
-Usage: ``python tetris_tui_smoke.py <entry_file>`` with the scratch repo as cwd. The probe
+Usage: ``python tetris_easy_smoke.py <entry_file>`` with the scratch repo as cwd. The probe
 drives the deliverable's pinned scripted mode (``--no-raw --seed N``: turn-based, one frame
 per recognized key, ``-- end frame --`` sentinel, ``.``/``#``/``@`` glyphs) by writing real
 ANSI arrow-key bytes to stdin and parsing the rendered frames — the same surface a human
