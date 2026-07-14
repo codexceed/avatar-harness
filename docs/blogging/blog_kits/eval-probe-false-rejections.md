@@ -115,10 +115,11 @@ were always real.
 - **Title options:** "My eval was wrong five times before any model was" · "The probe may only
   fail what the spec pins" · "Grading a TUI like a human (without an LLM judge)" · "False
   rejections are the expensive direction."
-- **Fit in the spine:** the practitioner-facing companion to NC7 (same lesson, grader-side) and
-  a concrete instance of blog 01's scaffold-not-model thesis — here it's *task-not-model*. Also
-  quietly advances the NC3/oracle-integrity thread: five artifacts in a probe *we* wrote and
-  tested is the base rate to remember when someone proposes trusting un-audited graders.
+- **Fit in the spine:** the practitioner-facing companion to `vacuity-guard-false-lesson` (same
+  lesson, grader-side) and a concrete instance of blog 01's scaffold-not-model thesis — here it's
+  *task-not-model*. Also quietly advances the `06`/oracle-integrity thread: five artifacts in a
+  probe *we* wrote and tested is the base rate to remember when someone proposes trusting
+  un-audited graders.
 
 ## The 4-question scaffold (fill these in the draft)
 

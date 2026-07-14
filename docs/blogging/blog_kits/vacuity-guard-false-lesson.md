@@ -147,8 +147,9 @@ legible in the journal.
   make a guard stricter, ask what lesson a false rejection teaches — and make lower-bound gates
   fail open, keeping the strictness in the layer that actually executes the work.*
 - **Fit in the spine:** Path C (incidents) material; the counterweight to the oracle-gaming thread
-  (NC3/NC8) — integrity work errs strict, this is the cost of over-steering. Pairs naturally with
-  the shell-syntax kit (same journal family, opposite failure direction).
+  (`06` / `self-certification-arms-race`) — integrity work errs strict, this is the cost of
+  over-steering. Pairs naturally with the shell-syntax kit (same journal family, opposite failure
+  direction).
 
 ## The 4-question scaffold (fill these in the draft)
 

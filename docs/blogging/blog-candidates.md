@@ -238,10 +238,6 @@ The archive uses six overlapping ID schemes. Map them here; do not reintroduce t
 | `NC4` | `blast-radius` |
 | `NC5` | `deterministic-grader` |
 | `NC6` | `score-the-attempt` |
-| `NC7` | `vacuity-guard-false-lesson` |
-| `NC8` | `self-certification-arms-race` |
-| `NC9` | `shell-syntax-boundary` |
-| `NC10` | `eval-probe-false-rejections` |
 
 > "Tier-1/2/3" in the archive means the *provenance tier of a metric* — unrelated to article
 > IDs. It does not survive into this doc.
