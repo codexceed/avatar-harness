@@ -40,8 +40,11 @@ target-version = "py312"
 # agent operates on (a buggy function, a secret file) — input data, not code we maintain.
 # Don't lint or format them. `notebooks/` holds generated artifacts (regenerated from
 # `scripts/build_eval_notebook.py`), so their code cells track the generator, not ruff —
-# excluded to avoid perpetual reformat drift.
-extend-exclude = ["evals/fixtures", "notebooks", "docs/research/2026-06-22-verification-authority"]
+# excluded to avoid perpetual reformat drift. `tests/goldens/` holds the golden reference
+# apps the probe-validity tests execute in scratch repos — test data on the same footing as
+# `evals/fixtures` (a probe must pass them as-written; reformatting could shift the surgical
+# counter-example markers asserted in tests/test_evals.py).
+extend-exclude = ["evals/fixtures", "notebooks", "docs/research/2026-06-22-verification-authority", "tests/goldens"]
 
 [tool.ruff.lint]
 select = [
@@ -124,10 +127,11 @@ check-class-attributes = false
 # --- Pyrefly: sole hard type gate (#1). Pinned to 1.0.x; bump deliberately. ---
 [tool.pyrefly]
 # Member packages + dev tooling are all held to the type gate, except evals' probes (runtime
-# scripts that import agent-generated modules, e.g. `import calc`, unresolvable statically) and
-# its fixtures (deliberately-imperfect sample repos), excluded as ruff excludes them.
+# scripts that import agent-generated modules, e.g. `import calc`, unresolvable statically),
+# its fixtures (deliberately-imperfect sample repos), and tests/goldens (golden reference apps
+# the probe-validity tests execute as data), excluded as ruff excludes them.
 project-includes = ["avatar-harness", "jo-cli", "tests", "evals"]
-project-excludes = ["**/__pycache__/**", "**/.[!/.]*/**", "evals/fixtures", "evals/probes"]
+project-excludes = ["**/__pycache__/**", "**/.[!/.]*/**", "evals/fixtures", "evals/probes", "tests/goldens"]
 # Member dirs are import roots so `import avatar` / `import jo` resolve to avatar-harness/avatar
 # and jo-cli/jo (flat layout). `tests` is an import root too, so shared test stubs in
 # `tests/conftest.py` (e.g. ScriptedModel, imported as `from conftest import ...`) resolve under
