@@ -27,7 +27,7 @@ Args:
 JsonlEventJournal(path: Path) -> None
 ```
 
-#### `JsonlEventJournal.append(self, event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> None`
+#### `JsonlEventJournal.append(self, event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | DeclarationRequired | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved | TaskEscalated, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> None`
 
 Append `event` as one JSON line and flush it to disk (write-ahead).
 

@@ -1,0 +1,70 @@
+---
+title: avatar.tools.verification
+---
+
+Verification-contract tools: `declare_verification` (§10, ADR-0038).
+
+Greenfield edit tasks declare nothing the planner can detect or cite, so the model authors
+its own **real** verification contract — executing checks the harness still runs itself and
+grades on the real exit code (never self-certification, §5). The tool only *buffers* the
+declared checks onto `RunDeps`; the runner drains them into the frozen plan at the
+investigating→editing boundary (tools never mutate `TaskState`, §8). A non-vacuity guard
+rejects no-op commands so the declared contract can't be a bar the model trivially clears.
+
+## Classes
+### `AlterVerificationInput`
+
+Input for `alter_verification`: the replacement checks plus why the old ones are obsolete.
+
+```python
+AlterVerificationInput(*, checks: list[DeclaredCheckInput], rationale: str, change_kinds: list[Literal['code', 'content']] = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `checks` | `list[DeclaredCheckInput]` | yes |
+| `rationale` | `str` | yes |
+| `change_kinds` | `list[Literal['code', 'content']]` | no |
+### `DeclareVerificationInput`
+
+Input for `declare_verification`: the checks that define 'done' for this greenfield task.
+
+```python
+DeclareVerificationInput(*, checks: list[DeclaredCheckInput], change_kinds: list[Literal['code', 'content']] = <factory>) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `checks` | `list[DeclaredCheckInput]` | yes |
+| `change_kinds` | `list[Literal['code', 'content']]` | no |
+### `DeclaredCheckInput`
+
+One check in a model-declared verification contract (ADR-0038).
+
+```python
+DeclaredCheckInput(*, command: str, kind: str = 'test') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `command` | `str` | yes |
+| `kind` | `str` | no |
+### `SwitchToEditingInput`
+
+Input for `switch_to_editing`: why this investigation is actually a fix (ADR-0048).
+
+```python
+SwitchToEditingInput(*, reason: str) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `reason` | `str` | yes |

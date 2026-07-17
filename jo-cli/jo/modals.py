@@ -6,6 +6,8 @@ that `dismiss`es a small typed result the caller routes:
 - `ApprovalModal` → `ApprovalChoice` — `[y]` allow once · `[a]` always (scoped grant) ·
   `[d]` deny · `[v]` toggle the command/diff detail. The cockpit feeds the choice to
   `session.resolve_approval(allow=…, remember=…)` — `[a]` sets `remember=True` (PR #10 grant).
+  A contract amendment (`alter_verification`) never offers `[a]`: each amendment is ratified
+  by a human (ADR-0038/0039); the core refuses such grants too, this just keeps the UI honest.
 - `DiffModal` → `None` — a read-only scrollable diff viewer; dismissed with escape/enter.
 - `PlanModal` → `PlanChoice` — an editable plan with **approve** / **revise**; revise returns
   the edited text (the plan-mode *flow* that consumes it is the 3.2 tail).
@@ -18,6 +20,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Static, TextArea
+
+from avatar import UNGRANTABLE_TOOLS
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,11 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self.reason = reason
         self.tool_input = tool_input
         self._show_detail = False
+        # A contract amendment must be ratified per occurrence — a standing grant would
+        # let the model re-move its own goalposts silently (ADR-0038/0039). The core's
+        # Session refuses to store/match such grants; hiding [a] keeps the UI honest,
+        # derived from the same core constant so the two seams cannot drift.
+        self._grantable = tool not in UNGRANTABLE_TOOLS
 
     def compose(self) -> Iterator[Widget]:
         """Render the bounded dialog: summary, the (toggleable) detail, buttons, key hints.
@@ -119,15 +128,24 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
                 if self.tool == "alter_verification"
                 else f"{self.tool} wants to run — {self.reason}"
             )
-            yield Static(prompt, id="approval_prompt")
-            yield Static(self._command_text(), id="approval_command")  # the exact command, always shown
-            yield Static(str(self.tool_input), id="approval_detail")
+            # markup=False: the prompt/command/args are model-authored and routinely contain Rich
+            # markup metacharacters (`[` in `python -c '...[...]'`, `grep -E '[...]'`, list literals).
+            # Parsing them as markup crashed the modal (`MarkupError`); show them verbatim instead.
+            yield Static(prompt, id="approval_prompt", markup=False)
+            yield Static(self._command_text(), id="approval_command", markup=False)  # exact command
+            yield Static(str(self.tool_input), id="approval_detail", markup=False)
             with Horizontal(id="approval_buttons"):
                 yield Button("Allow once", id="approve-once")
-                yield Button("Always", id="always")
+                if self._grantable:
+                    yield Button("Always", id="always")
                 yield Button("Deny", id="deny")
                 yield Button("View", id="view")
-            yield Static("[y] allow once   [a] always (scoped)   [d] deny   [v] view", id="approval_hints")
+            hints = (
+                "[y] allow once   [a] always (scoped)   [d] deny   [v] view"
+                if self._grantable
+                else "[y] allow once   [d] deny   [v] view"
+            )
+            yield Static(hints, id="approval_hints", markup=False)  # the `[y]`/`[d]` keys are literal
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route a button to the same decision its key binding makes (view toggles, no dismiss).
@@ -149,7 +167,13 @@ class ApprovalModal(ModalScreen[ApprovalChoice]):
         self.dismiss(ApprovalChoice(allow=True, remember=False))
 
     def action_allow_always(self) -> None:
-        """Allow and remember a scoped grant for matching calls this session."""
+        """Allow and remember a scoped grant for matching calls this session.
+
+        Inert for an ungrantable call (a contract amendment): the `[a]` binding is
+        class-level, so the guard lives here rather than in the (static) bindings list.
+        """
+        if not self._grantable:
+            return
         self.dismiss(ApprovalChoice(allow=True, remember=True))
 
     def action_deny(self) -> None:
@@ -218,7 +242,9 @@ class DiffModal(ModalScreen[None]):
             The scrollable diff body.
         """
         with VerticalScroll(id="diff_body"):
-            yield Static(self.diff_text or "(no changes)")
+            # markup=False: a diff routinely contains `[` (list literals, regexes, array indexing),
+            # which Rich would parse as markup and crash the viewer — show it verbatim.
+            yield Static(self.diff_text or "(no changes)", markup=False)
 
     def action_close(self) -> None:
         """Dismiss the viewer (no decision)."""

@@ -1,0 +1,76 @@
+id = "tetris-easy"
+guards = "single-shot TUI build graded by human-like keypress simulation — arrow-key input decoding, differential rendered-frame assertions, README-grounded contract (hermetic adaptation: the probe drives the pinned --no-raw scripted mode over stdin/stdout and scans the same frames a human sees; no model-provided state hooks — see docs/research/2026-07-11-tetris-tui-eval-development.md)"
+# The single-shot successor to the interactive ASCII-Tetris dogfood runs (tetris_glm /
+# tetris_grok*, the journals behind ADR-0038/0044-0049). Everything the probe relies on —
+# input bytes, frame format, glyphs, scoring, spawn shapes, rotation rule, 7-bag RNG — is
+# pinned HERE, in the goal, so grading never depends on anything the agent authors: the
+# README is a graded artifact, not the grading input, and the rendered UI is the only
+# grading surface (contract rationale + design record:
+# docs/research/2026-07-11-tetris-tui-eval-development.md; probe validity: golden + counter-example
+# tests in tests/test_evals.py). The scripted --no-raw mode is the established dogfood
+# idiom for driving a TUI headlessly; turn-based determinism plus the seeded bag is what
+# makes movement, rotation, scoring, and line-clear behavior exactly assertable.
+goal = """Build a playable ASCII Tetris game in a single file named `tetris.py`, using only \
+the Python standard library, plus a `README.md` documenting it. The game has two modes:
+
+Interactive mode — `python3 tetris.py` — a real-time terminal game: Left/Right arrows move \
+the falling piece, Up rotates it, Down soft-drops, space hard-drops, `q` quits promptly, and \
+gravity runs on a timer. It must be genuinely playable on a real terminal: every board row \
+must start at the same screen column (no diagonal drift), in whatever terminal mode the \
+implementation chooses.
+
+Scripted mode — `python3 tetris.py --no-raw --seed <int>` — the same game, turn-based and \
+fully deterministic, so it can be driven programmatically over stdin/stdout (e.g. \
+`printf 'q' | python3 tetris.py --no-raw`) and every rendered frame inspected. Scripted \
+mode must follow this contract exactly:
+
+- Input: read raw key bytes from stdin — Left is `ESC [ D` (bytes `\\x1b[D`), Right \
+`ESC [ C`, Down `ESC [ B`, Up `ESC [ A`, hard drop is the space byte, quit is `q`. Every \
+other byte (including newlines) is ignored and renders nothing. EOF on stdin, or `q`, \
+exits with code 0.
+- Turn-based: no timers. Gravity advances only through Down (soft drop, one row) and \
+space (hard drop). A blocked move or rotation is a no-op — in scripted mode only a hard \
+drop locks the piece.
+- Output: render one frame at startup and one after every recognized key (no-ops \
+included), flushing stdout each time. Process keys as they arrive — do not read stdin to \
+EOF first: the frame for a key must be written and flushed before the next key is read, \
+so a driver that holds stdin open sees each response immediately. A frame is exactly \
+these lines: `Score: <n>`, \
+`Lines: <n>`, `Next: <letter>`, then the playfield — 20 rows of 10 cells between \
+`+----------+` border lines, each row `|` plus 10 cell characters plus `|`, where `.` is \
+empty, `#` is locked, and `@` is the falling piece — then the sentinel line \
+`-- end frame --`. When a new piece cannot spawn, print `GAME OVER` on its own line after \
+the final frame and exit 0.
+- Pieces: the 7 standard tetrominoes, spawned near the top center in these exact \
+orientations, given as (row, column) cell offsets with row 0 on top — I: (0,0)(0,1)(0,2)\
+(0,3); O: (0,0)(0,1)(1,0)(1,1); T: (0,1)(1,0)(1,1)(1,2); S: (0,1)(0,2)(1,0)(1,1); Z: \
+(0,0)(0,1)(1,1)(1,2); J: (0,0)(1,0)(1,1)(1,2); L: (0,2)(1,0)(1,1)(1,2). Rotation (Up) \
+replaces the piece's normalized cell set with its clockwise rotation — (row, col) maps to \
+(col, maxRow - row), re-normalized — anchored at the piece's current bounding-box \
+top-left; no wall kicks: a rotation that would collide or leave the field is a no-op.
+- Randomizer: 7-bag — `random.Random(seed)` shuffles a fresh `["I","J","L","O","S","T",\
+"Z"]` bag each time the bag empties, and pieces are drawn from it in order. `--seed` \
+defaults to 0; the `Next:` line always previews the following draw.
+- Scoring: +1 point per soft-dropped row, +2 per hard-dropped row, and 100/300/500/800 \
+points for clearing 1/2/3/4 lines at once. Cleared rows vanish, rows above shift down, \
+and `Lines:` counts total cleared rows.
+
+`README.md` must document, at minimum: both run commands, the full key table (arrow keys, \
+space, `q`), the scripted-mode frame format including the `-- end frame --` sentinel and \
+the `.`/`#`/`@` glyphs, the scoring table, the 10 x 20 board size, the 7-bag \
+`random.Random(seed)` randomizer, and the quit / GAME OVER behavior."""
+task_kind = "edit"
+fixture = "empty"
+success_probe = "python evals/probes/tetris_easy_smoke.py tetris.py"
+# Nine sequential game launches (seven batch phases, one interactive packing plan, one pty
+# presentation capture), all local subprocesses — generous headroom over the observed ~5 s
+# golden runtime. A pathologically-slow-but-correct game could in principle stack the
+# per-phase deadlines past this total; in practice healthy games answer in milliseconds and
+# the per-phase deadlines exist to make hangs fail with a legible per-phase reason first.
+probe_timeout_seconds = 300
+
+[budgets]
+# A build task with an exacting rendering/input contract: comparable scope to
+# ecommerce-portal's single-file build, but no concurrency — fewer iterations suffice.
+max_iterations = 40
+max_wall_clock_seconds = 1200

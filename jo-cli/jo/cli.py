@@ -49,7 +49,8 @@ def main(
     parser.add_argument(
         "--auto",
         action="store_true",
-        help="Keep the strict §12 verification gate (default: conversational — the human decides).",
+        help="Strict gate: repair exhaustion is 'failed' (default: conversational — the verifier "
+        "steers, then defers to you at exhaustion).",
     )
     parser.add_argument(
         "--log",
@@ -63,7 +64,15 @@ def main(
     )
     args = parser.parse_args(argv)
 
-    config = config or HarnessConfig()
+    if config is None:
+        config = HarnessConfig()
+        # The cockpit is attended: Ctrl-C is an instant hard-cancel and `max_iterations` bounds a
+        # runaway, so the per-run wall-clock guillotine is off by default here — it used to
+        # terminate in-progress builds as `incomplete` mid-work. An explicit
+        # AVATAR_MAX_WALL_CLOCK_SECONDS still wins for anyone who wants a cap — keyed on
+        # `model_fields_set` (not os.environ) so a `.env`-sourced cap counts too (PR-#106 review).
+        if "max_wall_clock_seconds" not in config.model_fields_set:
+            config.max_wall_clock_seconds = None
     session_id = uuid4().hex
     log_path = resolve_log_path(args.log, session_id)
     config.log_path = str(log_path)  # hide the harness's own journal from the agent's file tools

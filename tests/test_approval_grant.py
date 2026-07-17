@@ -28,6 +28,7 @@ from avatar.state import TaskState
 from avatar.tools.base import ToolRegistry
 from avatar.tools.commands import run_command
 from avatar.tools.filesystem import read_file
+from avatar.tools.verification import alter_verification
 from avatar.verifier import Verifier
 from avatar.workspace import Workspace
 
@@ -159,3 +160,50 @@ def test_grant_never_covers_higher_tier():
     assert not ApprovalGrant(tool="run_command", prefix="", tier=3).matches(
         "run_command", "", 3
     )  # empty prefix is never a global grant
+
+
+# --- contract amendments are never grantable (ADR-0038/0039) -----------------------------
+
+
+def _amendment_session(tmp_path, grants: list[ApprovalGrant]) -> Session:
+    """A session with `alter_verification` registered (tier 3) and an injected grant list."""
+    reg = ToolRegistry()
+    reg.register(run_command)
+    reg.register(alter_verification)
+    runner = AgentRunner(
+        model_client=ScriptedModel([ModelDecision(action=FinalAnswer(answer="done"))]),
+        registry=reg,
+        deps=_deps(tmp_path),
+        context_builder=ContextBuilder(),
+        verifier=Verifier(HarnessConfig()),
+        emitter=Emitter(),
+        config=HarnessConfig(),
+    )
+    return Session(runner, TaskState(goal="amend", task_kind="edit", phase="editing"), grants=grants)
+
+
+async def test_remember_on_an_amendment_stores_no_grant(tmp_path):
+    # `[a] always` on an alter_verification approval must degrade to allow-once: a standing
+    # grant would let the model re-move its own goalposts silently for the rest of the
+    # session. The amendment itself is allowed; no grant lands in the session list.
+    grants: list[ApprovalGrant] = []
+    session = _amendment_session(tmp_path, grants)
+    decision = asyncio.create_task(
+        session.request_approval(
+            "ap-1",
+            "alter_verification",
+            "amend the contract",
+            {"checks": [{"command": "python -m pytest test_y.py"}], "rationale": "r"},
+        )
+    )
+    await asyncio.sleep(0.01)  # let the request register as pending
+    await session.resolve_approval("ap-1", allow=True, remember=True)
+    assert await decision is True  # this one amendment is allowed...
+    assert grants == []  # ...but nothing standing was stored
+
+
+async def test_amendment_grant_never_matches_even_if_present():
+    # Belt-and-braces beneath the storage guard: even a hand-built (or replayed/persisted)
+    # amendment grant must never auto-allow — every amendment is ratified by a human.
+    grant = ApprovalGrant(tool="alter_verification", prefix="alter_verification", tier=3)
+    assert not grant.matches("alter_verification", "alter_verification", 3)

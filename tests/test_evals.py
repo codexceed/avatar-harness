@@ -8,6 +8,8 @@ See docs/eval-harness-design.md.
 import json
 import math
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -548,8 +550,14 @@ def test_run_task_provisions_under_workspace_root(tmp_path):
         ),
         ModelDecision(action=FinalAnswer(answer="done")),
     ]
+    # Gate off (ADR-0038): the scripted model doesn't declare a contract; this test isolates
+    # provisioning, not the greenfield declaration gate.
     row = run_task(
-        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+        spec,
+        config=HarnessConfig(max_declaration_nudges=0),
+        model_client=ScriptedModel(decisions),
+        seed=0,
+        workspace_root=run_dir,
     )
     assert row.workspace is not None
     assert Path(row.workspace).parent == run_dir  # provisioned UNDER the run workspace
@@ -808,6 +816,10 @@ def test_mcnemar_pairs_only_shared_keys():
 # --- J. the remaining single-turn tasks: specs load + probes work (Slice 2) ----
 
 _PROBES = Path(__file__).resolve().parent.parent / "evals" / "probes"
+# Golden reference apps + variants: test DATA executed by probes in scratch repos
+# (gate-excluded like evals/fixtures), not code the suite maintains. Surgical counter-
+# example markers stay below, asserted-in before every replace so drift fails loud.
+_GOLDENS = Path(__file__).resolve().parent / "goldens"
 _TASKS = Path(__file__).resolve().parent.parent / "evals" / "tasks"
 
 
@@ -857,169 +869,7 @@ _APIKEY_PARAM = ', "apikey": os.environ.get("NEWS_API_KEY", "")'
 # A reference solution for `news-analyzer` (stdlib server/db + env-driven openai client, the
 # server-rendered UI, documented + fail-fast config, legible degraded-news error): the probe
 # must pass it — proof the task is achievable exactly as the goal pins it.
-_GOLDEN_NEWS_APP = (
-    "'''News analyzer — search news, get an AI summary + sentiment, stored in SQLite.\n\n"
-    + _CONFIG_DOCS_MARKER
-    + "'''\n"
-    + """
-import html
-import json
-import os
-import sqlite3
-import sys
-import urllib.parse
-import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-from openai import OpenAI
-
-_DB = "news.db"
-
-_SEARCH_FORM = (
-    '<form action="/search" method="get">'
-    '<input type="text" name="q" placeholder="Search news"><button>Search</button></form>'
-)
-
-
-def _db():
-    conn = sqlite3.connect(_DB)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS analyses "
-        "(id INTEGER PRIMARY KEY, title TEXT, url TEXT, summary TEXT, sentiment TEXT)"
-    )
-    return conn
-
-
-def _fetch_articles(q):
-    params = urllib.parse.urlencode({"q": q, "apikey": os.environ.get("NEWS_API_KEY", "")})
-    url = os.environ["NEWS_API_URL"] + "?" + params
-    with urllib.request.urlopen(url, timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8")).get("articles", [])
-
-
-def _analyze(article):
-    prompt = (
-        "Reply with a JSON object with exactly two keys: 'summary' (a short string) and "
-        "'sentiment' (one of positive, neutral, negative) for this article:\\n"
-        + json.dumps(article)
-    )
-    reply = OpenAI().chat.completions.create(
-        model="gpt-4.1-nano", messages=[{"role": "user", "content": prompt}]
-    )
-    parsed = json.loads(reply.choices[0].message.content)
-    return parsed["summary"], parsed["sentiment"]
-
-
-def _store(title, url, summary, sentiment):
-    conn = _db()
-    conn.execute(
-        "INSERT INTO analyses (title, url, summary, sentiment) VALUES (?, ?, ?, ?)",
-        (title, url, summary, sentiment),
-    )
-    conn.commit()
-
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def _send(self, code, body, ctype="application/json"):
-        data = body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _home_page(self):
-        rows = _db().execute("SELECT title, summary, sentiment FROM analyses").fetchall()
-        items = "".join(
-            f"<li>{html.escape(t)}: {html.escape(s)} ({html.escape(sent)})</li>"
-            for t, s, sent in rows
-        )
-        return (
-            "<html><body><h1>News analyzer</h1>"
-            f"{_SEARCH_FORM}<h2>Analyses</h2><ul>{items}</ul></body></html>"
-        )
-
-    def _search_page(self, q):
-        try:
-            articles = _fetch_articles(q)
-        except (ValueError, OSError):
-            return (
-                "<html><body><p>Could not reach the news API — check the "
-                "NEWS_API_URL configuration.</p></body></html>"
-            )
-        items = []
-        for a in articles:
-            fields = "".join(
-                f'<input type="hidden" name="{k}" value="{html.escape(a.get(k, ""))}">'
-                for k in ("title", "url", "content")
-            )
-            items.append(
-                f'<li>{html.escape(a.get("title", ""))}'
-                f'<form action="/analyze" method="post">{fields}'
-                "<button>Analyze</button></form></li>"
-            )
-        return f"<html><body>{_SEARCH_FORM}<ul>{''.join(items)}</ul></body></html>"
-
-    def do_GET(self):
-        parts = urllib.parse.urlparse(self.path)
-        q = urllib.parse.parse_qs(parts.query).get("q", [""])[0]
-        if parts.path == "/api/articles":
-            try:
-                self._send(200, json.dumps(_fetch_articles(q)))
-            except (ValueError, OSError):
-                self._send(502, json.dumps({"error": "news API unreachable or invalid (NEWS_API_URL)"}))
-        elif parts.path == "/api/analyses":
-            rows = _db().execute("SELECT title, url, summary, sentiment FROM analyses").fetchall()
-            keys = ("title", "url", "summary", "sentiment")
-            self._send(200, json.dumps([dict(zip(keys, r)) for r in rows]))
-        elif parts.path == "/search":
-            self._send(200, self._search_page(q), "text/html")
-        elif parts.path == "/":
-            self._send(200, self._home_page(), "text/html")
-        else:
-            self._send(404, json.dumps({"error": "not found"}))
-
-    def do_POST(self):
-        raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)).decode("utf-8")
-        if self.path == "/api/analyses":
-            try:
-                body = json.loads(raw)
-            except ValueError:
-                self._send(400, json.dumps({"error": "bad request"}))
-                return
-            summary, sentiment = _analyze(body)
-            _store(body.get("title", ""), body.get("url", ""), summary, sentiment)
-            record = {
-                "title": body.get("title", ""),
-                "url": body.get("url", ""),
-                "summary": summary,
-                "sentiment": sentiment,
-            }
-            self._send(201, json.dumps(record))
-        elif self.path == "/analyze":
-            fields = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
-            summary, sentiment = _analyze(fields)
-            _store(fields.get("title", ""), fields.get("url", ""), summary, sentiment)
-            self.send_response(303)
-            self.send_header("Location", "/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-        else:
-            self._send(404, json.dumps({"error": "not found"}))
-
-
-if __name__ == "__main__":
-    for _required in ("NEWS_API_URL", "NEWS_API_KEY"):
-        if not os.environ.get(_required):
-            sys.stderr.write("error: " + _required + " is required\\n")
-            sys.exit(2)
-    port = int(os.environ.get("PORT", "8000"))
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
-"""
-)
+_GOLDEN_NEWS_APP = (_GOLDENS / "golden_news_app.py").read_text(encoding="utf-8")
 
 # The pre-UI shape: a correct JSON API plus a read-only listing page, but no operable UI —
 # no search form, no per-article analyze action. Config docs + fail-fast are grafted on so
@@ -1315,8 +1165,14 @@ def test_run_task_with_probe_scores_via_probe(tmp_path):
         ModelDecision(action=ToolCall(name="write_file", input={"path": "chatbot.py", "content": chatbot})),
         ModelDecision(action=FinalAnswer(answer="done")),
     ]
+    # Gate off (ADR-0038): the scripted model doesn't declare a contract; this test isolates
+    # probe scoring, not the greenfield declaration gate.
     row = run_task(
-        spec, config=HarnessConfig(), model_client=ScriptedModel(decisions), seed=0, workspace_root=run_dir
+        spec,
+        config=HarnessConfig(max_declaration_nudges=0),
+        model_client=ScriptedModel(decisions),
+        seed=0,
+        workspace_root=run_dir,
     )
     assert row.solved is True and row.probe_exit == 0
     assert row.workspace is not None and Path(row.workspace).parent == run_dir
@@ -1495,483 +1351,7 @@ _SHOP_FIXTURE = (
     Path(__file__).resolve().parent.parent / "evals" / "fixtures" / "ecommerce-portal" / "products.json"
 )
 
-_GOLDEN_SHOP_APP = r'''
-"""Golden reference portal for probe validation — stdlib only, per the task contract.
-
-Configuration: PORT (optional, default 8000); PAYMENT_API_URL (required, fail-fast).
-"""
-
-import html
-import json
-import os
-import queue
-import re
-import sqlite3
-import sys
-import threading
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-
-DB_PATH = "shop.db"
-PAYMENT_API_URL = os.environ.get("PAYMENT_API_URL", "")
-
-ORDER_QUEUE: "queue.Queue[int]" = queue.Queue()
-_VERSION_LOCK = threading.Lock()
-_INVENTORY_VERSION = 0
-_CACHE: dict[tuple[str, int], list[dict]] = {}
-_CACHE_LOCK = threading.Lock()
-
-
-def bump_version() -> None:
-    global _INVENTORY_VERSION
-    with _VERSION_LOCK:
-        _INVENTORY_VERSION += 1
-
-
-def current_version() -> int:
-    with _VERSION_LOCK:
-        return _INVENTORY_VERSION
-
-
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=15)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=15000")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db() -> None:
-    conn = connect()
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS products(
-            id TEXT PRIMARY KEY, title TEXT, description TEXT, cost REAL, inventory INTEGER);
-        CREATE TABLE IF NOT EXISTS carts(user_id TEXT, product_id TEXT, quantity INTEGER);
-        CREATE TABLE IF NOT EXISTS orders(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, product_id TEXT,
-            quantity INTEGER, amount REAL, status TEXT);
-        """
-    )
-    if conn.execute("SELECT COUNT(*) AS c FROM products").fetchone()["c"] == 0:
-        rows = json.loads(Path("products.json").read_text(encoding="utf-8"))
-        conn.executemany(
-            "INSERT INTO products VALUES(?,?,?,?,?)",
-            [(r["id"], r["title"], r["description"], r["cost"], r["inventory"]) for r in rows],
-        )
-    conn.commit()
-    # Recover orders that were mid-pipeline when the last process stopped.
-    live = "SELECT id FROM orders WHERE status IN ('pending','processing')"
-    stranded = [r["id"] for r in conn.execute(live)]
-    conn.close()
-    for order_id in stranded:
-        ORDER_QUEUE.put(order_id)
-
-
-def process_order(order_id: int) -> None:
-    conn = connect()
-    row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
-    if row is None or row["status"] not in ("pending", "processing"):
-        conn.close()
-        return
-    conn.execute("UPDATE orders SET status='processing' WHERE id=?", (order_id,))
-    conn.commit()
-    payload = json.dumps(
-        {
-            "order_id": order_id,
-            "user_id": row["user_id"],
-            "product_id": row["product_id"],
-            "quantity": row["quantity"],
-            "amount": row["amount"],
-        }
-    ).encode("utf-8")
-    ok = False
-    for attempt in range(5):  # RETRY-BUDGET: up to 5 attempts before the order fails
-        try:
-            req = urllib.request.Request(
-                PAYMENT_API_URL, data=payload, headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                ok = resp.status == 200
-        except urllib.error.HTTPError:
-            ok = False  # transient 503 from the processor
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
-            ok = False
-        if ok:
-            break
-        time.sleep(0.2)
-    if ok:
-        conn.execute("UPDATE orders SET status='completed' WHERE id=?", (order_id,))
-        conn.commit()
-    else:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("UPDATE orders SET status='failed' WHERE id=?", (order_id,))
-        conn.execute(
-            "UPDATE products SET inventory = inventory + ? WHERE id=?",
-            (row["quantity"], row["product_id"]),
-        )
-        conn.commit()
-        bump_version()
-    conn.close()
-
-
-def worker_loop() -> None:
-    while True:
-        order_id = ORDER_QUEUE.get()
-        try:
-            process_order(order_id)
-        except Exception:
-            pass
-
-
-def search_products(q: str) -> tuple[list[dict], bool]:
-    """In-stock substring matches for q; returns (rows, was_cache_hit)."""
-    key = (q.strip().lower(), current_version())  # CACHE-KEY: stock version scopes every entry
-    with _CACHE_LOCK:
-        if key in _CACHE:
-            return _CACHE[key], True
-    conn = connect()
-    like = f"%{key[0]}%"
-    rows = [
-        dict(r)
-        for r in conn.execute(
-            "SELECT * FROM products WHERE inventory > 0 AND "
-            "(LOWER(title) LIKE ? OR LOWER(description) LIKE ?)",
-            (like, like),
-        )
-    ]
-    conn.close()
-    with _CACHE_LOCK:
-        _CACHE[key] = rows
-    return rows, False
-
-
-def checkout(user_id: str) -> tuple[bool, list[int] | dict]:
-    """Atomically reserve the whole cart; (True, order_ids) or (False, offending product)."""
-    conn = connect()
-    conn.execute("BEGIN IMMEDIATE")  # ATOMIC-RESERVE: one write txn covers check + decrement
-    lines = conn.execute(
-        "SELECT product_id, SUM(quantity) AS q FROM carts WHERE user_id=? GROUP BY product_id",
-        (user_id,),
-    ).fetchall()
-    if not lines:
-        conn.rollback()
-        conn.close()
-        return False, {"error": "cart is empty"}
-    for line in lines:
-        product = conn.execute("SELECT * FROM products WHERE id=?", (line["product_id"],)).fetchone()
-        if product is None or product["inventory"] < line["q"]:
-            conn.rollback()
-            conn.close()
-            return False, dict(product) if product else {"id": line["product_id"], "title": "unknown"}
-    order_ids: list[int] = []
-    for line in lines:
-        product = conn.execute("SELECT * FROM products WHERE id=?", (line["product_id"],)).fetchone()
-        conn.execute(
-            "UPDATE products SET inventory = inventory - ? WHERE id=?", (line["q"], line["product_id"])
-        )
-        cur = conn.execute(
-            "INSERT INTO orders(user_id, product_id, quantity, amount, status) VALUES(?,?,?,?,'pending')",
-            (user_id, line["product_id"], line["q"], product["cost"] * line["q"]),
-        )
-        order_ids.append(cur.lastrowid)
-    conn.execute("DELETE FROM carts WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-    bump_version()
-    for order_id in order_ids:
-        ORDER_QUEUE.put(order_id)  # ASYNC-HANDOFF: workers process; the request returns now
-    return True, order_ids
-
-
-def cancel_order(user_id: str, order_id: int) -> tuple[int, dict]:
-    conn = connect()
-    conn.execute("BEGIN IMMEDIATE")
-    row = conn.execute(
-        "SELECT * FROM orders WHERE id=? AND user_id=?", (order_id, user_id)
-    ).fetchone()
-    if row is None:
-        conn.rollback()
-        conn.close()
-        return 404, {"error": "no such order"}
-    if row["status"] != "completed":
-        conn.rollback()
-        conn.close()
-        return 409, {"error": f"only completed orders can be cancelled (status: {row['status']})"}
-    conn.execute("UPDATE orders SET status='cancelled' WHERE id=?", (order_id,))
-    conn.execute(
-        "UPDATE products SET inventory = inventory + ? WHERE id=?", (row["quantity"], row["product_id"])
-    )
-    conn.commit()
-    conn.close()
-    bump_version()
-    return 200, {"ok": True, "order_id": order_id}
-
-
-def page(title: str, body: str) -> str:
-    return f"<!doctype html><html><head><title>{html.escape(title)}</title></head><body>{body}</body></html>"
-
-
-def product_forms(rows: list[dict]) -> str:
-    parts = []
-    for r in rows:
-        parts.append(
-            f"<li>{html.escape(r['title'])} — ${r['cost']} ({r['inventory']} in stock)"
-            f"<form action='/cart/add' method='post'>"
-            f"<input name='user_id' placeholder='user id'>"
-            f"<input type='hidden' name='product_id' value='{r['id']}'>"
-            f"<button type='submit'>Add to cart</button></form></li>"
-        )
-    return "<ul>" + "".join(parts) + "</ul>"
-
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:
-        pass
-
-    # ---- plumbing -------------------------------------------------------------
-    def _send(self, code: int, body: str, ctype: str, extra: dict | None = None) -> None:
-        data = body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        for k, v in (extra or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _html(self, code: int, body: str) -> None:
-        self._send(code, body, "text/html; charset=utf-8")
-
-    def _json(self, code: int, payload: object, extra: dict | None = None) -> None:
-        self._send(code, json.dumps(payload), "application/json", extra)
-
-    def _redirect(self, location: str) -> None:
-        self.send_response(303)
-        self.send_header("Location", location)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def _body(self) -> bytes:
-        return self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
-
-    def _form(self) -> dict[str, str]:
-        parsed = urllib.parse.parse_qs(self._body().decode("utf-8", errors="replace"))
-        return {k: v[0] for k, v in parsed.items()}
-
-    def _json_body(self) -> dict | None:
-        try:
-            parsed = json.loads(self._body().decode("utf-8", errors="replace"))
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-
-    # ---- GET ------------------------------------------------------------------
-    def do_GET(self) -> None:
-        parts = urllib.parse.urlparse(self.path)
-        params = {k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()}
-        route = parts.path
-        try:
-            if route == "/":
-                conn = connect()
-                rows = [dict(r) for r in conn.execute("SELECT * FROM products WHERE inventory > 0")]
-                conn.close()
-                self._html(
-                    200,
-                    page(
-                        "Shop",
-                        "<form action='/search' method='get'><input name='q'>"
-                        "<button type='submit'>Search</button></form>" + product_forms(rows),
-                    ),
-                )
-            elif route == "/search":
-                rows, _ = search_products(params.get("q", ""))
-                self._html(200, page("Search", product_forms(rows)))
-            elif route == "/cart":
-                user = params.get("user_id", "")
-                conn = connect()
-                lines = conn.execute(
-                    "SELECT c.product_id, SUM(c.quantity) AS q, p.title FROM carts c "
-                    "JOIN products p ON p.id=c.product_id WHERE c.user_id=? GROUP BY c.product_id",
-                    (user,),
-                ).fetchall()
-                conn.close()
-                items = "".join(f"<li>{html.escape(r['title'])} x {r['q']}</li>" for r in lines)
-                self._html(
-                    200,
-                    page(
-                        "Cart",
-                        f"<ul>{items}</ul><form action='/checkout' method='post'>"
-                        f"<input type='hidden' name='user_id' value='{html.escape(user)}'>"
-                        f"<button type='submit'>Checkout</button></form>",
-                    ),
-                )
-            elif route == "/orders":
-                user = params.get("user_id", "")
-                conn = connect()
-                rows = conn.execute(
-                    "SELECT o.*, p.title FROM orders o JOIN products p ON p.id=o.product_id "
-                    "WHERE o.user_id=? ORDER BY o.id",
-                    (user,),
-                ).fetchall()
-                conn.close()
-                items = []
-                for r in rows:
-                    cancel = ""
-                    if r["status"] == "completed":
-                        cancel = (
-                            f"<form action='/orders/cancel' method='post'>"
-                            f"<input type='hidden' name='user_id' value='{html.escape(user)}'>"
-                            f"<input type='hidden' name='order_id' value='{r['id']}'>"
-                            f"<button type='submit'>Cancel</button></form>"
-                        )
-                    items.append(
-                        f"<li>{html.escape(r['title'])} x {r['quantity']} — {r['status']}{cancel}</li>"
-                    )
-                self._html(200, page("Orders", "<ul>" + "".join(items) + "</ul>"))
-            elif route == "/api/products":
-                conn = connect()
-                rows = [dict(r) for r in conn.execute("SELECT * FROM products")]
-                conn.close()
-                self._json(200, rows)
-            elif re.fullmatch(r"/api/products/[^/]+", route):
-                conn = connect()
-                row = conn.execute("SELECT * FROM products WHERE id=?", (route.rsplit("/", 1)[1],)).fetchone()
-                conn.close()
-                if row is None:
-                    self._json(404, {"error": "no such product"})
-                else:
-                    self._json(200, dict(row))
-            elif route == "/api/search":
-                rows, hit = search_products(params.get("q", ""))
-                self._json(200, rows, {"X-Cache": "hit" if hit else "miss"})  # CACHE-HEADER
-            elif route == "/api/orders":
-                user = params.get("user_id", "")
-                conn = connect()
-                q = "SELECT * FROM orders WHERE user_id=? ORDER BY id"
-                rows = [dict(r) for r in conn.execute(q, (user,))]
-                conn.close()
-                self._json(200, rows)
-            elif route == "/api/metrics":
-                conn = connect()
-                sold = conn.execute(
-                    "SELECT COALESCE(SUM(quantity),0) AS q, COALESCE(SUM(amount),0) AS a "
-                    "FROM orders WHERE status='completed'"
-                ).fetchone()
-                by_status = {
-                    r["status"]: r["c"]
-                    for r in conn.execute("SELECT status, COUNT(*) AS c FROM orders GROUP BY status")
-                }
-                conn.close()
-                self._json(
-                    200,
-                    {"units_sold": sold["q"], "revenue": sold["a"], "orders_by_status": by_status},
-                )
-            else:
-                self._html(404, page("Not found", "<p>not found</p>"))
-        except Exception as exc:  # keep the server alive; a route bug must not wedge the portal
-            self._html(500, page("Error", f"<p>internal error: {html.escape(str(exc))}</p>"))
-
-    # ---- POST -----------------------------------------------------------------
-    def do_POST(self) -> None:
-        route = urllib.parse.urlparse(self.path).path
-        try:
-            if route == "/cart/add":
-                form = self._form()
-                user, product = form.get("user_id", ""), form.get("product_id", "")
-                if not user or not self._add_to_cart(user, product):
-                    self._html(400, page("Error", "<p>user_id and a known product_id are required</p>"))
-                    return
-                self._redirect(f"/cart?user_id={urllib.parse.quote(user)}")
-            elif route == "/checkout":
-                user = self._form().get("user_id", "")
-                ok, result = checkout(user)
-                if ok:
-                    self._redirect(f"/orders?user_id={urllib.parse.quote(user)}")
-                else:
-                    name = html.escape(str(result.get("title", result.get("id", "item"))))
-                    pid = html.escape(str(result.get("id", "")))
-                    self._html(
-                        409,
-                        page("Out of stock", f"<p>Sorry — {name} ({pid}) is out of stock.</p>"),
-                    )
-            elif route == "/orders/cancel":
-                form = self._form()
-                try:
-                    order_id = int(form.get("order_id", ""))
-                except ValueError:
-                    self._html(400, page("Error", "<p>order_id must be an integer</p>"))
-                    return
-                code, payload = cancel_order(form.get("user_id", ""), order_id)
-                if code == 200:
-                    self._redirect(f"/orders?user_id={urllib.parse.quote(form.get('user_id', ''))}")
-                else:
-                    self._html(code, page("Cannot cancel", f"<p>{html.escape(payload['error'])}</p>"))
-            elif route == "/api/cart/add":
-                body = self._json_body()
-                if not body or not body.get("user_id") or not body.get("product_id"):
-                    self._json(400, {"error": "user_id and product_id are required"})
-                    return
-                if not self._add_to_cart(str(body["user_id"]), str(body["product_id"])):
-                    self._json(404, {"error": "no such product"})
-                    return
-                self._json(201, {"ok": True})
-            elif route == "/api/checkout":
-                body = self._json_body()
-                if not body or not body.get("user_id"):
-                    self._json(400, {"error": "user_id is required"})
-                    return
-                ok, result = checkout(str(body["user_id"]))
-                if ok:
-                    self._json(201, {"order_ids": result})
-                else:
-                    self._json(
-                        409,
-                        {"error": "out of stock", "product": result.get("id"), "title": result.get("title")},
-                    )
-            elif re.fullmatch(r"/api/orders/\d+/cancel", route):
-                body = self._json_body()
-                if not body or not body.get("user_id"):
-                    self._json(400, {"error": "user_id is required"})
-                    return
-                order_id = int(route.split("/")[3])
-                code, payload = cancel_order(str(body["user_id"]), order_id)
-                self._json(code, payload)
-            else:
-                self._json(404, {"error": "not found"})
-        except Exception as exc:
-            self._json(500, {"error": f"internal error: {exc}"})
-
-    def _add_to_cart(self, user: str, product: str) -> bool:
-        conn = connect()
-        known = conn.execute("SELECT 1 FROM products WHERE id=?", (product,)).fetchone()
-        if known is None:
-            conn.close()
-            return False
-        conn.execute("INSERT INTO carts(user_id, product_id, quantity) VALUES(?,?,1)", (user, product))
-        conn.commit()
-        conn.close()
-        return True
-
-
-def main() -> None:
-    if not PAYMENT_API_URL:
-        sys.stderr.write("error: PAYMENT_API_URL is required\n")
-        sys.exit(2)
-    init_db()
-    for _ in range(8):
-        threading.Thread(target=worker_loop, daemon=True).start()
-    port = int(os.environ.get("PORT", "8000"))
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
-
-
-if __name__ == "__main__":
-    main()
-'''
+_GOLDEN_SHOP_APP = (_GOLDENS / "golden_shop_portal.py").read_text(encoding="utf-8")
 
 
 def _shop_repo(tmp_path, name, source):
@@ -2070,7 +1450,360 @@ def test_median_wall_clock_ignores_missing():
 
 
 def test_bundled_pricing_covers_the_tracked_models():
-    # The shared source of truth the dashboard also reads; must price the matrix models.
+    # The shared source of truth the dashboard also reads; must price every model in the
+    # PINNED matrix set (Makefile MATRIX_MODELS) or `make eval-matrix` cost columns render
+    # "—" and the grand total silently under-reports.
     p = load_pricing()
-    for m in ("openai/gpt-5.3-codex", "openai/gpt-oss-120b", "deepseek/deepseek-v4-pro"):
+    for m in ("x-ai/grok-4.5", "openai/gpt-oss-120b", "openai/gpt-5.6-sol", "z-ai/glm-5.2"):
         assert p[m]["prompt"] > 0 and p[m]["completion"] > 0
+
+
+# --- M. tetris-easy (formerly tetris-tui) probe: golden game + counter-examples -------
+# (design record: docs/research/2026-07-11-tetris-tui-eval-development.md)
+
+# Exact substrings of the golden game, mutated surgically by tests to derive counter-examples
+# (containment is asserted before each replace, so drift fails loud).
+_TETRIS_MOVE_LEFT_MARKER = "game.move(0, -1)"
+_TETRIS_ROTATE_MARKER = 'elif key == "UP":\n            game.rotate()'
+_TETRIS_SCORE_MARKER = 'f"Score: {self.score}"'
+_TETRIS_CLEAR_MARKER = "        self._clear_full_rows()\n"
+_TETRIS_RNG_MARKER = "random.Random(seed)"
+_TETRIS_STREAM_MARKER = "    stream = sys.stdin.buffer\n"
+_TETRIS_CURSES_MARKER = "    curses.wrapper(loop)\n    return 0\n"
+
+# A reference solution for `tetris-easy` (stdlib-only, both modes, the pinned scripted-mode
+# contract: ANSI arrow bytes, turn-based gravity, exact frame layout + sentinel, 7-bag RNG,
+# guideline scoring): the probe must pass it — proof the task is achievable exactly as the
+# goal pins it. Embedded raw so the \x1b escape-sequence literals survive verbatim.
+_GOLDEN_TETRIS = (_GOLDENS / "golden_tetris.py").read_text(encoding="utf-8")
+
+# A README documenting the pinned contract (what the goal requires the agent to write).
+_GOLDEN_TETRIS_README = (_GOLDENS / "golden_tetris_README.md").read_text(encoding="utf-8")
+
+# A hook-style cheat: renders the GENUINE seed-42 initial frame (so it survives the boot
+# phase) but never simulates state — every key echoes the same static frame. The probe's
+# differential movement assertions must kill it: this is the counter-example for "scan the
+# rendered UI, don't trust a renderer that isn't backed by game state".
+_CANNED_TETRIS = (_GOLDENS / "canned_tetris.py").read_text(encoding="utf-8")
+
+
+def _tetris_repo(tmp_path, name, source, readme: str | None = _GOLDEN_TETRIS_README):
+    """A scratch dir shaped like a provisioned tetris repo (game + README)."""
+    repo = tmp_path / name
+    repo.mkdir()
+    (repo / "tetris.py").write_text(source, encoding="utf-8")
+    if readme is not None:
+        (repo / "README.md").write_text(readme, encoding="utf-8")
+    return repo
+
+
+def test_tetris_task_spec_loads_and_points_at_probe():
+    spec = load_task_spec(Path(__file__).resolve().parent.parent / "evals" / "tasks" / "tetris-easy.toml")
+    assert spec.id == "tetris-easy"
+    assert spec.task_kind == "edit"
+    assert spec.success_probe == "python evals/probes/tetris_easy_smoke.py tetris.py"
+    assert spec.probe_timeout_seconds == 300
+
+
+def _run_probe_verbose(probe: Path, repo, env: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run a tetris probe directly so a failure's phase log lands in the assertion message."""
+    merged = {**__import__("os").environ, **(env or {})}
+    proc = subprocess.run(
+        [sys.executable, str(probe), "tetris.py"],
+        cwd=repo,
+        env=merged,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return proc.returncode, proc.stdout
+
+
+def test_tetris_probe_passes_golden_game(tmp_path):
+    # All nine phases (README docs, seeded-bag boot, movement + wall clamp, rotation cycle,
+    # flush hard drop with 2x scoring, quit, top-out GAME OVER, packed bottom-row clear,
+    # pty presentation) against a correct game — the task is achievable as the goal pins it.
+    repo = _tetris_repo(tmp_path, "good", _GOLDEN_TETRIS)
+    code, out = _run_probe_verbose(_PROBES / "tetris_easy_smoke.py", repo)
+    assert code == 0, f"golden game rejected:\n{out}"
+
+
+def test_tetris_probe_tolerates_farewell_frames(tmp_path):
+    # Whether `q` OR EOF renders one last frame before exiting is a compliant implementation
+    # choice the goal does not pin — two matrix models shipped the q-farewell and must not
+    # fail for it. Count-sensitive phases end on EOF and tolerate exactly one trailing frame,
+    # so this variant renders a farewell on BOTH exits (the maximal tolerated shape).
+    marker = '        if key is None or key == "QUIT":\n            return 0\n'
+    assert marker in _GOLDEN_TETRIS
+    farewell = _GOLDEN_TETRIS.replace(
+        marker,
+        '        if key is None or key == "QUIT":\n            game.render(out)\n            return 0\n',
+    )
+    repo = _tetris_repo(tmp_path, "farewell", farewell)
+    code, out = _run_probe_verbose(_PROBES / "tetris_easy_smoke.py", repo)
+    assert code == 0, f"farewell variant rejected:\n{out}"
+
+
+def test_tetris_probe_immune_to_hostile_term(tmp_path):
+    # The probe owns its pty (window size AND terminal type): a CI runner exporting TERM=dumb
+    # must not leak into the presentation phase and falsely reject a correct curses-style
+    # interactive mode (reproduced regression, PR #115 review).
+    repo = _tetris_repo(tmp_path, "dumb_term", _GOLDEN_TETRIS)
+    code, out = _run_probe_verbose(_PROBES / "tetris_easy_smoke.py", repo, env={"TERM": "dumb"})
+    assert code == 0, f"hostile-TERM run rejected:\n{out}"
+
+
+def test_tetris_probe_counter_examples(tmp_path):
+    # Each pinned behavior, violated by surgical mutation of the otherwise-passing golden
+    # game, so exactly one property differs per case.
+    cmd = f"python {_PROBES / 'tetris_easy_smoke.py'} tetris.py"
+    cases = [
+        # 1. Left moves the piece right: the differential movement assertion flips.
+        ("inverted_left", _TETRIS_MOVE_LEFT_MARKER, "game.move(0, 1)"),
+        # 2. Rotation is a no-op: the clockwise-orientation cycle never advances.
+        ("rotation_noop", _TETRIS_ROTATE_MARKER, 'elif key == "UP":\n            pass'),
+        # 3. The score display lies (a hardcoded number): caught at boot (Score must be 0).
+        ("fake_score", _TETRIS_SCORE_MARKER, '"Score: 9999"'),
+        # 4. Full rows never clear: the packed bottom row survives and the ledger diverges.
+        ("no_line_clear", _TETRIS_CLEAR_MARKER, "        pass  # no clear\n"),
+        # 5. A deviating randomizer (seed + 1): the first piece contradicts the pinned bag.
+        ("wrong_rng", _TETRIS_RNG_MARKER, "random.Random(seed + 1)"),
+        # 6. Reads stdin to EOF before responding (the grok-4.5 dev-cell shape): every batch
+        #    phase passes (they close stdin), so the interactive packing phase must catch it —
+        #    quickly, via its per-frame deadline, with the slurp diagnosis in the reason.
+        (
+            "slurps_stdin",
+            _TETRIS_STREAM_MARKER,
+            '    stream = __import__("io").BytesIO(sys.stdin.buffer.read())\n',
+        ),
+        # 7. The raw-mode staircase (the opus/sol matrix shape): interactive mode calls
+        #    tty.setraw and writes bare \n, so a real terminal renders the board diagonally.
+        #    Scripted phases can't see it (pipes have no tty); the pty presentation phase must.
+        (
+            "staircase_interactive",
+            _TETRIS_CURSES_MARKER,
+            "    import termios\n"
+            "    import tty\n"
+            "\n"
+            "    fd = sys.stdin.fileno()\n"
+            "    old = termios.tcgetattr(fd)\n"
+            "    game = Game(seed)\n"
+            "    try:\n"
+            "        tty.setraw(fd)\n"
+            "        game.render(sys.stdout)\n"
+            "        while True:\n"
+            "            ch = sys.stdin.buffer.read(1)\n"
+            '            if not ch or ch == b"q":\n'
+            "                return 0\n"
+            "            game.render(sys.stdout)\n"
+            "    finally:\n"
+            "        termios.tcsetattr(fd, termios.TCSADRAIN, old)\n",
+        ),
+        # 8. A fake interactive mode: five static aligned rows and no game behind them (the
+        #    PR #115 review's exploit). Scripted phases pass (they never see this path), so
+        #    the presentation phase must demand the full 20-row board the goal pins.
+        (
+            "static_interactive",
+            _TETRIS_CURSES_MARKER,
+            '    sys.stdout.write("\\n".join("|" + "." * 10 + "|" for _ in range(5)) + "\\n")\n'
+            "    sys.stdout.flush()\n"
+            "    while True:\n"
+            "        ch = sys.stdin.buffer.read(1)\n"
+            '        if not ch or ch == b"q":\n'
+            "            return 0\n",
+        ),
+    ]
+    for name, marker, replacement in cases:
+        assert marker in _GOLDEN_TETRIS
+        repo = _tetris_repo(tmp_path, name, _GOLDEN_TETRIS.replace(marker, replacement))
+        assert run_probe(cmd, repo, timeout_seconds=120) == 1, f"probe passed the {name} counter-example"
+    # 9. The hook-style cheat: a static renderer with no game state behind it.
+    repo = _tetris_repo(tmp_path, "canned", _CANNED_TETRIS)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed the canned-frames cheat"
+    # 10. The README is part of the graded contract.
+    repo = _tetris_repo(tmp_path, "no_readme", _GOLDEN_TETRIS, readme=None)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed without a README"
+
+
+# --- N. tetris-hard (formerly tetris-playable) probe: broad gameplay invariants -------
+
+_PLAYABLE_PROBE = _PROBES / "tetris_hard_smoke.py"
+_PLAYABLE_README = """# Terminal Tetris
+
+Run the real-time game with `python3 tetris.py`. Left and Right move, Up rotates, Down
+soft-drops, Space hard-drops, and `q` quits. The game has gravity, scoring, line clears,
+and game-over behavior.
+
+For automation, `python3 tetris.py --no-raw --seed 7` runs deterministically without a
+timer and renders `Score`, `Lines`, and a 10 by 20 board using `.`, `@`, and `#`; each
+frame ends with `-- end frame --`.
+"""
+
+_CBREAK_INTERACTIVE = r"""def run_interactive(seed):
+    import select
+    import termios
+    import time
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    game = Game(seed)
+    last_tick = time.monotonic()
+    try:
+        tty.setcbreak(fd)
+        while not game.over:
+            if select.select([fd], [], [], 0.02)[0]:
+                key = read_key(sys.stdin.buffer)
+                if key is None or key == "QUIT":
+                    return 0
+                if key == "LEFT":
+                    game.move(0, -1)
+                elif key == "RIGHT":
+                    game.move(0, 1)
+                elif key == "DOWN":
+                    game.soft_drop()
+                elif key == "UP":
+                    game.rotate()
+                elif key == "SPACE":
+                    game.hard_drop()
+            if time.monotonic() - last_tick > 0.5:
+                if not game.move(1, 0):
+                    game._lock()
+                last_tick = time.monotonic()
+            sys.stdout.write("\x1b[H\x1b[2J")
+            game.render(sys.stdout)
+        return 0
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+"""
+
+
+def _with_interactive(source: str, replacement: str) -> str:
+    start = source.index("def run_interactive(seed):\n")
+    end = source.index("def main(argv):\n")
+    return source[:start] + replacement + source[end:]
+
+
+def test_tetris_hard_task_is_brief_and_points_at_probe():
+    spec = load_task_spec(Path(__file__).resolve().parent.parent / "evals" / "tasks" / "tetris-hard.toml")
+    assert spec.id == "tetris-hard"
+    assert spec.task_kind == "edit"
+    assert spec.success_probe == "python evals/probes/tetris_hard_smoke.py tetris.py"
+    assert spec.probe_timeout_seconds == 300
+    # This task measures building a playable game, not conformance to one reference ruleset.
+    for prescribed_detail in (
+        "random.Random",
+        "no wall kicks",
+        "(row, column)",
+        "100/300/500/800",
+        'fresh ["I","J","L","O","S","T","Z"]',
+    ):
+        assert prescribed_detail not in spec.goal
+
+
+def test_tetris_hard_probe_accepts_rule_variants(tmp_path):
+    cmd = f"python {_PLAYABLE_PROBE} tetris.py"
+    variants = {
+        "reference": _GOLDEN_TETRIS,
+        # A valid 7-bag can consume its shuffled list from either end; the task does not pin
+        # Python's list operation or the seed-to-piece mapping.
+        "reverse_bag": _GOLDEN_TETRIS.replace("return self.bag.pop(0)", "return self.bag.pop()"),
+        # Scoring must exist and respond to play, but point values are an implementation choice.
+        "different_scoring": _GOLDEN_TETRIS.replace(
+            "LINE_SCORES = {1: 100, 2: 300, 3: 500, 4: 800}",
+            "LINE_SCORES = {1: 40, 2: 100, 3: 300, 4: 1200}",
+        ),
+        # Up must rotate; clockwise versus counter-clockwise is deliberately not prescribed.
+        "counter_clockwise": _GOLDEN_TETRIS.replace(
+            "        rotated = {(r + min_r, c + min_c) for r, c in rotate_cw(rel)}\n",
+            "        rotated_rel = rel\n"
+            "        for _ in range(3):\n"
+            "            rotated_rel = rotate_cw(rotated_rel)\n"
+            "        rotated = {(r + min_r, c + min_c) for r, c in rotated_rel}\n",
+        ),
+        # The human-facing phase accepts a plain cbreak/ANSI renderer as well as curses.
+        "cbreak_ansi": _with_interactive(_GOLDEN_TETRIS, _CBREAK_INTERACTIVE),
+        # The goal pins GAME OVER "before a successful exit", not a position relative to the
+        # sentinel: printing it inside the final frame is a compliant choice (maintainer
+        # ruling, 2026-07-12 — six matrix cells were false-rejected on this).
+        "game_over_inside_frame": _GOLDEN_TETRIS.replace(
+            '        game.render(out)\n        if game.over:\n            out.write("GAME OVER\\n")\n',
+            '        if game.over:\n            out.write("GAME OVER\\n")\n        game.render(out)\n'
+            "        if game.over:\n",
+        ),
+    }
+    for name, source in variants.items():
+        repo = _tetris_repo(tmp_path, name, source, _PLAYABLE_README)
+        assert run_probe(cmd, repo, timeout_seconds=180) == 0, f"probe rejected valid {name} variant"
+
+
+def test_tetris_hard_probe_reports_slurped_stdin_without_gating(tmp_path):
+    # Option-3 hybrid (maintainer ruling, 2026-07-12): gameplay is graded over a replayed
+    # key prefix, so a stdin-slurping game still earns its gameplay verdict; the goal's
+    # streaming sentence is checked by a dedicated transport phase that reports on its own
+    # line and does not gate the exit code (see _STREAMING_GATES in the probe).
+    slurped = _GOLDEN_TETRIS.replace(
+        _TETRIS_STREAM_MARKER,
+        '    stream = __import__("io").BytesIO(sys.stdin.buffer.read())\n',
+    )
+    assert slurped != _GOLDEN_TETRIS
+    repo = _tetris_repo(tmp_path, "slurps_stdin", slurped, _PLAYABLE_README)
+    proc = subprocess.run(
+        [sys.executable, str(_PLAYABLE_PROBE), "tetris.py"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert proc.returncode == 0, f"slurped-stdin gameplay should still grade: {proc.stdout}"
+    assert "transport (streaming) FAILED [non-gating]" in proc.stdout
+    # The reference implementation streams, so its transport line must be clean.
+    repo = _tetris_repo(tmp_path, "streams", _GOLDEN_TETRIS, _PLAYABLE_README)
+    proc = subprocess.run(
+        [sys.executable, str(_PLAYABLE_PROBE), "tetris.py"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert "transport (streaming) ok" in proc.stdout
+
+
+def test_tetris_hard_probe_counter_examples(tmp_path):
+    cmd = f"python {_PLAYABLE_PROBE} tetris.py"
+    cases = [
+        ("inverted_left", _TETRIS_MOVE_LEFT_MARKER, "game.move(0, 1)"),
+        ("rotation_noop", _TETRIS_ROTATE_MARKER, 'elif key == "UP":\n            pass'),
+        ("one_piece_only", 'self.bag = list("IJLOSTZ")', 'self.bag = ["I"] * 7'),
+        ("no_line_clear", _TETRIS_CLEAR_MARKER, "        pass  # no clear\n"),
+        (
+            "no_interactive_gravity",
+            "            if time.monotonic() - last_tick > 0.5:\n",
+            "            if False:\n",
+        ),
+        (
+            "static_interactive",
+            _TETRIS_CURSES_MARKER,
+            '    sys.stdout.write("\\n".join("|" + "." * 10 + "|" for _ in range(20)) + "\\n")\n'
+            "    sys.stdout.flush()\n"
+            "    while True:\n"
+            "        ch = sys.stdin.buffer.read(1)\n"
+            '        if not ch or ch == b"q":\n'
+            "            return 0\n",
+        ),
+    ]
+    for name, marker, replacement in cases:
+        assert marker in _GOLDEN_TETRIS
+        repo = _tetris_repo(tmp_path, name, _GOLDEN_TETRIS.replace(marker, replacement), _PLAYABLE_README)
+        assert run_probe(cmd, repo, timeout_seconds=120) == 1, f"probe passed the {name} counter-example"
+
+    repo = _tetris_repo(tmp_path, "canned", _CANNED_TETRIS, _PLAYABLE_README)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed a canned-frame fake game"
+    repo = _tetris_repo(tmp_path, "no_readme", _GOLDEN_TETRIS, readme=None)
+    assert run_probe(cmd, repo, timeout_seconds=120) == 1, "probe passed without a README"

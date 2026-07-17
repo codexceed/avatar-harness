@@ -292,6 +292,30 @@ def test_planner_llm_proposal_rejected_when_command_not_in_citation(tmp_path):
     assert _resolve(tmp_path, _config(planner_model="cheap-model"), client=client) == []
 
 
+def test_planner_llm_chained_proposal_splits_per_segment(tmp_path):
+    # PR #112 review P1: proposals bypassed the ADR-0045 gate — a cited `a && b` froze as
+    # ONE PlannedCheck and Workspace.run mangled it (the tetris_glm false-pass class).
+    # Proposals route through the same split: one check per segment, sharing a chain.
+    (tmp_path / "justfile").write_text("test:\n\tbusted . && luacheck src\n", encoding="utf-8")
+    client = _CountingClient(
+        [{"kind": "test", "command": "busted . && luacheck src", "source_path": "justfile"}]
+    )
+    plan = _resolve(tmp_path, _config(planner_model="cheap-model"), client=client)
+    assert [c.command for c in plan] == ["busted .", "luacheck src"]
+    assert all(c.kind == "test" and c.provenance == "llm:justfile" for c in plan)
+    assert plan[0].chain is not None and plan[0].chain == plan[1].chain
+
+
+def test_planner_llm_proposal_with_unrunnable_shell_syntax_discarded(tmp_path):
+    # Pipes/redirects/heredocs have no no-shell equivalent; a proposal carrying them is
+    # dropped (detection-only degradation), never frozen as a command that can only mangle.
+    (tmp_path / "justfile").write_text("test:\n\tbusted . | tee out.log\n", encoding="utf-8")
+    client = _CountingClient(
+        [{"kind": "test", "command": "busted . | tee out.log", "source_path": "justfile"}]
+    )
+    assert _resolve(tmp_path, _config(planner_model="cheap-model"), client=client) == []
+
+
 # --- freeze semantics + the typed journal event ----------------------------
 
 
@@ -370,6 +394,26 @@ def test_smoke_floor_rejects_executing_or_unlisted_commands(tmp_path):
         assert _propose_smoke(tmp_path, _CountingClient([{"command": cmd}])) is None, cmd
 
 
+def test_smoke_prompt_scopes_to_deliverable_excludes_scaffolding(tmp_path):
+    # ADR-0046: the floor anchors the DELIVERABLE, not the model's throwaway verification
+    # scaffolding. The authoring prompt actually sent must steer the model to name only the
+    # delivered artifact and exclude scratch/`verify_*` scripts it wrote to check its own work,
+    # so a broken scratch file can't poison the immutable floor (the tetris_grok2 regression).
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    captured: dict = {}
+
+    def _create(**kw):
+        captured["messages"] = kw["messages"]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=None))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=_create)))
+    _propose_smoke(tmp_path, client)
+
+    system = captured["messages"][0]["content"].lower()
+    assert "deliverable" in system
+    assert "scaffolding" in system or "scratch" in system
+
+
 def test_smoke_floor_none_when_model_makes_no_call(tmp_path):
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
     assert _propose_smoke(tmp_path, _CountingClient()) is None
@@ -433,6 +477,46 @@ def test_vacuous_declared_check_flags_noops():
     assert not vacuous_declared_check("python -m pytest test_x.py")
     assert not vacuous_declared_check("ruff check .")
     assert not vacuous_declared_check("uv run pytest")  # unwrapped to pytest
+
+
+def test_vacuous_declared_check_judges_every_segment():
+    """The guard judges every `&&`/`;` segment and `|` pipeline stage, never just token 0.
+
+    Dogfood 7e49b161 (tetris_glm): `printf 'q' | python3 -m ascii_tetris.main` was
+    rejected as vacuous because the line's first program was `printf` — though the
+    pipeline drives the real entry point via stdin. One real stage redeems the line;
+    a line of pure no-ops/inspectors (`test`/`grep`/`echo`) is still rejected.
+    """
+    # The log's false positives — a real program downstream of a vacuous head:
+    assert not vacuous_declared_check("printf 'q' | python3 -m ascii_tetris.main --no-raw")
+    assert not vacuous_declared_check("echo starting && pytest -q")
+    # The log's turn-5 amendment — accepted, now on the strength of its python3 stage:
+    assert not vacuous_declared_check(
+        "out=$(printf 'jjj q' | python3 -m ascii_tetris.main --no-raw 2>&1); "
+        'echo "$out" | grep -qi score && echo "$out" | grep -qi quit'
+    )
+    # All-vacuous lines stay rejected — including grep-led ones (inspection, not execution),
+    # which today pass or fail on the accident of which program comes first:
+    assert vacuous_declared_check(
+        "test -f DESIGN.md && grep -q '^## 1. Overview' DESIGN.md && echo 'DESIGN.md OK'"
+    )
+    assert vacuous_declared_check("grep -q Overview DESIGN.md")
+    assert vacuous_declared_check("echo a | grep -q a && echo ok")
+
+
+def test_vacuous_declared_check_not_redeemed_by_shell_builtins():
+    """Unlisted shell builtins must not redeem an inspector-only line (PR-#110 review).
+
+    `all(...)` treats any unknown program as real, so `|| exit 1` or a `command -v`
+    probe laundered a pure-inspection check into acceptance. Builtins and fs-noise
+    programs execute nothing of the deliverable; a probe + a REAL run stays accepted.
+    """
+    assert vacuous_declared_check("grep -q Overview DESIGN.md || exit 1")
+    assert vacuous_declared_check("command -v pytest && grep -q Overview DESIGN.md")
+    assert vacuous_declared_check("cd pkg && test -f main.py")
+    assert vacuous_declared_check("mkdir -p out && touch out/ok && echo done")
+    # The probe pattern with a real invocation downstream is still redeemed:
+    assert not vacuous_declared_check("command -v pytest && python -m pytest -q")
 
 
 def _declared(command: str) -> PlannedCheck:

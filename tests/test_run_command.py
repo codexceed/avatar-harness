@@ -47,10 +47,11 @@ def test_run_command_is_tier_3():
     assert run_command.permission_tier == 3  # default-blocked in batch; approval-gated in the REPL
 
 
-def test_run_command_is_editing_verifying_only():
-    # ADR-0002: not advertised during read-only `investigating`, so an investigate task
-    # can't reach it (and the command-ungrounded verifier dead-end it would cause).
-    assert run_command.phases == frozenset({"editing", "verifying"})
+def test_run_command_admitted_in_all_phases():
+    # ADR-0048: run_command ALSO loads in `investigating` (reproducing/observing a failure is
+    # core investigation) — safe because it attributes its side effects into the baseline diff.
+    # run_tests/run_linter stay editing/verifying-only (they lack that accounting).
+    assert run_command.phases == frozenset({"investigating", "editing", "verifying"})
 
 
 def test_run_command_ran_but_failed_is_success(tmp_path):
@@ -90,11 +91,14 @@ def test_run_command_blocked_in_batch(tmp_path):
 
 
 def test_run_command_no_shell_metacharacters(tmp_path):
-    # shlex.split execs an argv — no shell. `&&` is passed as a literal arg, not an operator,
-    # so a chained `echo pwned` never runs as its own command.
+    # No shell, ever — but silently passing `&&` as a literal argv item manufactured fake
+    # "exit=0" evidence (tetris_glm journal: the chained import-check never ran). The
+    # stronger property (ADR-0045): the call is REJECTED, so nothing executes at all —
+    # a chained `echo pwned` still never runs, and now neither does the first program.
     cmd = 'python -c "import sys; print(sys.argv[1:])" && echo pwned'
     result = run_command.handler(run_command.input_model(command=cmd), _deps(tmp_path))
-    assert "'&&'" in result.content  # '&&' arrived as a literal argv item, proving no shell split
+    assert not result.success
+    assert "without a shell" in (result.error or "")
 
 
 def test_run_command_timeout_is_system_failure(tmp_path):

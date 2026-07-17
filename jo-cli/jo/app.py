@@ -12,13 +12,16 @@ The app tracks its rendered transcript lines and status fields as plain attribut
 
 import asyncio
 import signal
+import zlib
 from collections.abc import Callable, Iterator
 
 from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
+from textual.containers import Vertical
 from textual.events import Key
 from textual.message import Message
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import RichLog, Static, TextArea
 
@@ -27,6 +30,7 @@ from avatar import (
     AgentStart,
     ApprovalRequested,
     DecisionError,
+    DeclarationRequired,
     DirtyWorkspaceError,
     HarnessEvent,
     ModelDecisionEvent,
@@ -34,12 +38,56 @@ from avatar import (
     PhaseChanged,
     ReplSession,
     Session,
+    TaskEscalated,
     TaskState,
     ToolEnd,
     ToolStart,
     VerificationEnd,
+    VerificationStart,
 )
 from jo.modals import ApprovalChoice, ApprovalModal, DiffModal, PlanModal
+
+# One stable color per tool *family*, so a transcript scans by color: blue = inspect,
+# magenta = mutate, yellow = execute, cyan = the verification contract.
+TOOL_STYLES: dict[str, str] = {
+    "read_file": "blue",
+    "list_files": "blue",
+    "search_repo": "blue",
+    "write_file": "magenta",
+    "str_replace": "magenta",
+    "delete_file": "magenta",
+    "run_tests": "yellow",
+    "run_linter": "yellow",
+    "run_command": "yellow",
+    "declare_verification": "cyan",
+    "alter_verification": "cyan",
+}
+
+# Tools the map doesn't know (plugins, future registrations) hash onto this palette.
+_TOOL_PALETTE: tuple[str, ...] = ("blue", "magenta", "yellow", "cyan", "bright_blue", "bright_magenta")
+
+# The pending-model-inference color: green, matching the `● agent` turn marker.
+THINKING_STYLE = "green"
+
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def tool_style(tool: str) -> str:
+    """The stable Rich style for `tool` — family-mapped, or hashed onto the palette.
+
+    Hashing uses `crc32`, not the per-process-salted builtin `hash`, so an unknown
+    tool keeps the same color across sessions.
+
+    Args:
+        tool: The tool name as it appears in `ToolStart`/`ToolEnd`.
+
+    Returns:
+        A Rich style string, identical for every call with the same name.
+    """
+    known = TOOL_STYLES.get(tool)
+    if known is not None:
+        return known
+    return _TOOL_PALETTE[zlib.crc32(tool.encode("utf-8")) % len(_TOOL_PALETTE)]
 
 
 class HistoryInput(TextArea):
@@ -181,8 +229,10 @@ class CockpitApp(App):
     BINDINGS = [Binding("ctrl+c", "cancel", "cancel / quit", priority=True)]  # noqa: RUF012 — Textual contract
 
     CSS = """
-    #status { dock: top; height: 1; background: $boost; color: $text; }
-    #prompt { dock: bottom; height: auto; max-height: 8; border: none; padding: 0; }
+    #status { height: 1; background: $boost; color: $text; }
+    #footer { dock: bottom; height: auto; }
+    #prompt { height: auto; max-height: 8; border: none; padding: 0; }
+    #activity { height: 1; }
     #transcript { height: 1fr; }
     """
 
@@ -200,10 +250,14 @@ class CockpitApp(App):
         self.mode = (repl.mode or mode) if repl is not None else mode
         self.phase = "investigating"
         self.outcome: str | None = None
-        self.verdict: bool | None = None  # the verifier's real verdict (advisory in chat mode)
+        self.verdict: bool | None = None  # the verifier's real verdict (it steers the turn, §23.5)
         self._on_submit = on_submit or (lambda _prompt: None)
         self.rendered: list[str] = []  # mirror of transcript lines, for headless assertions
         self._run_task: asyncio.Task[TaskState] | None = None  # the in-flight per-goal run, for ctrl+c
+        self.activity: str | None = None  # the spinner label ("thinking…"/"running x…"), None when idle
+        self.activity_style: str = ""  # the spinner's color — headless-assertable like `rendered`
+        self._spinner_frame = 0
+        self._spinner_timer: Timer | None = None
 
     def compose(self) -> Iterator[Widget]:
         """Lay out the three regions.
@@ -211,15 +265,24 @@ class CockpitApp(App):
         Yields:
             The status bar, transcript log, and input widgets.
         """
-        yield Static(self._status_text(), id="status")
         yield RichLog(id="transcript", highlight=False, markup=False, wrap=True)
-        yield HistoryInput(
-            placeholder="Ask, or describe a change… (Enter to send · Shift+Enter for newline)",
-            id="prompt",
+        # One bottom-docked footer (same-edge docks would overlap, not stack). The
+        # mode·phase status sits at the footer's top — directly by the input the human is
+        # typing into, not stranded at the screen top — so the live task kind and phase are
+        # always in view where a decision is being made; the activity (spinner) line follows.
+        yield Vertical(
+            Static(self._status_text(), id="status"),
+            Static("", id="activity"),
+            HistoryInput(
+                placeholder="Ask, or describe a change… (Enter to send · Shift+Enter for newline)",
+                id="prompt",
+            ),
+            id="footer",
         )
 
     def on_mount(self) -> None:
         """Observe mode: drain the fixed stream; drive mode waits for input. Install signal handlers."""
+        self._spinner_timer = self.set_interval(1 / 8, self._spin, pause=True)
         if self.repl is None and self._session is not None:
             self.run_worker(self._consume(self._session), exclusive=False)
         self._set_signal_handlers(install=True)
@@ -285,17 +348,68 @@ class CockpitApp(App):
             self.verdict = None
             self.phase = "investigating"
             self.query_one("#prompt", HistoryInput).disabled = True  # a run is active
+            self._set_activity("thinking…", THINKING_STYLE)  # first model inference is pending
         elif isinstance(event, PhaseChanged):
             self.phase = event.new
+        elif isinstance(event, TaskEscalated):
+            # A consented `switch_to_editing` flipped the kind mid-run (ADR-0048); the
+            # classification shown by the bar must follow it, or it lies "investigate"
+            # while the run edits (dogfood `tetris_grok4`: escalated goals stayed labeled
+            # investigate). PhaseChanged carries the editing advance; this carries the kind.
+            self.mode = event.to_kind
+        elif isinstance(event, ToolStart):
+            self._set_activity(f"running {event.tool}…", tool_style(event.tool))
+        elif isinstance(event, ToolEnd):
+            self._set_activity("thinking…", THINKING_STYLE)  # the next model turn is pending
+        elif isinstance(event, VerificationStart):
+            self._set_activity("verifying…", "yellow")  # harness-owned checks are running
         elif isinstance(event, VerificationEnd):
             self.verdict = event.passed
+            self._set_activity("thinking…", THINKING_STYLE)  # end or a repair turn follows
         elif isinstance(event, ApprovalRequested):
+            self._set_activity("waiting for approval…", "bold yellow")  # blocked on the human
             self._prompt_approval(event)  # announce → modal → resolve_approval (control plane)
         elif isinstance(event, AgentEnd):
             self.outcome = event.outcome
             self.query_one("#prompt", HistoryInput).disabled = False  # ready for the next goal
+            self._set_activity(None)
         self.query_one("#status", Static).update(self._status_text())
         self._write(self._format(event))
+
+    def _set_activity(self, label: str | None, style: str = "") -> None:
+        """Set (or clear, with `None`) the color-coded spinner line above the input.
+
+        Tracks `activity`/`activity_style` as plain attributes for headless assertions,
+        renders the current frame immediately, and runs the animation timer only while
+        something is pending.
+
+        Args:
+            label: What the run is waiting on ("thinking…", "running x…"), or `None` for idle.
+            style: The Rich style coding the wait — the tool's color for a running tool,
+                `THINKING_STYLE` for pending inference.
+        """
+        self.activity = label
+        self.activity_style = style if label is not None else ""
+        if self._spinner_timer is not None:
+            if label is not None:
+                self._spinner_timer.resume()
+            else:
+                self._spinner_timer.pause()
+        self._render_activity()
+
+    def _spin(self) -> None:
+        """One animation tick — advance the spinner frame and re-render the activity line."""
+        self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
+        self._render_activity()
+
+    def _render_activity(self) -> None:
+        """Paint the activity line: `⠋ label` in its color, or blank when idle."""
+        widget = self.query_one("#activity", Static)
+        if self.activity is None:
+            widget.update("")
+        else:
+            frame = _SPINNER_FRAMES[self._spinner_frame]
+            widget.update(Text(f"{frame} {self.activity}", style=self.activity_style))
 
     def _write(self, line: str | Text | None) -> None:
         """Append `line` to the transcript (and the plain-string `rendered` mirror); `None` is skipped.
@@ -338,8 +452,9 @@ class CockpitApp(App):
         """The transcript line for an event, or `None` for events shown only in the status bar.
 
         Lines are styled `Text` so the transcript reads as a chat: the user goal (`▶ you`)
-        in cyan, model turns (`● agent`) in green, tool I/O dim — the label is
-        model-agnostic (`you`/`agent`), since this harness runs non-Claude models too.
+        in cyan, model turns (`● agent`) in green, tool names in their stable per-family
+        color (`tool_style`) with args/summaries dim — the label is model-agnostic
+        (`you`/`agent`), since this harness runs non-Claude models too.
 
         Args:
             event: The lifecycle event.
@@ -359,22 +474,32 @@ class CockpitApp(App):
         if isinstance(event, ModelDecisionEvent):
             return self._format_decision(event)
         if isinstance(event, ToolStart):
-            return Text(f"→ {event.tool} {event.input}", style="dim")
+            # Only the tool name is color-coded; the rest of the line stays dim as before.
+            line = Text("→ ", style="dim")
+            line.append(event.tool, style=tool_style(event.tool))
+            line.append(f" {event.input}", style="dim")
+            return line
         if isinstance(event, ToolEnd):
-            mark = "✓" if event.success else "✗"
-            return Text(f"{mark} {event.tool}: {event.summary or event.content}", style="dim")
+            line = Text(f"{'✓' if event.success else '✗'} ", style="dim")
+            line.append(event.tool, style=tool_style(event.tool))
+            line.append(f": {event.summary or event.content}", style="dim")
+            return line
         if isinstance(event, ModelUpdate):
             line = Text("● agent", style="bold green")
             line.append(f"  {event.delta}", style="")
             return line
         if isinstance(event, ApprovalRequested):
             return f"⏸ approval needed: {event.tool}"
+        if isinstance(event, DeclarationRequired):
+            # Greenfield edit refused pending a declared contract (ADR-0038) — informational, no
+            # modal (the model complies, not the human): observe-only, §13.
+            return Text("✍ declare a verification contract before editing", style="yellow")
         if isinstance(event, DecisionError):
             kind = "retried" if event.recovered else "turn lost"
             return f"↩ malformed decision ({kind}): {event.error}"
         if isinstance(event, VerificationEnd):
-            # The real verdict, always — in conversational mode the outcome alone would
-            # read "success" even when verification failed (§23.5: the human decides).
+            # The real verdict, always — a mid-repair verdict or an advisory (eval) run can show
+            # `outcome: success` while a check failed, so render the verdict itself (§23.5).
             mark = "✓" if event.passed else "⚠"
             verb = "passed" if event.passed else "failed"
             line = Text(mark, style="green" if event.passed else "yellow")
@@ -463,6 +588,8 @@ class CockpitApp(App):
             # handler used to be the only disabler), and that window let a second goal
             # start and race the first (PR-#32 review). Re-enabled in _run_goal's finally.
             self.query_one("#prompt", HistoryInput).disabled = True
+            # Spin from submit: mode classification (a network call) precedes AgentStart.
+            self._set_activity("thinking…", THINKING_STYLE)
             self.run_worker(self._run_goal(text), exclusive=False)
 
     def _handle_meta(self, text: str) -> None:
@@ -528,6 +655,7 @@ class CockpitApp(App):
             # lingering reference made ctrl+c keep trying to cancel a dead run instead of
             # quitting; clearing it lets action_cancel fall through to exit.
             self._session = None
+            self._set_activity(None)  # nothing pending — a crash/cancel must not leave it spinning
             self.query_one("#prompt", HistoryInput).disabled = False  # the REPL stays usable
             self.query_one("#status", Static).update(self._status_text())
 

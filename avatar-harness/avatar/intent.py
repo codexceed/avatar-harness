@@ -45,7 +45,9 @@ _CLASSIFY_TOOL = {
 _SYSTEM = (
     "You route requests for a coding agent. Classify the NEW request in the context of "
     "the conversation: a follow-up that continues build work is 'edit' even when phrased "
-    "conversationally. Call set_task_mode exactly once."
+    "conversationally; a question about how the code works or behaves ('how do I ...', "
+    "'why does ...') is 'investigate' even mid-build, unless it asks for a change. "
+    "Call set_task_mode exactly once."
 )
 
 _MAX_HISTORY_LINES = 8

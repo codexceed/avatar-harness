@@ -144,14 +144,17 @@ def run_task(
             update={"workspace_root": str(repo), "log_path": str(repo / "journal.jsonl"), **spec.budgets}
         )
         client = Harness(config=cfg, model=model_client) if model_client is not None else Harness(config=cfg)
-        # Option A: an oracle-graded task (a success probe or a D3 held-out oracle) runs *non-strict*
-        # — it delivers its best and we grade it, instead of thrashing toward an edit gate a fresh
-        # creation can't satisfy. A no-oracle task stays strict (the verifier is the grader).
-        conversational = spec.success_probe is not None or bool(spec.fail_to_pass or spec.pass_to_pass)
+        # Option A: an oracle-graded task (a success probe or a D3 held-out oracle) is graded by
+        # its oracle, so the agent runs *non-strict* — it delivers its best and we grade it,
+        # instead of thrashing toward an edit gate a fresh creation can't satisfy. A no-oracle
+        # task stays strict (the verifier is the grader).
+        # `advisory` (ADR-0040 option A, distinct from the REPL's steering `conversational` since
+        # ADR-0046): the verifier reports but does not steer/gate, so the oracle grades the delivery.
+        advisory = spec.success_probe is not None or bool(spec.fail_to_pass or spec.pass_to_pass)
         session = client.session(
             spec.goal,
             task_kind=spec.task_kind,
-            conversational=conversational,
+            advisory=advisory,
             journal=JsonlEventJournal(repo / "journal.jsonl"),
             unattended=True,  # batch: auto-deny tier-3/denylist asks (no human to resolve them)
         )
@@ -159,7 +162,7 @@ def run_task(
         state = asyncio.run(session.run())
         agent_wall = time.monotonic() - _agent_t0  # latency of the agent loop only (excludes probe)
         # `outcome == "success"` is the verifier's verdict only for a no-probe (strict) task; in
-        # conversational mode it just means the agent reached `final_answer`. `is_solved` uses it
+        # advisory mode it just means the agent reached `final_answer`. `is_solved` uses it
         # when there is no probe, AND as the positive signal a *guard* probe is ANDed with (ADR-0020)
         # — so a no-leak guard plus a give-up `incomplete` run does not score solved.
         reached_success = state.outcome == "success"

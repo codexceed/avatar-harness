@@ -267,13 +267,22 @@ _KIND_FRAMING = {
     "investigate": (
         "Your mission: ANSWER the question. Inspect with read tools and cite the concrete "
         "evidence (paths/lines) you actually read. You may instrument transiently (a debug "
-        "print, a scratch probe), but the repo must be unchanged when you answer — revert "
-        "any instrumentation first."
+        "print, a scratch probe) and run code to observe it with run_command, but the repo "
+        "must be unchanged when you answer — revert any instrumentation first. If the task "
+        "actually requires a CODE FIX (not just an explanation), do not edit-and-answer here: "
+        "call switch_to_editing to escalate to an edit task, which keeps your changes, lets you "
+        "run and verify them, and holds them to a real contract."
     ),
     "edit": (
         "Your mission: make a WORKING code change. Inspect what you will modify, then edit "
-        "with str_replace (or write_file to create or rewrite a file); an external verifier "
-        "will run real tests/lint on your diff."
+        "with str_replace (or write_file to create or rewrite a file). An external verifier runs "
+        "real tests/lint on your diff — and if this repo has no test/lint setup for the harness to "
+        "detect, you MUST first declare how your change will be verified via declare_verification "
+        "(executing checks that fail on breakage) BEFORE you edit. That contract must exercise the "
+        "actual deliverable end-to-end — at least one check that runs the real entry point (it "
+        "imports and launches without error), not only isolated unit tests. You also own toolchain "
+        "setup: do not assume a test runner or dependencies are pre-installed — install what your "
+        "checks need, and make your declared commands run in that same environment."
     ),
     "test_only": (
         "Your mission: ADD or change tests that capture the intended behavior. The new "

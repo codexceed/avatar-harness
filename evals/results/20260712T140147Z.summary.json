@@ -1,0 +1,63 @@
+{
+  "stamp": "20260712T140147Z",
+  "n": 21,
+  "temperature": 0.7,
+  "seeds": 3,
+  "models": [
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-terra",
+    "x-ai/grok-4.5",
+    "anthropic/claude-opus-4.8",
+    "minimax/minimax-m3",
+    "openai/gpt-oss-120b",
+    "deepseek/deepseek-v4-pro"
+  ],
+  "overall_pass_at_1": 0.1905,
+  "per_model": [
+    {
+      "model": "openai/gpt-5.6-sol",
+      "pass_at_1": 0.0,
+      "pass_caret_k": 0.0,
+      "n": 3
+    },
+    {
+      "model": "openai/gpt-5.6-terra",
+      "pass_at_1": 0.3333,
+      "pass_caret_k": 0.0,
+      "n": 3
+    },
+    {
+      "model": "x-ai/grok-4.5",
+      "pass_at_1": 0.3333,
+      "pass_caret_k": 0.0,
+      "n": 3
+    },
+    {
+      "model": "anthropic/claude-opus-4.8",
+      "pass_at_1": 0.0,
+      "pass_caret_k": 0.0,
+      "n": 3
+    },
+    {
+      "model": "minimax/minimax-m3",
+      "pass_at_1": 0.0,
+      "pass_caret_k": 0.0,
+      "n": 3
+    },
+    {
+      "model": "openai/gpt-oss-120b",
+      "pass_at_1": 0.0,
+      "pass_caret_k": 0.0,
+      "n": 3
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro",
+      "pass_at_1": 0.6667,
+      "pass_caret_k": 0.0,
+      "n": 3
+    }
+  ],
+  "failure_histogram": {
+    "probe_failed": 17
+  }
+}

@@ -37,8 +37,12 @@ AgentEnd(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str =
 
 A run has begun on `goal`.
 
+`task_kind` is the resolved kind the run opens with; `mode_source` records how it was
+decided ("override"/"classifier"/"heuristic", or `None` when the core was driven directly)
+so a dogfood journal can distinguish a classifier miss from a classifier outage.
+
 ```python
-AgentStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['agent_start'] = 'agent_start', goal: str = '') -> None
+AgentStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['agent_start'] = 'agent_start', goal: str = '', task_kind: str = '', mode_source: str | None = None) -> None
 ```
 
 **Fields**
@@ -53,6 +57,8 @@ AgentStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str
 | `ts` | `datetime` | no |
 | `type` | `Literal['agent_start']` | no |
 | `goal` | `str` | no |
+| `task_kind` | `str` | no |
+| `mode_source` | `str | None` | no |
 ### `ApprovalController`
 
 The awaited control hook the runner consults for a gated (tier-3 `ask`) call.
@@ -173,6 +179,32 @@ DecisionError(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: 
 | `error` | `str` | no |
 | `raw` | `str` | no |
 | `recovered` | `bool` | no |
+### `DeclarationRequired`
+
+A greenfield edit was refused pending a declared verification contract (ADR-0038).
+
+Emitted at the investigating → editing boundary when the task is greenfield (no
+detected/cited/configured contract) and the model tried to edit without first calling
+`declare_verification`. `nudge`/`max_nudges` track the bounded-nudge budget: at the cap the
+runner stops refusing and falls back to the smoke floor.
+
+```python
+DeclarationRequired(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['declaration_required'] = 'declaration_required', nudge: int = 0, max_nudges: int = 0) -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['declaration_required']` | no |
+| `nudge` | `int` | no |
+| `max_nudges` | `int` | no |
 ### `EventBase`
 
 Fields common to every lifecycle event — the journal's ordering/versioning keys.
@@ -315,6 +347,36 @@ PhaseChanged(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: s
 | `type` | `Literal['phase_changed']` | no |
 | `old` | `str` | yes |
 | `new` | `str` | yes |
+### `TaskEscalated`
+
+The task was escalated `investigate → edit` mid-run (ADR-0048).
+
+Emitted when a consented `switch_to_editing` (model-requested, or a thrash-nudged request)
+flips the task **kind only** — deliberately not the phase, and not the frozen plan. The task
+becomes a normal edit task still sitting in `investigating`, so the standard edit-intent
+bootstrap runs the declaration gate and advances the phase on the next edit: escalation never
+*jumps* that gate. `trigger` records what caused it (`model` = the model asked unprompted;
+`thrash` = the harness's thrash detector nudged it there). The transition is one-directional
+and once-only, so this only ever reads `investigate → edit`.
+
+```python
+TaskEscalated(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['task_escalated'] = 'task_escalated', from_kind: str = 'investigate', to_kind: str = 'edit', trigger: str = 'model') -> None
+```
+
+**Fields**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `schema_version` | `Literal[1]` | no |
+| `event_id` | `int` | no |
+| `session_id` | `str` | no |
+| `task_id` | `str | None` | no |
+| `turn` | `int | None` | no |
+| `ts` | `datetime` | no |
+| `type` | `Literal['task_escalated']` | no |
+| `from_kind` | `str` | no |
+| `to_kind` | `str` | no |
+| `trigger` | `str` | no |
 ### `ToolEnd`
 
 A tool call finished — `success` plus its summary/content (§10).
@@ -428,10 +490,13 @@ The per-session verification plan was resolved and frozen (ADR-0007).
 Journaled at the investigating → editing boundary, before any verification:
 each check carries its command and provenance, so every run's rubric — and
 where each check came from — is auditable. An empty `checks` records that
-nothing was discovered (the verifier will fail legibly).
+nothing was discovered (the verifier will fail legibly). `change_kinds`
+records the kinds a model-declared contract covers (ADR-0044) — the model's
+stated intent, auditable against the diff; `None` = no declaration (tiers 1-3),
+including journals written before the field existed.
 
 ```python
-VerificationPlanFrozen(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['verification_plan_frozen'] = 'verification_plan_frozen', checks: list[PlannedCheck] = <factory>) -> None
+VerificationPlanFrozen(*, schema_version: Literal[1] = 1, event_id: int = 0, session_id: str = '', task_id: str | None = None, turn: int | None = None, ts: datetime = <factory>, type: Literal['verification_plan_frozen'] = 'verification_plan_frozen', checks: list[PlannedCheck] = <factory>, change_kinds: list[str] | None = None) -> None
 ```
 
 **Fields**
@@ -446,6 +511,7 @@ VerificationPlanFrozen(*, schema_version: Literal[1] = 1, event_id: int = 0, ses
 | `ts` | `datetime` | no |
 | `type` | `Literal['verification_plan_frozen']` | no |
 | `checks` | `list[PlannedCheck]` | no |
+| `change_kinds` | `list[str] | None` | no |
 ### `VerificationStart`
 
 The harness-owned verifier has begun (§12).
@@ -467,7 +533,7 @@ VerificationStart(*, schema_version: Literal[1] = 1, event_id: int = 0, session_
 | `type` | `Literal['verification_start']` | no |
 
 ## Functions
-### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
+### `dump_event(event: Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | DeclarationRequired | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved | TaskEscalated, FieldInfo(annotation=NoneType, required=True, discriminator='type')]) -> str`
 
 Serialize an event to one JSON line for the journal.
 
@@ -476,7 +542,7 @@ Args:
 
 Returns:
     Its compact JSON representation.
-### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+### `load_events(path: Path) -> list[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | DeclarationRequired | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved | TaskEscalated, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
 
 Reload a JSONL journal back into typed events, in file order.
 
@@ -485,7 +551,7 @@ Args:
 
 Returns:
     The events, one per non-blank line, validated through the union.
-### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
+### `parse_event(data: dict | str | bytes) -> Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | DeclarationRequired | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved | TaskEscalated, FieldInfo(annotation=NoneType, required=True, discriminator='type')]`
 
 Validate a dict / JSON string into the right `HarnessEvent` variant.
 

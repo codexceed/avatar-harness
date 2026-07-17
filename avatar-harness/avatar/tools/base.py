@@ -40,6 +40,14 @@ EDIT_INTENT_TIER = 1
 # Task kinds whose contract permits mutation, so the edit-intent bootstrap applies (§7).
 EDIT_KINDS = frozenset({"edit", "test_only"})
 
+# The mid-run `investigate → edit` escalation tool (ADR-0048). Kind-gated, not just
+# phase-gated: an `edit` task also *starts* in `investigating`, and an escalated task has
+# already become `edit` — so a phase-only rule would advertise "escalate this INVESTIGATION"
+# to tasks that cannot escalate, and `_escalate_to_edit`'s guard would no-op after the human
+# paid a tier-3 approval, telling the model an escalation happened when none did (PR #114
+# review). Offering it only on a live investigation keeps the affordance honest.
+ESCALATION_TOOL = "switch_to_editing"
+
 
 @dataclass(frozen=True)
 class ToolDefinition:
@@ -117,7 +125,13 @@ def phase_admits_tool(phase: str, task_kind: str, tool: ToolDefinition) -> bool:
         True if `phase` is in the tool's phases, or `tool` is an edit-intent tool on an
         edit-shaped task (the bootstrap that surfaces `str_replace` from `investigating`),
         or `tool` is tier-1 on an investigate task (transient instrumentation, ADR-0005).
+        The escalation tool is the one *narrowing* rule: investigate-only (ADR-0048).
     """
+    if tool.name == ESCALATION_TOOL:
+        # Only a live investigation can escalate. An escalation flips the kind to `edit`, so
+        # this same rule also stops offering it once escalated — no separate "already escalated"
+        # check is needed, and the gate refuses a stray call instead of false-succeeding.
+        return task_kind == "investigate" and phase in tool.phases
     return phase in tool.phases or is_edit_intent(task_kind, tool) or admits_transient_edit(task_kind, tool)
 
 
