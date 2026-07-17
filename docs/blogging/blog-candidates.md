@@ -72,7 +72,7 @@ written this; 2 = commodity take).
 | --- | --- | --- | --- | --- | --- | --- |
 | `00` | When is an agent truly done? *(verifier owns "done")* | 3 | 4 | 3 | 2 | **Live** — 2026-06-18 |
 | `01` | Is your harness driving your model crazy? *(0.10 → 0.75)* | 4 | 4 | 4 | 3 | **Live** — 2026-07-01 |
-| `02` | What pass@1 hides | 4 | 4 | 4 | 3 | **In review** — dated 2026-07-11 |
+| `02` | Don't judge an agent by its pass@1 *(retitled from "What pass@1 hides"; slug `02-dont-judge-by-pass-at-1`)* | 4 | 4 | 4 | **4** | **In review** — dated 2026-07-11. Now carries the **pass^k-is-a-six-point-scale** finding: the 2026-07-14 rerun inverts the baseline reliability ranking (glm 0.50→0.67, gpt-oss 0.67→0.17, the latter from 8 Groq tool-validation deaths). Reliability-metric instability is a fresher angle than the original token-asymmetry take. |
 | `03` | Failure modes from the first eval loop | 3 | 3 | 3 | 3 | **Stub** — date lapsed, re-date on merge of `02` |
 | `04` | A verifier is not a tool | 4 | 4 | 3 | 3 | **Stub** — date lapsed, re-date on merge of `02` |
 | `05` | The model proposes, the harness disposes | 3 | 4 | 3 | 2 | **Stub** — the manifesto; earn it with empirics |
