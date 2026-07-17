@@ -59,6 +59,13 @@ External runtime requirement: `ripgrep` (`rg`) must be on `PATH` — the `search
   2. **Motivation** — why we're doing this.
   3. **Changes** — list of changes.
   4. **Testing** — list of tests and validations.
+- **Soft gate PR openings via optional quiz**: Upon being prompted to open a PR, prompt the user for an optional quiz based on the changes in the PR.
+  - The number of questions should be proportional to the size and complexity of the PR, with max 10 questions.
+  - The questions should require brief objective answers, like in MCQs and fill-in-the-blanks
+  - If the user agrees to the quiz and score their answers:
+    - If the user correctly answers all questions, move ahead with the PR
+    - Else, prompt the user for another optional round
+  - If the user opts out of the quiz, add the quiz + answers into the PR as a separate comment; not in the PR description
 
 ## Architecture: what requires reading multiple files to understand
 
