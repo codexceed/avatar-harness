@@ -42,15 +42,16 @@ the source of truth.
 
 ```bash
 jo                 # launch the cockpit
-jo --auto          # keep the strict verification gate (default: conversational)
+jo --auto          # strict gate: repair exhaustion is 'failed' (default: conversational — steer, then defer at exhaustion)
 ```
 
 - **Meta commands** (local, never hit the model): `/help`, `/mode`, `/plan`, `/diff`,
   `/state`, `/permissions`, `/quit`.
 - **Ground a goal** in a file with `@path/to/file`.
 - **Approval prompts** for `run_command` and sensitive-path calls.
-- **Conversational by default** — verification runs and is reported, but the reply isn't
-  gated on it (you're the terminal authority); `--auto` keeps the strict gate.
+- **Conversational by default** — the verifier steers every turn (a failing check drives repair,
+  or a gated contract amendment); at repair exhaustion it defers to you (blocks with a question)
+  rather than pronouncing failure. `--auto` makes exhaustion a hard `failed`.
 - **Multi-line prompts** — the input box composes across lines: **Enter** sends, **Shift+Enter**
   (or **Ctrl+J**, which works in every terminal) inserts a newline. The box grows as you type,
   then scrolls.

@@ -25,6 +25,8 @@ The danger auto-approve raises — a model rewriting a *failing* check to pass i
 
 **4. Every disposition is announced and audited.** Attended: `ApprovalRequested` → human modal → `ApprovalResolved(via="human")`. Unattended-deny: `ApprovalResolved(via="auto", allowed=False)`. Unattended-approve: `ApprovalResolved(via="auto", allowed=True)`, plus the amendment's old→new checks and the model's rationale in the journal. Auto-approve is therefore never *silent* — it is a visible, replayable record, which is what lets ADR-0040 count it.
 
+**5. Attended sessions never standing-grant an amendment (added 2026-07-10).** The unattended config-gated policy above is the *only* sanctioned auto-approve for `alter_verification`. In an attended (TUI) session, the `[a] always` grant path must not cover it: a standing `ApprovalGrant` on the amendment tool would auto-approve every later goalpost move in the sitting after one ratification — the silent widening this ADR's tool-name scoping exists to prevent, arriving through the other door. Enforced in the core (`Session` neither stores nor matches a grant for `_UNGRANTABLE_TOOLS = {"alter_verification"}` — `remember` degrades to allow-once) and reflected in the cockpit (`ApprovalModal` offers no `[a]`/Always for an amendment). The guarantee is core-owned; the modal only keeps the UI honest.
+
 ## Alternatives considered
 
 | Option | Verdict |

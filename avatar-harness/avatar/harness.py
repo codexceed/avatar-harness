@@ -23,6 +23,7 @@ from avatar.journal import JsonlEventJournal
 from avatar.model_client import ModelClient, OpenAIModelClient
 from avatar.permission import PermissionPolicy
 from avatar.runner import AgentRunner
+from avatar.sandbox import RLimits, make_sandbox
 from avatar.session import Session
 from avatar.state import TaskState
 from avatar.tools import default_registry
@@ -113,7 +114,9 @@ class Harness:
             emitter=emitter,
         )
 
-    def _build_runner(self, allow_dirty: bool, *, conversational: bool = False) -> AgentRunner:
+    def _build_runner(
+        self, allow_dirty: bool, *, conversational: bool = False, advisory: bool = False
+    ) -> AgentRunner:
         """Assemble a run-scoped `AgentRunner` (shared by `run`/`arun`/`session`).
 
         Constructs the `Workspace`/`RunDeps` the same way `cli.run_agent` did — threading
@@ -121,9 +124,11 @@ class Harness:
 
         Args:
             allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
-            conversational: Verification authority (§23.5). `False` (default) is the strict §12
-                gate (sets `outcome`, repairs); `True` runs the verifier as advisory and delivers
-                the reply without repairing (the interactive `ReplSession` default).
+            conversational: Terminal-boundary authority (§23.5, ADR-0046). The verifier steers in
+                either mode; `False` (default) pronounces repair exhaustion `failed`, `True` (the
+                interactive `ReplSession` default) defers to the human (`blocked`) at exhaustion.
+            advisory: External-grading authority (ADR-0040 option A). `True` runs the verifier as
+                advisory (report, don't steer/gate) for a held-out grader — the eval harness only.
 
         Returns:
             A fresh `AgentRunner` wired with this facade's collaborators.
@@ -134,6 +139,13 @@ class Harness:
                 allow_dirty=allow_dirty,
                 sensitive_path_globs=self.config.sensitive_path_globs,
                 log_path=self.config.log_path,
+                sandbox=make_sandbox(
+                    self.config.sandbox_mode,
+                    allow_network=self.config.sandbox_allow_network,
+                    rlimits=RLimits() if self.config.sandbox_rlimits else None,
+                    image=self.config.sandbox_image,
+                    runtime=self.config.sandbox_container_runtime,
+                ),
             ),
             config=self.config,
             cancellation=CancellationToken(),
@@ -148,6 +160,7 @@ class Harness:
             config=self.config,
             policy=self.policy,
             conversational=conversational,
+            advisory=advisory,
         )
 
     def run(
@@ -194,13 +207,14 @@ class Harness:
         """
         return await self._build_runner(allow_dirty).arun(TaskState(goal=task, task_kind=task_kind))
 
-    def session(
+    def session(  # noqa: PLR0913 — keyword-only run options threaded to the Session/runner
         self,
         task: str,
         *,
         task_kind: Literal["edit", "investigate", "test_only"] = "investigate",
         allow_dirty: bool = False,
         conversational: bool = False,
+        advisory: bool = False,
         journal: JsonlEventJournal | None = None,
         unattended: bool = False,
     ) -> Session:
@@ -214,9 +228,14 @@ class Harness:
             task: The natural-language task to run.
             task_kind: The verification contract to apply (`investigate` / `edit` / `test_only`).
             allow_dirty: When `True`, open the workspace despite uncommitted tracked changes (§15).
-            conversational: Verification authority (§23.5). `False` (default) is the strict §12
-                gate (sets `outcome`, repairs); `True` runs the verifier as advisory and delivers
-                the reply without repairing — for callers that grade externally (e.g. the eval probe).
+            conversational: Terminal-boundary authority (§23.5, ADR-0046). The verifier steers in
+                either mode; `False` (default) pronounces repair exhaustion `failed`, `True` (the
+                interactive `ReplSession` default) defers to the human (`blocked`) at exhaustion.
+                A failed verdict is never laundered to `success`.
+            advisory: External-grading authority (ADR-0040 option A). `True` runs the verifier as
+                advisory — it reports but does not steer or gate, and a failed verdict is delivered
+                as `success` for a held-out grader (the eval success-probe) to judge. For callers
+                that grade externally (the eval harness); never the REPL. Precedes `conversational`.
             journal: The write-ahead `JsonlEventJournal` for the run's typed events; `None`
                 (default) keeps the stream in memory only.
             unattended: When `True`, the session auto-denies any tier-3/denylist `ask` instead
@@ -227,7 +246,7 @@ class Harness:
         Returns:
             A `Session` wrapping the run — observation out, control in.
         """
-        runner = self._build_runner(allow_dirty, conversational=conversational)
+        runner = self._build_runner(allow_dirty, conversational=conversational, advisory=advisory)
         return Session(
             runner,
             TaskState(goal=task, task_kind=task_kind),
@@ -235,4 +254,5 @@ class Harness:
             unattended=unattended,
             approval_timeout=self.config.approval_timeout_seconds,
             amendment_policy=self.config.autonomous_amendment_policy,
+            escalation_policy=self.config.autonomous_escalation_policy,
         )

@@ -30,7 +30,14 @@ from avatar.workspace import Workspace
 
 
 def _runner(
-    tmp_path, registry: ToolRegistry, decisions, *, emitter=None, planner=None, **config_kw
+    tmp_path,
+    registry: ToolRegistry,
+    decisions,
+    *,
+    emitter=None,
+    planner=None,
+    conversational=False,
+    **config_kw,
 ) -> AgentRunner:
     config = HarnessConfig(**config_kw)
     deps = RunDeps(workspace=Workspace(tmp_path), config=config, cancellation=CancellationToken())
@@ -43,6 +50,7 @@ def _runner(
         emitter=emitter or Emitter(),
         config=config,
         planner=planner,
+        conversational=conversational,
     )
 
 
@@ -303,7 +311,10 @@ def test_phase_advances_to_editing_on_first_edit_intent(git_repo):
     decisions = [ModelDecision(action=ToolCall(name="str_replace", input=_FIX))]
     state = TaskState(goal="fix add()", task_kind="edit")
     assert state.phase == "investigating"
-    _runner(git_repo, _edit_registry(), decisions, lint_command="", max_iterations=1).run(state)
+    # Gate off (ADR-0038): this test isolates the phase advance, not the greenfield declaration gate.
+    _runner(
+        git_repo, _edit_registry(), decisions, lint_command="", max_iterations=1, max_declaration_nudges=0
+    ).run(state)
     assert state.phase in {"editing", "verifying"}  # advanced past investigating on the edit
 
 
@@ -433,6 +444,30 @@ def test_wall_clock_budget_yields_incomplete(git_repo):
     result = _runner(git_repo, _edit_registry(), decisions, max_wall_clock_seconds=0).run(state)
     assert result.outcome == "incomplete"
     assert result.iterations == 0  # the wall-clock bound short-circuits, not iteration exhaustion
+
+
+def test_none_wall_clock_disables_the_guillotine(git_repo):
+    # `max_wall_clock_seconds=None` (the attended-cockpit default) removes the per-run clock: the
+    # run proceeds on its own terms rather than being cut off mid-work. `_within_budget` skips the
+    # clock check, and the other budgets (iterations) still bound the loop.
+    runner = _runner(git_repo, _edit_registry(), [], max_wall_clock_seconds=None)
+    state = TaskState(goal="x", task_kind="investigate")
+    assert runner._within_budget(state, None) is True  # no wall-clock kill, whatever the elapsed time
+    state.iterations = runner.config.max_iterations
+    assert runner._within_budget(state, None) is False  # iterations remain the backstop
+
+
+def test_none_wall_clock_run_reaches_its_own_terminal(git_repo):
+    # End-to-end: with the clock off, the investigate run reaches its own final_answer instead of an
+    # `incomplete` wall-clock stop (contrast with the `max_wall_clock_seconds=0` case above).
+    decisions = [
+        ModelDecision(action=ToolCall(name="read_file", input={"path": "calc.py"})),
+        ModelDecision(action=FinalAnswer(answer="calc.py subtracts in add()")),
+    ]
+    state = TaskState(goal="look around", task_kind="investigate")
+    result = _runner(git_repo, _edit_registry(), decisions, max_wall_clock_seconds=None).run(state)
+    assert result.iterations >= 1  # not short-circuited at iteration 0 by a wall-clock bound
+    assert result.final_answer == "calc.py subtracts in add()"  # reached its own terminal decision
 
 
 def test_context_budget_yields_incomplete(git_repo):
@@ -625,7 +660,8 @@ def test_runner_journals_frozen_plan_as_typed_event(git_repo):
 def test_smoke_floor_journaled_to_typed_sink(git_repo):
     # The late-bound floor must reach the typed sink too, not just the legacy emitter, so
     # journal/cockpit/eval replay see the real rubric — not the earlier empty plan (PR #50).
-    config = HarnessConfig()
+    # Gate off (ADR-0038): this test isolates the smoke-floor journaling, not the declaration gate.
+    config = HarnessConfig(max_declaration_nudges=0)
     deps = RunDeps(workspace=Workspace(git_repo), config=config, cancellation=CancellationToken())
     sink = _SinkStub()
     reg = _edit_registry()
@@ -679,9 +715,9 @@ def test_smoke_floor_attempted_at_most_once_across_repair(git_repo):
         ModelDecision(action=FinalAnswer(answer="still done")),
         ModelDecision(action=FinalAnswer(answer="really done")),
     ]
-    result = _runner(git_repo, reg, decisions, planner=planner, max_repair_attempts=2).run(
-        TaskState(goal="write a module", task_kind="edit")
-    )
+    result = _runner(
+        git_repo, reg, decisions, planner=planner, max_repair_attempts=2, max_declaration_nudges=0
+    ).run(TaskState(goal="write a module", task_kind="edit"))
     assert result.outcome == "failed"  # no contract and the floor declined
     assert calls["n"] == 1  # attempted exactly once, not once per repair iteration
 
@@ -750,9 +786,14 @@ def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
     reg = _edit_registry()
     reg.register(write_file)
     state = TaskState(goal="write a module", task_kind="edit")
-    result = _runner(git_repo, reg, decisions, planner=_smoke_planner("python -m py_compile main.py")).run(
-        state
-    )
+    # Gate off (ADR-0038): this test isolates the ADR-0014 smoke floor, not the declaration gate.
+    result = _runner(
+        git_repo,
+        reg,
+        decisions,
+        planner=_smoke_planner("python -m py_compile main.py"),
+        max_declaration_nudges=0,
+    ).run(state)
 
     assert result.outcome == "success"  # verified on the model-authored floor, run by the harness
     assert state.verification_plan == [
@@ -763,6 +804,34 @@ def test_greenfield_smoke_floor_passes_without_declared_contract(git_repo):
     report = result.verifier_results[-1]
     assert report.passed is True
     assert any(c.name == "smoke" and c.status == "pass" for c in report.checks)
+
+
+def test_conversational_floor_failure_never_reports_success(git_repo):
+    # ADR-0038/0046: the immutable floor can never be weakened, and a FAILING floor must never
+    # read as `success` — not even in conversational mode, where the old advisory path buried it.
+    # A greenfield edit whose authored floor fails (a broken file that won't compile) steers to
+    # repair exhaustion, then defers to the human (`blocked`) — it is never laundered to success.
+    reg = _edit_registry()
+    reg.register(write_file)
+    broken = "def oops(\n"  # a syntax error → `py_compile` exits non-zero
+    decisions = [
+        ModelDecision(action=ToolCall(name="write_file", input={"path": "main.py", "content": broken})),
+        ModelDecision(action=FinalAnswer(answer="done")),
+    ]
+    state = TaskState(goal="write a module", task_kind="edit")
+    result = _runner(
+        git_repo,
+        reg,
+        decisions,
+        conversational=True,
+        planner=_smoke_planner("python -m py_compile main.py"),
+        max_declaration_nudges=0,
+    ).run(state)
+
+    assert result.outcome != "success"  # the failing floor is never laundered to success
+    assert result.outcome == "blocked"  # conversational exhaustion defers to the human
+    assert result.verifier_results[-1].passed is False
+    assert any(c.name == "smoke" and c.status == "fail" for c in result.verifier_results[-1].checks)
 
 
 # --- declared verification contract fold-in (ADR-0038) -----------------------

@@ -44,7 +44,9 @@ Args:
 
 Returns:
     True iff the grant covers the call (same tool + program, at or below the
-    granted tier, and below the tier-4 ceiling). A blank prefix never matches.
+    granted tier, and below the tier-4 ceiling). A blank prefix never matches,
+    and an ungrantable tool (`alter_verification`) never matches — a contract
+    amendment is ratified by a human every time.
 ### `Session`
 
 A live, interruptible task run exposing the two-plane API (§13, §23).
@@ -67,9 +69,16 @@ Args:
         `resolve_approval` arrives within it, the call is auto-denied so a run can't hang
         forever inside the gate (the wall-clock budget can't preempt an awaited approval).
         `None` (default) waits indefinitely — the right shape for a human at a REPL.
+    amendment_policy: The unattended disposition for an `alter_verification` amendment
+        (ADR-0039). `"deny"` (default) keeps ADR-0016's deny-only posture; `"approve"` lets
+        an autonomous run self-ratify that one action (never any other `ask`).
+    escalation_policy: The unattended disposition for a `switch_to_editing` escalation
+        (ADR-0048). `"deny"` (default) refuses the mid-run investigate→edit switch with no
+        human; `"approve"` lets an autonomous run self-ratify that one action — the same
+        vocabulary as `amendment_policy`, since the two knobs share their semantics.
 
 ```python
-Session(runner: AgentRunner, state: TaskState, *, session_id: str | None = None, journal: JsonlEventJournal | None = None, grants: list[ApprovalGrant] | None = None, unattended: bool = False, approval_timeout: float | None = None) -> None
+Session(runner: AgentRunner, state: TaskState, *, session_id: str | None = None, journal: JsonlEventJournal | None = None, grants: list[ApprovalGrant] | None = None, unattended: bool = False, approval_timeout: float | None = None, amendment_policy: str = 'deny', escalation_policy: str = 'deny') -> None
 ```
 
 #### `Session.cancel(self, reason: str = 'cancelled') -> None`
@@ -83,7 +92,7 @@ Args:
     reason: Why the run is being cancelled (retained for display; the loop records
         its own cancellation feedback when it observes the token).
 
-#### `Session.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
+#### `Session.events(self) -> AsyncIterator[Annotated[AgentStart | AgentEnd | TurnStart | TurnEnd | PhaseChanged | DeclarationRequired | ModelDecisionEvent | ModelUpdate | ToolStart | ToolEnd | ApprovalRequested | ApprovalResolved | DecisionError | ModelUsage | VerificationPlanFrozen | VerificationStart | VerificationEnd | CancellationObserved | TaskEscalated, FieldInfo(annotation=NoneType, required=True, discriminator='type')]]`
 
 The observation plane: an independent async stream of typed events (§13).
 
@@ -126,7 +135,9 @@ Tolerant of an unknown id (resolves the sole pending request if there is exactly
 one) so a caller that didn't capture the id can still unblock the run. With
 `allow` and `remember` both set (the `[a] always` choice), stores a session-scoped
 `ApprovalGrant` for the call's program prefix so matching calls auto-allow later.
-`remember` is ignored on a denial (there is no "always deny") and on a blank prefix.
+`remember` is ignored on a denial (there is no "always deny"), on a blank prefix,
+and on an ungrantable tool (`alter_verification` — a contract amendment is ratified
+by a human every time; `remember` degrades to allow-once).
 
 Args:
     approval_id: The id from the `ApprovalRequested` event.

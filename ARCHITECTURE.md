@@ -60,6 +60,7 @@ flowchart TD
     TR --> WS["Workspace: path-confined, diff/rollback, command exec"]
     V --> WS
     VP --> WS
+    WS --> SB["Sandbox: hermetic exec seam (ADR-0042)"]
 
     %% force the tiers to stack vertically into one column
     turn ~~~ act
@@ -67,7 +68,7 @@ flowchart TD
 
     classDef done fill:#1b4332,stroke:#52b788,color:#d8f3dc;
     classDef todo fill:#343a40,stroke:#868e96,color:#dee2e6;
-    class TS,EM,EL done;
+    class TS,EM,EL,SB done;
     class SESS,CLI,R,CB,MC,TR,PP,VP,V,AM,UI,WS todo;
 ```
 
@@ -84,7 +85,8 @@ flowchart TD
 | `Emitter` + `EventLog` | Observation-only events; durable JSONL, grouped by `session_id`; `EventLog` round-trips typed events too. | [Implemented] |
 | `HarnessEvent` + `EventBus` | Typed lifecycle union (`event_types.py`) + bounded per-subscriber fan-out (`bus.py`) the async loop publishes through, with the privileged write-ahead `JsonlEventJournal` (`journal.py`). | [Implemented] (3.0 fan-out + Lane 1 bounded queues/drop policy/journal) |
 | `ArtifactManager` | Final status + change summary + evidence. | [Implemented] |
-| `Workspace` | Path confinement + sensitive-path denylist (resolved-path backstop), diff/rollback, command execution. | [Implemented] |
+| `Workspace` | Path confinement + sensitive-path denylist (resolved-path backstop), diff/rollback, command execution. Every command funnels through one seam (`_run_unlogged`), where an injected `Sandbox` seals the substrate (ADR-0042). | [Implemented] |
+| `Sandbox` | Hermetic execution at the command seam (`sandbox.py`, ADR-0042, implements ADR-0009). A pure `prepare() → ExecSpec` transform closing **Threat C** (runtime/substrate gaming): `hermetic-env` (default) scrubs the child env to a language-neutral allowlist so an inherited `PYTEST_ADDOPTS`/`PYTHONPATH` can't rig a check; `sandbox-exec` (macOS) + `bwrap` (Linux) add network-deny + write-confine; `container` (Podman/Docker) is the cross-platform strong mode; `none` inherits (escape hatch). Opt-in `RLimits`. Does *not* cover weak/gutted tests (Threats A/B). | [Implemented] (Increments 1–2: all backends; `bwrap`/`container` shape-tested, guest isolation needs a Linux run) |
 | `Harness` | Public facade (`from_env()`/`run()`/`arun()`/`session()`); wires defaults, every seam overridable; the CLI delegates to it. | [Implemented] |
 | `Session` | Two-plane boundary over a run — `events()` out, `resolve_approval()`/`cancel()` in (`§13`/`§23`). | [Implemented] (3.0 foundation) |
 | `SessionState` + `ReplSession` | The multi-turn scope above `TaskState` (`session_state.py`): history, per-goal tasks, session-scoped grants, mode (incl. `auto`/conversational); drives each goal through a per-goal `Session`; handles local meta commands (`run_meta` → `MetaResult`); seeds `@path` as denylist-checked `grounding` evidence; the plan-flow seam (`start_plan`/`start_build`/`extract_plan`/`plan_is_approvable`/`record_goal`) that both `submit_plan` (headless) and the cockpit reuse. | [Implemented] (Lane 2a + 3.2a–3.2e) |
@@ -193,7 +195,7 @@ flowchart TD
     RB -->|no| I["outcome = incomplete: ran out of budget mid-progress"]
 ```
 
-General budgets (max iterations, wall-clock, per-tool timeout, max context, consecutive failed actions) → **`incomplete`**. The repair budget (consecutive verification rejections) → **`failed`**. `blocked` comes only from `ask_user` in a non-interactive run.
+General budgets (max iterations, wall-clock, per-tool timeout, max context, consecutive failed actions) → **`incomplete`**. The repair budget (consecutive verification rejections) → **`failed`**. `blocked` comes only from `ask_user` in a non-interactive run. The per-run wall-clock is **nullable** (ADR-0043): the attended cockpit defaults it off — Ctrl-C and `max_iterations` are the backstops there — while batch/eval keep the 600s cap; an explicitly configured cap (env or `.env`) always wins.
 
 ## 4. Deep dive — verification
 
@@ -237,7 +239,7 @@ flowchart TD
 
 A `CheckResult` carries `status: pass | fail | skip` plus an `evidence` string (the actual command + output excerpt); a `skip` **requires** a reason. The verifier returns a `VerifierResult(passed, summary, checks, recommended_next_action)` — and `recommended_next_action` is what turns a rejection into useful repair *direction*, not just a "no".
 
-The key subtlety: **a skipped check is not a passed check.** A naive "nothing failed → pass" would green-light a no-op, so the gate is defined on *required* checks plus a mandatory positive signal.
+The key subtlety: **a skipped check is not a passed check.** A naive "nothing failed → pass" would green-light a no-op, so the gate is defined on *required* checks plus a mandatory positive signal. And an *allowed* skip is not a blank cheque: a `kind="test"` check that collects zero tests (pytest exit 5) is tolerated only when the repo genuinely had none — if the **pinned baseline had tests** (`Workspace.baseline_paths()`) and the check now collects nothing, that is suppression (emptied/deleted graded tests) and the verifier **fails, not skips** (ADR-0042, Threat A).
 
 ### 4.2 The contract is selected by `task_kind`
 
@@ -269,11 +271,14 @@ flowchart TD
     DET["2 · Deterministic detection — CI workflow run: steps > manifests (package.json, pyproject/tox/nox, Cargo.toml, go.mod, pre-commit) > Makefile targets; program-position classification, no LLM, no Python assumption"]
     LLM["3 · LLM fallback (opt-in: AVATAR_PLANNER_MODEL) — proposes for unresolved slots only, must cite the declaring artifact; the harness validates the citation or rejects"]
     FRZ["freeze onto TaskState at investigating → editing; journal verification_plan_frozen (command + provenance per check)"]
+    DECL["3.5 · Greenfield declaration gate (ADR-0038) — edit + tiers 1-3 empty: the runner REFUSES each edit and nudges the model to declare_verification (bounded: max_declaration_nudges, default 3; emits DeclarationRequired) before the freeze. A declared executing contract folds into the frozen plan; at the nudge cap it falls back to the floor"]
     SMK["4 · Greenfield smoke floor (ADR-0014) — empty plan + an edit that wrote code: the model AUTHORS one smoke check, bounded to an ALLOWLIST of non-executing checkers (py_compile/ruff/node --check/tsc/go vet/...); provenance=model-smoke, resolved at VERIFY time, run by the harness"]
     CO -->|slot unresolved| DET -->|slot unresolved| LLM
     CO --> FRZ
     DET --> FRZ
     LLM --> FRZ
+    LLM -->|greenfield edit, nothing resolved| DECL
+    DECL --> FRZ
     FRZ -->|froze empty + code written| SMK
 ```
 
@@ -281,13 +286,18 @@ Key properties:
 
 - **The model never authors the rubric — with one bounded exception (ADR-0014).** For tiers 1–3 it can only pick among frozen checks (`run_tests`/`run_linter` ride the same plan), never add or forge one. The greenfield smoke floor (tier 4) is the exception: when nothing else resolved, the model *authors* one check — but the harness still **runs** it and reads the real exit code, so it is author-and-run, never self-assertion (the model can't forge a process result). It runs unattended outside the permission gate, so it is bounded to an **allowlist of non-executing checkers** (compile/parse/type-check; no `python -c`/`node -e`/shell wrappers — those are single argvs a denylist can't catch). Lowest precedence (any real contract displaces it) and tagged `provenance=model-smoke` so the weak signal is legible.
 - **Python-ecosystem commands are emitted `python -m <tool>`**, so an installed-but-not-on-PATH tool still resolves; a genuinely missing binary surfaces as a failed check (exit 127 from `Workspace.run`), never a crash into the loop.
+- **Greenfield edit must declare a contract before editing (ADR-0038).** When tiers 1–3 resolve nothing on an `edit` task, the runner gates the `investigating→editing` boundary: it refuses each edit-intent call and nudges the model to `declare_verification` (emitting a typed `DeclarationRequired` event the cockpit renders), a **bounded nudge** of `max_declaration_nudges` (default 3; `0` disables the gate). A declared executing contract folds into the frozen plan (tiers 1–3 still win when present); at the nudge cap the runner falls back to the smoke floor, so the run is never stranded at declaration. Scoped to greenfield `edit`.
+- **The declaration states its change kinds; the diff audits them (ADR-0044).** `declare_verification` carries `change_kinds` (a list — `code` and/or `content`, default `["code"]`), and each declared kind needs one covering check: `code` keeps the "must execute" vacuity rule; `content` (docs/specs) instead demands an **anchored + falsifiable** check — it names a content artifact (`.md`/`.rst`/`.txt`/`.adoc`) and can exit non-zero on a wrong one (inspectors like `grep`/`test` are first-class there; can't-fail `|| true` fallbacks are rejected). At verification time a required `change_kind_coverage` check reconciles reality against the stated intent: every changed path's kind must have been declared (murky config classifies as `code`), so mislabeling code work as `content` to dodge execution checks fails legibly. The kinds freeze with the plan and ride the `verification_plan_frozen` journal event.
+- **Shell syntax is rejected, not interpreted, at model-authored command boundaries (ADR-0045).** `Workspace.run` executes a single argv with no shell, so a shared gate (`avatar/shell_syntax.py`) vets every model-authored command *before* it can freeze or run: `&&` normalizes to a conjunction of per-segment checks (segments share a `chain` id; the verifier stops a chain at its first failure, preserving shell short-circuit), while `;`/`|`/`||`/redirects/heredocs — and bare quoted operators like `'&&'` — reject model-correctably with a steer. Applied at `declare_verification`/`alter_verification`, at `run_command` (which rejects all operators, chains included), and to tier-3 LLM plan proposals. Without it, a chained check runs argv-mangled — the dogfood journal's vacuous verification pass.
 - **Nothing discovered → the greenfield floor, else a legible failure.** An empty plan over an `edit` that wrote code triggers the tier-4 smoke floor (resolved at verify time, not the freeze boundary — the only late-bound tier). If the floor also declines (non-code task, or the model proposes nothing runnable), the empty plan stands and verification fails legibly ("no verification contract discovered — declare one via `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND`"), keeping the structural guards (diff present, no secrets).
 - **Every run's rubric is auditable**: the frozen plan (each command + its provenance — `config:…`, `ci:…`, `Makefile:test`, `llm:<cited path>`) is a typed `verification_plan_frozen` journal event.
 - Smart **test-target inference** ("which tests cover this diff?") remains **deferred** (`§9`, `§21`); the plan is per-session, not per-diff.
 
-### 4.4 Interactive vs. autonomous authority (`§23.5`)
+### 4.4 Interactive vs. autonomous authority (`§23.5`, ADR-0046)
 
-Verification always *runs and reports*. **Who decides on the result** shifts: in an autonomous (`--auto`) run the verifier sets `outcome`; in a conversational turn `final_answer` is delivered as a reply and the human is the terminal authority. `task_kind` still picks *which* checks run.
+Verification always *runs, reports, and steers*. A failing verdict drives the repair loop in **every** mode — the model repairs, or proposes a gated `alter_verification` amendment (the mid-loop human-consent path). What shifts is only *who is deferred to at the terminal boundary*: an autonomous (`--auto`) run pronounces repair exhaustion `failed`; a conversational turn **blocks** at exhaustion (an `open_question` hand-off to the human), the last reply + failing verdict left on the state. A failed verdict is never laundered to `success`. `task_kind` still picks *which* checks run — that (not an advisory mode) is what keeps an "explain this" turn from facing an edit-shaped gate.
+
+But steering only reaches tasks that *arrive at* verification, and a fix goal misrouted to `investigate` never does — it edits blind (no execution, and its changes must net to zero) and thrashes. So `task_kind` gains **one sanctioned mid-run transition, `investigate → edit`** (ADR-0048): `run_command` is admitted in `investigating` (it attributes its side effects, so the net-zero contract still holds), and a **consented** `switch_to_editing` flips the kind — the run becomes a normal edit task that binds a contract and steers. Escalation is a proposal (attended asks; unattended → `autonomous_escalation_policy`), triggered mid-run by the model's request or by the harness thrash detector (repeats-with-a-persistent-diff); the *investigation-ended* case (`final_answer` with a leftover diff) is handled by the net-zero contract (revert), not escalation. Detection is resolved from the pinned baseline, so a contract file the agent wrote mid-investigation can never become its own passing rubric.
 
 ## 5. Dry run — one task, end to end
 

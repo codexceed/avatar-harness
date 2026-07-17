@@ -378,14 +378,16 @@ def test_is_empty_body_classifies_nul_and_whitespace():
 
 def test_request_timeout_default_is_calibrated():
     cfg = HarnessConfig()
+    wall = cfg.max_wall_clock_seconds
+    assert wall is not None  # the batch default keeps a real cap (only the cockpit disables it)
     # Under the run budget (one call can't eat the whole run)...
-    assert cfg.request_timeout_seconds < cfg.max_wall_clock_seconds
+    assert cfg.request_timeout_seconds < wall
     # ...but comfortably ABOVE the longest legitimate generation observed in the 2026-06-20 data
     # (~203s on secret-safety) so a flat timeout never kills real work (the 90s default did).
     assert cfg.request_timeout_seconds >= 210
     assert cfg.transport_max_retries >= 0
     # Worst-case dead-endpoint cost stays a bounded overrun, not many wall clocks.
-    assert cfg.request_timeout_seconds * (cfg.transport_max_retries + 1) <= 2 * cfg.max_wall_clock_seconds
+    assert cfg.request_timeout_seconds * (cfg.transport_max_retries + 1) <= 2 * wall
 
 
 def test_runner_surfaces_transport_error_not_incomplete(tmp_path, read_registry):

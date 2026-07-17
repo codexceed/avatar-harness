@@ -160,9 +160,11 @@ What it gives you over raw sessions:
   approve/revise → build, with the approved plan seeding the edit task as a
   constraint.
 - **Verification authority** — the REPL default is *conversational*: the
-  verifier always runs and reports, but the reply is delivered without the
-  repair gate; the human is the terminal authority. `ReplSession(harness,
-  auto=True)` restores the strict gate.
+  verifier always runs and **steers** (a failing check drives repair, or a
+  gated contract amendment), and at repair exhaustion the turn defers to the
+  human (`blocked` with a question) instead of pronouncing failure.
+  `ReplSession(harness, auto=True)` makes exhaustion a hard `failed`. A failed
+  verdict is never delivered as `success` (§23.5, ADR-0046).
 
 The Textual cockpit (the separate `jo-cli` package, the `jo` command — a
 consumer of the core, never part of it) is exactly this surface rendered
@@ -180,9 +182,11 @@ local `.env`):
 | `AVATAR_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint. |
 | `AVATAR_WORKSPACE_ROOT` | `.` | The repo the agent operates on. |
 | `AVATAR_MAX_ITERATIONS` | `50` | Iteration budget → `incomplete`. |
-| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `600` | Whole-run timeout → `incomplete`. |
+| `AVATAR_MAX_WALL_CLOCK_SECONDS` | `1800` | Per-agent-run timeout → `incomplete` (reset each run, not cumulative across a sitting). Batch/eval keep the cap; the interactive cockpit (`jo`) **disables it by default** (unset ⇒ no clock — the human's Ctrl-C and `AVATAR_MAX_ITERATIONS` are the backstops). Set it explicitly to re-impose a cap in the cockpit. |
 | `AVATAR_MAX_CONSECUTIVE_FAILURES` | `5` | Thrash guard (tool errors in a row) → `incomplete`. |
 | `AVATAR_MAX_REPAIR_ATTEMPTS` | `3` | Verification rejections in a row → `failed`. |
+| `AVATAR_AUTONOMOUS_ESCALATION_POLICY` | `deny` | Unattended disposition for a `switch_to_editing` escalation (ADR-0048): `deny` refuses the mid-run `investigate → edit` switch with no human present; `approve` self-ratifies it so a misrouted fix can recover on its own (same vocabulary as the amendment knob). Attended runs always ask. |
+| `AVATAR_ESCALATION_THRASH_REPEATS` | `3` | Repeated no-progress actions (while an investigation holds a non-empty diff) that trip the harness thrash nudge directing the model to `switch_to_editing` (ADR-0048). |
 | `AVATAR_MAX_CONTEXT_TOKENS` | `100000` | Hard bound on the per-turn context packet. |
 | `AVATAR_TEST_COMMAND` | *(empty)* | The verification plan's **override tier** (ADR-0007): a non-empty value always wins. Empty = unset → the planner detects the repo's declared test contract (CI workflows > manifests > Makefile). The harness runs the resolved command itself — never model-mediated. |
 | `AVATAR_LINT_COMMAND` | *(empty)* | Same, for the lint/type slot of the verification plan. |

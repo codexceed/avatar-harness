@@ -1,0 +1,19 @@
+{
+  "stamp": "20260712T110513Z",
+  "n": 1,
+  "temperature": 0.7,
+  "seeds": 1,
+  "models": [
+    "openai/gpt-5.6-sol"
+  ],
+  "overall_pass_at_1": 1.0,
+  "per_model": [
+    {
+      "model": "openai/gpt-5.6-sol",
+      "pass_at_1": 1.0,
+      "pass_caret_k": 1.0,
+      "n": 1
+    }
+  ],
+  "failure_histogram": {}
+}

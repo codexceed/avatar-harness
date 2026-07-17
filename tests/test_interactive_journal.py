@@ -111,3 +111,44 @@ def test_jo_cli_respects_log_flag(git_repo, monkeypatch, tmp_path):
     repl = _launch_interactive(git_repo, monkeypatch, ["--log", str(log)])
     assert repl.journal is not None
     assert repl.journal.path == log
+
+
+def _launch_default_config(git_repo, monkeypatch, tmp_path) -> ReplSession:
+    """Run `jo_cli.main` with NO explicit config (the internal-default path), cockpit stubbed."""
+    launched: dict = {}
+
+    def _fake_run(self, *args, **kwargs):
+        launched["repl"] = self.repl
+
+    monkeypatch.setattr(CockpitApp, "run", _fake_run)
+    monkeypatch.chdir(tmp_path)  # isolate from any repo-root .env; events/ is cwd-relative
+    monkeypatch.setenv("AVATAR_WORKSPACE_ROOT", str(git_repo))
+    assert jo_cli.main([], model_client=ScriptedModel([])) == 0  # config=None → internal default path
+    return launched["repl"]
+
+
+def test_cockpit_disables_wall_clock_by_default(git_repo, monkeypatch, tmp_path):
+    # The attended cockpit turns the per-run wall-clock guillotine OFF (the human's Ctrl-C and
+    # max_iterations are the backstops) when the operator has not set one explicitly.
+    monkeypatch.delenv("AVATAR_MAX_WALL_CLOCK_SECONDS", raising=False)
+    repl = _launch_default_config(git_repo, monkeypatch, tmp_path)
+    assert repl.harness.config.max_wall_clock_seconds is None
+
+
+def test_cockpit_respects_explicit_wall_clock_env(git_repo, monkeypatch, tmp_path):
+    # An explicit AVATAR_MAX_WALL_CLOCK_SECONDS still wins in the cockpit — the default only fills
+    # the gap, it does not override a stated cap.
+    monkeypatch.setenv("AVATAR_MAX_WALL_CLOCK_SECONDS", "300")
+    repl = _launch_default_config(git_repo, monkeypatch, tmp_path)
+    assert repl.harness.config.max_wall_clock_seconds == 300
+
+
+def test_cockpit_respects_wall_clock_from_dotenv(git_repo, monkeypatch, tmp_path):
+    # PR-#106 review: the guard keyed on os.environ and missed a `.env`-sourced cap — an
+    # operator's explicit AVATAR_MAX_WALL_CLOCK_SECONDS was silently nulled. The setting's
+    # source must not matter; pydantic marks env-var and dotenv values alike in
+    # `model_fields_set` (and defaults not at all).
+    monkeypatch.delenv("AVATAR_MAX_WALL_CLOCK_SECONDS", raising=False)
+    (tmp_path / ".env").write_text("AVATAR_MAX_WALL_CLOCK_SECONDS=900\n", encoding="utf-8")
+    repl = _launch_default_config(git_repo, monkeypatch, tmp_path)  # chdirs into tmp_path
+    assert repl.harness.config.max_wall_clock_seconds == 900
