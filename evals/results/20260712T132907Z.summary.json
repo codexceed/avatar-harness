@@ -1,0 +1,21 @@
+{
+  "stamp": "20260712T132907Z",
+  "n": 1,
+  "temperature": 0.7,
+  "seeds": 1,
+  "models": [
+    "z-ai/glm-5.2"
+  ],
+  "overall_pass_at_1": 0.0,
+  "per_model": [
+    {
+      "model": "z-ai/glm-5.2",
+      "pass_at_1": 0.0,
+      "pass_caret_k": 0.0,
+      "n": 1
+    }
+  ],
+  "failure_histogram": {
+    "probe_failed": 1
+  }
+}

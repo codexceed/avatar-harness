@@ -11,10 +11,17 @@ from pydantic import BaseModel
 
 from avatar.deps import RunDeps
 from avatar.planner import effective_invocation
+from avatar.shell_syntax import argv_segments
 from avatar.tools.base import ToolDefinition, ToolResult
 
 # Verification tools load in the editing and verifying phases (§21).
 _VERIFY_PHASES = frozenset({"editing", "verifying"})
+# run_command ALSO loads in investigating (ADR-0048): reproducing/observing a failure is core
+# investigation, and run_command attributes+stages its side effects (below), so anything it writes
+# stays inside the baseline diff the investigate net-zero contract enforces. run_tests/run_linter do
+# NOT join it — they execute without that side-effect accounting and need a plan that doesn't exist
+# pre-escalation, so they stay verify-only until that follow-up lands.
+_COMMAND_PHASES = frozenset({"investigating", "editing", "verifying"})
 
 _USAGE_ERROR_EXIT = 4  # pytest convention: usage error / target not found (model-correctable).
 
@@ -97,7 +104,8 @@ def _run_tests(args: RunTestsInput, deps: RunDeps) -> ToolResult:
             success=False,
             error=(
                 "no test command configured or discovered — set AVATAR_TEST_COMMAND or declare "
-                "one in the repo (CI workflow, package manifest, Makefile)"
+                "one in the repo (CI workflow, package manifest, Makefile). On a greenfield "
+                "declared contract, run your declared checks via run_command instead"
             ),
         )
     if args.target:
@@ -186,6 +194,27 @@ def _run_command(args: RunCommandInput, deps: RunDeps) -> ToolResult:
     # model-correctable rather than a system error surfaced from the runtime.
     if not args.command.strip():
         return ToolResult(tool_name="run_command", success=False, error="empty command")
+    # ADR-0045: reject shell syntax instead of silently mis-executing it. A `&&` chain
+    # would run ONLY the first program (the rest as its literal argv) yet report exit=0 —
+    # manufactured evidence; a heredoc would block on stdin until the timeout. This runs
+    # AFTER the tier-3 gate (an approved chained call is refused without executing): the
+    # gate stays tool-semantics-blind by design (§13) — one wasted modal is the cost of
+    # not teaching the permission layer what each tool's input means.
+    segments, reason = argv_segments(args.command)
+    if not reason and len(segments) > 1:
+        reason = (
+            "'&&' chains cannot work here: commands execute as a single argv without a "
+            "shell — only the first program would run, with the rest as its literal arguments"
+        )
+    if reason:
+        return ToolResult(
+            tool_name="run_command",
+            success=False,
+            error=(
+                f"{reason}; run each command as its own call — for multi-line logic, "
+                "write a script file and run `python <file>`"
+            ),
+        )
     ws = deps.workspace
     # Attribute the command's side effects: the paths git sees as changed/untracked
     # AFTER minus those already changed BEFORE (§8/§15). This is what makes codegen,
@@ -216,11 +245,12 @@ run_command = ToolDefinition(
     ),
     input_model=RunCommandInput,
     handler=_run_command,
-    # editing/verifying only (ADR-0002): phase governs the *workflow contract* even though
-    # tier-3 is the security boundary. Deliberately NOT admitted in investigate tasks:
-    # ADR-0005 relaxes tier-1 writes only, so no command tool runs from `investigating` —
-    # the recorded ADR-0005 limitation (a true instrument→run→observe→revert loop needs a
-    # follow-up decision). A pure-execution task is a later, explicit mode, not this tool.
-    phases=_VERIFY_PHASES,
+    # investigating/editing/verifying (ADR-0048, resolving the ADR-0005 follow-up this docstring
+    # used to defer): admitted in `investigating` so an investigation can reproduce/observe a
+    # failure — the instrument→run→observe→revert loop. Safe because `_run_command` snapshots,
+    # attributes, and stages its side effects (above), so its outputs participate in the baseline
+    # diff the investigate net-zero contract enforces. Still tier-3 (approval-gated). run_tests/
+    # run_linter stay `_VERIFY_PHASES` — they lack that accounting and have no pre-escalation plan.
+    phases=_COMMAND_PHASES,
     permission_tier=3,
 )

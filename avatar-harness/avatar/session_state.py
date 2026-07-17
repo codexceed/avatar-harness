@@ -204,10 +204,12 @@ class ReplSession:
     Args:
         harness: The configured `Harness`; supplies the per-goal run wiring.
         session_id: Stable conversation id; generated if omitted.
-        auto: Verification authority (§23.5, ADR-0002 D7). The default (`False`) is
-            *conversational* — the verifier runs + reports but is advisory, the reply is
-            delivered without repair, and the human is terminal authority. `auto=True`
-            restores the strict §12 gate (the `--auto` flag, wired by the CLI in 3.2e).
+        auto: Terminal-boundary authority (§23.5, ADR-0046). The verifier steers (repair
+            loop) either way; this only sets the disposition at repair exhaustion. The
+            default (`False`) is *conversational* — the model repairs or proposes a gated
+            amendment, and at exhaustion the turn defers to the human (`blocked` + an open
+            question). `auto=True` is the strict §12 gate (repair exhaustion → `failed`; the
+            `--auto` flag, wired by the CLI in 3.2e). A failed verdict is never advisory.
         journal: One write-ahead `JsonlEventJournal` for the whole sitting, threaded into
             every per-goal `Session` (shared by reference, like `grants`) so the multi-turn
             conversation lands in one durable file. Each goal's `bus.close()` closes the
@@ -373,7 +375,12 @@ class ReplSession:
         Returns:
             A not-yet-started `Session` wired with the session-scoped grants.
         """
-        task = TaskState(goal=prompt, task_kind=kind, constraints=list(extra_constraints or ()))
+        task = TaskState(
+            goal=prompt,
+            task_kind=kind,
+            constraints=list(extra_constraints or ()),
+            mode_source=self.last_mode_source,  # how resolve_mode decided this sitting's kind
+        )
         self._seed_history(task)  # prior turns become the task's conversation (before this turn is added)
         self._ground_paths(task, prompt)  # @path references seed the named files as context
         # The REPL is conversational by default (§23.5); `--auto` (self.auto) restores the strict gate.

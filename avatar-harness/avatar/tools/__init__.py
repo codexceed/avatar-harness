@@ -5,6 +5,7 @@ from avatar.tools.commands import run_command, run_linter, run_tests
 from avatar.tools.edit import delete_file, str_replace, write_file
 from avatar.tools.filesystem import list_files, read_file
 from avatar.tools.search import search_repo
+from avatar.tools.verification import alter_verification, declare_verification, switch_to_editing
 
 
 def default_registry() -> ToolRegistry:
@@ -30,6 +31,9 @@ def default_registry() -> ToolRegistry:
         run_tests,
         run_linter,
         run_command,
+        declare_verification,
+        alter_verification,
+        switch_to_editing,
     ):
         registry.register(tool)
     return registry

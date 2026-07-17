@@ -21,11 +21,13 @@ from avatar.event_types import (
     ApprovalController,
     CancellationObserved,
     DecisionError,
+    DeclarationRequired,
     EventSink,
     HarnessEvent,
     ModelDecisionEvent,
     ModelUsage,
     PhaseChanged,
+    TaskEscalated,
     ToolEnd,
     ToolStart,
     TurnEnd,
@@ -46,7 +48,7 @@ from avatar.model_client import (
 )
 from avatar.permission import PermissionPolicy
 from avatar.planner import VerificationPlanner
-from avatar.state import CommandRecord, DecisionRecord, TaskState
+from avatar.state import CommandRecord, DecisionRecord, PlannedCheck, TaskState
 from avatar.tools.base import (
     ToolDefinition,
     ToolRegistry,
@@ -99,6 +101,24 @@ def _action_key(action: ToolCall | FinalAnswer | AskUser) -> str:
     return action.question
 
 
+# The greenfield declaration nudge (ADR-0038), shared by the edit-intent bootstrap and the
+# claim-done gate. Two phrasings for the two boundaries — "before you edit" vs "before you
+# finalize" — since a claim-done-with-no-diff task must also *make* the change, not only declare.
+_DECLARE_BEFORE_EDIT_MSG = (
+    "This is a from-scratch task and the harness detected no test/lint contract. "
+    "Before you edit, declare how your work will be verified: call declare_verification with "
+    "one or more commands that RUN what you build and exit non-zero if it is broken "
+    "(e.g. `python -m pytest test_x.py`)."
+)
+_DECLARE_BEFORE_DONE_MSG = (
+    "You claimed done, but this from-scratch task has no test/lint contract the harness can "
+    "detect. Declare how your deliverable is verified FIRST — call declare_verification with "
+    "executing checks that fail on breakage (for a docs/content deliverable, an anchored check "
+    "like `grep -q '<required section>' FILE.md`, with change_kinds=['content']) — then produce "
+    "the file(s) with write_file and finalize. Do not answer with the content inline; write it."
+)
+
+
 class AgentRunner:
     """The bounded loop that owns all state mutation and ends on verification (§5, §8).
 
@@ -118,8 +138,16 @@ class AgentRunner:
             `VerificationPlanner(config)`.
         event_sink: Optional typed-event sink (a `Session`); absent on the batch/sync path.
         approval_controller: Optional awaited gate for tier-3 `ask` calls (a `Session`).
-        conversational: Verification authority (§23.5). `False` (default) is the strict §12
-            gate; `True` runs the verifier as advisory and delivers without repairing.
+        conversational: Terminal-boundary authority (§23.5, ADR-0046). The verifier steers
+            (repair loop) in both strict and conversational modes; this flag only changes the
+            disposition at repair exhaustion — `False` (default, `--auto`) pronounces `failed`;
+            `True` (interactive) defers to the human, blocking with an `open_question`. It never
+            makes a failed verdict advisory.
+        advisory: External-grading authority (ADR-0040 option A). `True` runs the verifier as
+            advisory — it reports but does not steer or gate, and a failed verdict is delivered
+            as `success` for a held-out grader (the eval probe) to judge. Off by default; set
+            only by external-grading callers (the eval harness), never the REPL. Takes precedence
+            over `conversational`.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only dependency injection of the run's collaborators
@@ -137,6 +165,7 @@ class AgentRunner:
         event_sink: EventSink | None = None,
         approval_controller: ApprovalController | None = None,
         conversational: bool = False,
+        advisory: bool = False,
     ) -> None:
         self.model_client = model_client
         self.registry = registry
@@ -145,10 +174,18 @@ class AgentRunner:
         self.verifier = verifier
         self.emitter = emitter
         self.config = config
-        # Verification authority (§23.5): strict (`False`, default) runs the §12 gate that
-        # sets `outcome` and drives the repair loop; conversational (`True`) runs + reports
-        # the verifier as advisory and delivers the reply without repairing (human is authority).
+        # Terminal-boundary authority (§23.5, ADR-0046): the verifier steers (repair loop) in
+        # both the strict and conversational modes. This flag only settles the disposition at
+        # repair exhaustion — strict (`False`, default) → `failed`; conversational (`True`) →
+        # `blocked`, deferring to the human. It is NOT an advisory switch; a failed verdict is
+        # never laundered to `success`.
         self.conversational = conversational
+        # Advisory authority (ADR-0040 option A): the verifier runs + reports for the journal but
+        # does NOT steer or gate — a held-out grader (the eval success-probe) is authoritative, so
+        # the reply is delivered as `success` without a repair loop. This is the ONE mode where a
+        # failed verdict does not steer; it exists for external-grading callers (the eval harness),
+        # never the REPL. Precedence: `advisory` short-circuits before `conversational` in `_averify`.
+        self.advisory = advisory
         # The before-tool-call control gate (§11); defaults to the standard tier policy,
         # threaded with the configured sensitive-path denylist (§11, Phase 2.5).
         self.policy = policy or PermissionPolicy(config.sensitive_path_globs)
@@ -161,6 +198,15 @@ class AgentRunner:
         # awaited gate for tier-3 `ask` calls. A `Session` supplies both.
         self.event_sink = event_sink
         self.approval_controller = approval_controller
+        # Wall-clock credit for time the run sat *blocked on a human approval*: the budget bounds
+        # the agent's own work, not the reviewer's think-time. Accumulated in `_approved` and added
+        # to the deadline at every budget check so a slow human never starves the run. Per-run state
+        # (the runner is per-run — it holds run-scoped `deps`).
+        self._approval_wait_seconds = 0.0
+        # Memoized plan resolution for this run: the greenfield gate needs to know whether tiers 1-3
+        # resolve empty, and `_freeze_plan` needs the same result — resolve once (tier-3 may call an
+        # LLM). Reset at the top of each `_arun`. `None` = not yet resolved this run.
+        self._resolved_plan: list[PlannedCheck] | None = None
 
     def _record_usage(self, state: TaskState, usage: DecisionUsage | None) -> None:
         """Accumulate provider-reported usage into state and record it per turn.
@@ -240,11 +286,42 @@ class AgentRunner:
         """
         ws = self.deps.workspace
         runtime = ToolRuntime(self.registry, self.deps)
-        deadline = time.monotonic() + self.config.max_wall_clock_seconds
-        self.emitter.emit("agent_start", goal=state.goal, task_id=state.task_id)
-        self._publish(AgentStart(task_id=state.task_id, goal=state.goal))
+        wall = self.config.max_wall_clock_seconds
+        deadline = time.monotonic() + wall if wall is not None else None  # None ⇒ no wall-clock bound
+        self._approval_wait_seconds = 0.0  # reset the human-wait credit for this run
+        self._resolved_plan = None  # re-resolve the verification plan fresh for this run
+        self.emitter.emit(
+            "agent_start",
+            goal=state.goal,
+            task_id=state.task_id,
+            task_kind=state.task_kind,
+            mode_source=state.mode_source,
+        )
+        self._publish(
+            AgentStart(
+                task_id=state.task_id,
+                goal=state.goal,
+                task_kind=state.task_kind,
+                mode_source=state.mode_source,
+            )
+        )
+        # ADR-0048: resolve (and memoize) the plan while the tree is at its pinned baseline —
+        # BEFORE any transient edit or `run_command` side effect can plant a contract file. A
+        # Makefile/test the agent writes mid-run can then never become its own passing contract
+        # (§5 no self-certification).
+        #
+        # For EVERY kind, not just investigate: `run_command` is now admitted in `investigating`
+        # (ADR-0048) for edit tasks too, and an edit task used to resolve lazily — at the first
+        # edit-intent gate check. That left a window where an approved codegen/init command could
+        # stage a Makefile/manifest *before* the first resolution, and detection would freeze the
+        # planted file as the contract (PR #114 review). Edit tasks pay this resolution at the gate
+        # or the freeze anyway, so hoisting it to run-open costs nothing and closes the window.
+        self._resolve_plan(ws)
 
-        while not state.terminal and self._within_budget(state, deadline):
+        # The effective deadline slides forward by time spent blocked on human approval, so the
+        # wall-clock budget bounds agent work only. Read it fresh each turn — the credit grows
+        # while a tool call sits at the approval gate.
+        while not state.terminal and self._within_budget(state, self._effective_deadline(deadline)):
             if self.deps.cancellation.cancelled:
                 self._stop_incomplete(state, "run cancelled", kind="cancelled")
                 self._publish(CancellationObserved(task_id=state.task_id, reason="run cancelled"))
@@ -268,9 +345,10 @@ class AgentRunner:
                     # timeout only bounds the gap between chunks, so a live-but-runaway stream could
                     # otherwise blow past max_wall_clock_seconds within one turn (checked only between
                     # turns). An empty `done` means the deadline elapsed mid-call.
+                    eff = self._effective_deadline(deadline)
                     done, _ = await asyncio.wait(
                         {task, cancel_wait},
-                        timeout=max(0.0, deadline - time.monotonic()),
+                        timeout=None if eff is None else max(0.0, eff - time.monotonic()),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 except asyncio.CancelledError:
@@ -397,9 +475,23 @@ class AgentRunner:
             if isinstance(action, ToolCall):
                 await self._arun_tool_call(state, runtime, ws, action, record)
             elif isinstance(action, FinalAnswer):
-                state.final_answer = action.answer
-                await self._averify(state, ws)
-                record.outcome = "verified" if state.outcome == "success" else "verification rejected"
+                if self._must_declare_before_edit(state, ws) and (
+                    state.declaration_nudges < self.config.max_declaration_nudges
+                ):
+                    # Claim-done gate (grok4): an edit task that reaches `final_answer` with no
+                    # detected/declared contract would otherwise freeze an empty plan, fail with the
+                    # cryptic "no contract" verdict, and — pushed into `editing` by the repair loop —
+                    # be unable to reach `declare_verification` (investigating-only), forcing a
+                    # backwards contract-via-`alter` thrash. Force the declaration NOW, while still in
+                    # `investigating` where declare is reachable, instead of after the doomed verify.
+                    record.outcome = "declaration required"
+                    self._refuse_for_declaration(
+                        state, action_name="final_answer", message=_DECLARE_BEFORE_DONE_MSG
+                    )
+                else:
+                    state.final_answer = action.answer
+                    await self._averify(state, ws)
+                    record.outcome = "verified" if state.outcome == "success" else "verification rejected"
             elif isinstance(action, AskUser):
                 # Interactive answering rides the control plane (resolve via the session);
                 # with no controller wired, any ask blocks the run as before.
@@ -412,7 +504,7 @@ class AgentRunner:
 
         self._record_commands(state, ws)
         if not state.terminal:
-            state.outcome = self._exit_reason(state)
+            self._settle_terminal_outcome(state)
         self.emitter.emit("agent_end", outcome=state.outcome, task_id=state.task_id)
         self._publish(AgentEnd(task_id=state.task_id, outcome=state.outcome))
         return state
@@ -455,6 +547,73 @@ class AgentRunner:
         self.emitter.emit("phase_changed", old=old, new=new, task_id=state.task_id)
         self._publish(PhaseChanged(task_id=state.task_id, old=old, new=new))
 
+    def _resolve_plan(self, ws: Workspace) -> list[PlannedCheck]:
+        """Resolve the verification plan once per run and memoize it (ADR-0007, ADR-0038).
+
+        Both the greenfield declaration gate and `_freeze_plan` need the tier-1-3 resolution;
+        resolving is potentially expensive (tier-3 may call an LLM) and should happen once.
+
+        The memoization is **load-bearing, not just a cost optimization** (ADR-0048): `_arun` calls
+        this at run open, while the tree still sits at its pinned baseline, and every later caller
+        reuses that result. So the contract is always resolved against the *baseline*, never against
+        a tree the agent has since mutated — a transient edit or a `run_command` side effect cannot
+        plant a Makefile/test that detection would then freeze as the run's own passing contract
+        (§5 no self-certification). The earlier rationale — "an edit task cannot mutate during
+        `investigating` without tripping the edit-intent gate" — is **no longer true**: `run_command`
+        is admitted in `investigating` and stages what it creates.
+
+        Args:
+            ws: The run-scoped workspace whose artifacts the planner reads.
+
+        Returns:
+            The resolved checks (empty for a greenfield task with nothing detected/cited/configured).
+        """
+        if self._resolved_plan is None:
+            self._resolved_plan = self.planner.resolve(ws)
+        return self._resolved_plan
+
+    def _must_declare_before_edit(self, state: TaskState, ws: Workspace) -> bool:
+        """Whether a greenfield edit must declare a verification contract before editing (ADR-0038).
+
+        True only for an `edit` task that is genuinely greenfield — tiers 1-3 resolve empty (no
+        config override / detected / cited contract) — and that has not yet declared one. Once the
+        model declares (`deps.declared_contract` set), the gate no longer fires.
+
+        Args:
+            state: The task state (its `task_kind`).
+            ws: The run-scoped workspace, for plan resolution.
+
+        Returns:
+            True iff the edit should be refused pending a declared contract.
+        """
+        return state.task_kind == "edit" and not self.deps.declared_contract and not self._resolve_plan(ws)
+
+    def _refuse_for_declaration(self, state: TaskState, *, action_name: str, message: str) -> None:
+        """Refuse an action pending a declared contract and nudge the model (ADR-0038, grok4).
+
+        Shared by the edit-intent bootstrap (refuses the first edit) and the claim-done gate
+        (refuses a no-contract `final_answer`). Increments the bounded nudge budget, feeds the
+        message back as a recoverable error, and journals `declaration_required` on both channels
+        (legacy emitter → EventLog JSONL, typed bus → cockpit). The caller keeps the phase in
+        `investigating`, where `declare_verification` is reachable.
+
+        Args:
+            state: The task state whose nudge budget is spent and whose feedback is appended.
+            action_name: The refused action, for the journal (`str_replace` / `final_answer` / …).
+            message: The declaration nudge to feed back (edit-boundary vs claim-done phrasing).
+        """
+        state.declaration_nudges += 1
+        state.latest_error = message
+        state.add_feedback(message, kind="declare_required")
+        self.emitter.emit("declaration_required", tool=action_name, nudge=state.declaration_nudges)
+        self._publish(
+            DeclarationRequired(
+                task_id=state.task_id,
+                nudge=state.declaration_nudges,
+                max_nudges=self.config.max_declaration_nudges,
+            )
+        )
+
     def _freeze_plan(self, state: TaskState, ws: Workspace) -> None:
         """Resolve and freeze the verification plan at the phase boundary (ADR-0007).
 
@@ -471,13 +630,31 @@ class AgentRunner:
         """
         if state.verification_plan is not None or state.task_kind == "investigate":
             return
-        plan = self.planner.resolve(ws)
+        plan = self._resolve_plan(ws)
+        # Greenfield edit with nothing detected or cited: the model's declared contract (ADR-0038)
+        # becomes the frozen plan, if it declared one. Tiers 1-3 always win — a real detected/cited
+        # contract is never displaced by a self-declared one; the smoke floor still covers a decline.
+        if not plan and state.task_kind == "edit" and self.deps.declared_contract:
+            plan = list(self.deps.declared_contract)
+            # The declared kinds freeze with the declared contract (ADR-0044): the verifier
+            # audits the actual diff against them. Tier 1-3 plans declare nothing — no audit.
+            state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
         state.freeze_verification_plan(plan)
-        self.deps.verification_plan = plan  # mirrored so run_tests/run_linter ride the contract
+        # Mirrored for the command tools. NOTE: run_tests/run_linter resolve only
+        # `kind == "test"/"lint"` plan entries — declared checks (kind="declared") are
+        # exercised via run_command, and the tools' no-command error steers there.
+        self.deps.verification_plan = plan
         rubric = "; ".join(f"{c.name}: `{c.command}` [{c.provenance}]" for c in plan) or "none discovered"
         state.add_feedback(f"verification plan frozen: {rubric}", kind="verification_plan")
         self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in plan])
-        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=plan))
+        self._publish(
+            VerificationPlanFrozen(
+                task_id=state.task_id,
+                turn=state.iterations,
+                checks=plan,
+                change_kinds=state.declared_change_kinds,
+            )
+        )
 
     def _stop_incomplete(self, state: TaskState, reason: str, *, kind: str) -> None:
         """Record a stop reason and end the run as `incomplete` (budgets/cancellation, §5).
@@ -519,6 +696,9 @@ class AgentRunner:
                 f"'{record.chosen}' repeats an earlier call — try a different approach or finalize.",
                 kind="repeat",
             )
+            self._maybe_nudge_escalation(state, ws)
+        else:
+            state.escalation_thrash_streak = 0  # a fresh action broke the loop
         tool = self.registry.get(action.name)
         if tool is not None and not self._phase_admits(state, tool):
             record.outcome = "out of phase"
@@ -528,6 +708,22 @@ class AgentRunner:
             self.emitter.emit("out_of_phase", tool=action.name, phase=state.phase)
             return
         if tool is not None and self._is_edit_intent(state, tool) and state.phase == "investigating":
+            # Greenfield declaration gate (ADR-0038): a greenfield edit must declare a verification
+            # contract before it may edit. Refuse the edit and nudge up to `max_declaration_nudges`
+            # times; at the cap, fall through and let the smoke floor cover the run (ADR-0014).
+            if self._must_declare_before_edit(state, ws):
+                if state.declaration_nudges < self.config.max_declaration_nudges:
+                    record.outcome = "declaration required"
+                    self._refuse_for_declaration(
+                        state, action_name=action.name, message=_DECLARE_BEFORE_EDIT_MSG
+                    )
+                    return  # refuse: do NOT freeze the plan or advance the phase
+                if self.config.max_declaration_nudges:
+                    # Nudges exhausted (not a disabled gate): fall back to the smoke floor.
+                    state.add_feedback(
+                        "declaration gate exhausted; proceeding with the smoke floor as the contract",
+                        kind="declare_fallback",
+                    )
             # The investigating → editing boundary is the plan's freeze point (ADR-0007).
             self._freeze_plan(state, ws)
             self._set_phase(state, "editing")
@@ -542,6 +738,16 @@ class AgentRunner:
         self._publish(ToolStart(task_id=state.task_id, call_id=call_id, tool=action.name, input=action.input))
         result = await asyncio.to_thread(runtime.execute, action.name, action.input)
         self._apply_tool_result(state, result)
+        if action.name == "alter_verification" and result.success:
+            # The gate approved it (attended human, or ADR-0039 scoped auto-approve) and the tool
+            # buffered the new checks — apply the amendment to the frozen plan, floor preserved.
+            self._apply_amendment(state)
+        if action.name == "switch_to_editing" and result.success:
+            # The gate approved the escalation (attended human, or ADR-0048 scoped auto-approve).
+            # Perform the investigate→edit flip — same post-approval, runner-owned pattern as the
+            # amendment above (tools never mutate TaskState, §8). The trigger records who really
+            # steered here: the harness's thrash nudge, or the model unprompted.
+            self._escalate_to_edit(state, trigger="thrash" if state.escalation_nudged else "model")
         record.outcome = result.summary if result.success else (result.error or "failed")
         self.emitter.emit(
             "tool_execution_end",
@@ -580,9 +786,17 @@ class AgentRunner:
         if not ask or self.approval_controller is None:
             return False
         approval_id = uuid4().hex
-        return await self.approval_controller.request_approval(
-            approval_id, action.name, getattr(permission, "reason", ""), action.input
-        )
+        # Pause the wall-clock while blocked on the human: the reviewer's think-time is not the
+        # agent's budget. Credit the elapsed wait to the deadline via a monotonic delta measured
+        # around the awaited controller — robust to a scoped auto-approve returning instantly
+        # (credit ≈ 0) or a human taking minutes.
+        waited_from = time.monotonic()
+        try:
+            return await self.approval_controller.request_approval(
+                approval_id, action.name, getattr(permission, "reason", ""), action.input
+            )
+        finally:
+            self._approval_wait_seconds += time.monotonic() - waited_from
 
     async def _averify(self, state: TaskState, ws: Workspace) -> None:
         """Run the verifier off-thread, set the outcome, and publish typed events (§5, §12).
@@ -607,14 +821,22 @@ class AgentRunner:
         )
         self._publish(VerificationEnd(task_id=state.task_id, passed=report.passed, summary=report.summary))
         state.verifier_results.append(report)
-        if self.conversational:
-            # §23.5: the verifier ran + reported (above); in conversational mode it is advisory.
-            # Deliver the reply and end the turn — the human is terminal authority. The verdict
-            # stays on `verifier_results[-1]` for the cockpit to render; never repair.
+        if report.passed:
             state.outcome = "success"
-        elif report.passed:
+        elif self.advisory:
+            # Advisory (ADR-0040 option A): the verifier ran + reported (journaled above), but a
+            # held-out grader (the eval probe) decides — deliver the reply without steering so a
+            # fresh creation isn't thrashed toward a gate the probe, not the harness, will judge.
+            # The real verdict stays on `verifier_results[-1]`. This is external-grading only.
             state.outcome = "success"
         else:
+            # A failing verdict STEERS in every mode (§23.5, ADR-0046). The verifier's job is to
+            # drive the model toward functional correctness, so a rejection feeds the evidence +
+            # next-action back and drops to editing — the model repairs, or proposes a gated
+            # `alter_verification` amendment (the human-consent path, §11/ADR-0038). Conversational
+            # mode does NOT short-circuit a failed verdict to `success`; who is deferred to at the
+            # terminal boundary — a `failed` autonomy verdict vs. a `blocked` hand-off to the human
+            # at repair exhaustion — is settled in `_settle_terminal_outcome`, not here.
             state.repair_failures += 1
             state.add_feedback(report.summary, kind="verification")
             if report.recommended_next_action:
@@ -639,24 +861,136 @@ class AgentRunner:
             state: The task state whose empty frozen plan may gain the floor.
             ws: The run-scoped workspace the proposal excerpts and the verifier runs in.
         """
-        if state.task_kind != "edit" or state.verification_plan != [] or not state.files_modified:
+        if state.task_kind != "edit" or not state.files_modified or state.smoke_floor_attempted:
             return
-        if state.smoke_floor_attempted:
+        plan = state.verification_plan or []
+        # Greenfield = tiers 1-3 found nothing (empty plan) OR the model declared the whole contract
+        # (ADR-0038). A real detected/cited contract (any non-declared check) is never floored.
+        if plan and not all(c.kind == "declared" for c in plan):
             return
         state.smoke_floor_attempted = True
         check = await asyncio.to_thread(self.planner.propose_smoke_check, ws, sorted(state.files_modified))
         if check is None:
             return
-        floor = [check]
-        state.set_smoke_floor(floor)
-        self.deps.verification_plan = floor  # mirror, as _freeze_plan does
+        if not plan:
+            # Decline case (ADR-0014): the model declared nothing — the smoke floor is the contract.
+            state.set_smoke_floor([check])
+        else:
+            # Declared case (ADR-0038): the floor is the immutable anchor beneath the declared contract,
+            # so a later (gated) amendment can never weaken `success` below "it compiles/parses".
+            state.append_verification_floor(
+                PlannedCheck(name="floor", command=check.command, kind="floor", provenance=check.provenance)
+            )
+        self.deps.verification_plan = state.verification_plan  # mirror, as _freeze_plan does
         state.add_feedback(
-            f"greenfield smoke floor: `{check.command}` [{check.provenance}]", kind="verification_plan"
+            f"greenfield floor: `{check.command}` [{check.provenance}]", kind="verification_plan"
         )
         # Both channels, exactly as _freeze_plan: the legacy emitter AND the typed sink, so a
-        # journaled/cockpit run records the floor as the rubric — not the earlier empty plan.
-        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in floor])
-        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=floor))
+        # journaled/cockpit run records the full rubric (declared + floor), not the earlier plan.
+        rubric = state.verification_plan or []
+        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in rubric])
+        self._publish(VerificationPlanFrozen(task_id=state.task_id, turn=state.iterations, checks=rubric))
+
+    def _apply_amendment(self, state: TaskState) -> None:
+        """Apply an approved `alter_verification`: rewrite the declared contract, floor preserved (ADR-0038).
+
+        Reached only after the gated tool executed — i.e. the gate approved it (an attended human,
+        or the ADR-0039 scoped auto-approve). The immutable floor is never touched; the amended
+        rubric is re-journaled on both channels so the goalpost change is auditable.
+
+        Args:
+            state: The task state whose frozen declared contract is rewritten in place.
+        """
+        new_checks = self.deps.declared_contract
+        if not new_checks or state.verification_plan is None:
+            return
+        state.amend_declared_contract(list(new_checks))
+        # Stamp the amendment's kinds unconditionally (PR #112 review): an amendment onto a
+        # tier-1-3 detected plan is the moment a declaration first EXISTS — keying on "a
+        # declaration froze earlier" dropped the validated kinds and silently skipped the
+        # verifier's change_kind_coverage audit for a plan now holding declared checks.
+        state.declared_change_kinds = list(self.deps.declared_change_kinds or ["code"])
+        self.deps.verification_plan = state.verification_plan  # mirror, as _freeze_plan does
+        rubric = state.verification_plan or []
+        state.add_feedback(
+            "verification contract amended: " + "; ".join(f"`{c.command}`" for c in rubric),
+            kind="verification_plan",
+        )
+        self.emitter.emit("verification_plan_frozen", checks=[c.model_dump() for c in rubric])
+        self._publish(
+            VerificationPlanFrozen(
+                task_id=state.task_id,
+                turn=state.iterations,
+                checks=rubric,
+                change_kinds=state.declared_change_kinds,
+            )
+        )
+
+    def _escalate_to_edit(self, state: TaskState, *, trigger: str) -> None:
+        """Escalate `investigate → edit` mid-run after a consented `switch_to_editing` (ADR-0048).
+
+        Flips `task_kind` only — deliberately *not* the phase or the frozen plan. The task becomes a
+        normal edit task sitting in `investigating`, exactly the state every edit task starts in, so
+        the standard edit-intent bootstrap (§ADR-0038) runs the declaration gate and advances to
+        `editing` on the next edit — escalation never *jumps* that gate. Detection is already
+        baseline-clean (resolved at run open), so a contract file the agent wrote mid-investigation
+        cannot be frozen as its own rubric. One-directional and once-only.
+
+        Args:
+            state: The task state whose kind is flipped (guarded: no-op unless investigating).
+            trigger: What caused the escalation (`model` request, or a `thrash` nudge that led here).
+        """
+        if state.escalated or state.task_kind != "investigate":
+            return
+        state.escalated = True
+        state.task_kind = "edit"
+        state.escalation_thrash_streak = 0
+        state.add_feedback(
+            "Escalated to an EDIT task: your changes are kept and will be verified. If this repo has "
+            "no test/lint contract the harness can detect, declare one with declare_verification "
+            "before you finalize.",
+            kind="escalation",
+        )
+        self.emitter.emit("task_escalated", from_kind="investigate", to_kind="edit", trigger=trigger)
+        self._publish(TaskEscalated(task_id=state.task_id, trigger=trigger))
+
+    def _maybe_nudge_escalation(self, state: TaskState, ws: Workspace) -> None:
+        """Surface the harness-only thrash signal and direct the model to `switch_to_editing` (ADR-0048).
+
+        The signal the model cannot see: it is *repeating* actions (already detected by the caller)
+        *while* an investigation holds a non-empty diff against the pinned baseline. Repeats alone are
+        normal instrumentation; repeats-with-a-persistent-diff past `escalation_thrash_repeats` are the
+        `tetris_grok3` spiral. This does NOT auto-escalate (that would change the user's contract
+        without consent, §ADR-0048) — it injects a directive nudge so the model routes through the
+        consent-gated `switch_to_editing`. Only fires for a not-yet-escalated investigation.
+
+        Args:
+            state: The task state whose thrash streak is tracked.
+            ws: The run-scoped workspace, to test divergence from the pinned baseline.
+        """
+        # `ws.diff()`, NOT `ws.status_paths()`: status is `git status --porcelain`, which counts
+        # pre-existing untracked/dirty files the run never touched — on any ordinarily dirty repo it
+        # is never empty, so a clean read-only investigation would be falsely told it is "leaving
+        # changes in the tree" (and under escalation_policy="auto" would self-escalate for no
+        # reason). The diff vs the pinned baseline is exactly the signal `no_unintended_diff`
+        # enforces at verification, so the nudge now fires on precisely the condition that would
+        # fail the run — and `run_command` stages what it creates, so command output is included.
+        if state.escalated or state.task_kind != "investigate" or not ws.diff():
+            return
+        state.escalation_thrash_streak += 1
+        if state.escalation_thrash_streak >= self.config.escalation_thrash_repeats:
+            state.add_feedback(
+                "You are looping while leaving changes in the tree — an investigation must revert "
+                "them to answer. If you are FIXING this rather than explaining it, call "
+                "switch_to_editing to escalate to an edit task: that keeps your changes, lets you "
+                "run and verify them, and holds them to a real contract.",
+                kind="escalation_nudge",
+            )
+            # Remember that the harness — not the model unprompted — steered here, so the resulting
+            # escalation journals `trigger="thrash"`. Without this the two triggers ADR-0048 promises
+            # to make legible in replay/eval are indistinguishable (every escalation read "model").
+            state.escalation_nudged = True
+            state.escalation_thrash_streak = 0  # nudged; don't re-fire until N more thrash repeats
 
     def _is_edit_intent(self, state: TaskState, tool: ToolDefinition) -> bool:
         """Whether a tool call is the model's edit intent (the mutating tier on an edit task).
@@ -711,12 +1045,24 @@ class AgentRunner:
 
     # --- bounding (§5) ---------------------------------------------------
 
-    def _within_budget(self, state: TaskState, deadline: float) -> bool:
+    def _effective_deadline(self, deadline: float | None) -> float | None:
+        """The wall-clock deadline credited with human-approval wait; `None` when unbounded.
+
+        Args:
+            deadline: The base monotonic deadline, or `None` when no wall-clock budget applies
+                (the attended-cockpit default — the human and `max_iterations` are the backstops).
+
+        Returns:
+            The credited deadline, or `None` to mean 'no wall-clock bound'.
+        """
+        return None if deadline is None else deadline + self._approval_wait_seconds
+
+    def _within_budget(self, state: TaskState, deadline: float | None) -> bool:
         return (
             state.iterations < self.config.max_iterations
             and state.consecutive_failures < self.config.max_consecutive_failures
             and state.repair_failures < self.config.max_repair_attempts
-            and time.monotonic() < deadline
+            and (deadline is None or time.monotonic() < deadline)
         )
 
     def _context_over_budget(self, context: ContextPacket) -> bool:
@@ -733,6 +1079,32 @@ class AgentRunner:
         """
         estimated_tokens = len(context.model_dump_json()) // _CHARS_PER_TOKEN
         return estimated_tokens > self.config.max_context_tokens
+
+    def _settle_terminal_outcome(self, state: TaskState) -> None:
+        """Assign the terminal outcome for a loop that fell out without self-terminating (§5).
+
+        Repair exhaustion means the verifier steered the model to the repair budget and it still
+        won't pass. Autonomy pronounces that `failed` (§12). Conversational mode instead DEFERS to
+        the human as a first-class ask (§23.5, ADR-0046): the verifier has done its steering job,
+        so the turn `blocks` — the last reply + failing verdict are already on the state, and the
+        block reason doubles as an `open_question` the REPL/cockpit surface — rather than reporting
+        a bare failure. Every non-repair exit (iteration/wall-clock/context budget) keeps the §5
+        disposition: `failed` on repair exhaustion, else `incomplete`.
+
+        Args:
+            state: The task state whose terminal outcome is being settled.
+        """
+        exhausted_repair = state.repair_failures >= self.config.max_repair_attempts
+        if self.conversational and exhausted_repair:
+            verdict = state.verifier_results[-1].summary if state.verifier_results else "verification failed"
+            question = (
+                f"Verification is still failing after {state.repair_failures} repair attempt(s) "
+                f"({verdict}). How should I proceed?"
+            )
+            state.open_questions.append(question)
+            state.block(question)
+            return
+        state.outcome = self._exit_reason(state)
 
     def _exit_reason(self, state: TaskState) -> Literal["failed", "incomplete"]:
         if state.repair_failures >= self.config.max_repair_attempts:

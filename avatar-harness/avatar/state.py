@@ -62,15 +62,25 @@ class PlannedCheck(BaseModel):
 
     The unit of the per-session verification plan. `provenance` names the artifact
     the command was resolved from (`config:AVATAR_TEST_COMMAND`, `ci:.github/...`,
-    `Makefile:test`, `llm:<cited path>`, `model-smoke`), so every run's rubric is
-    auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored check the
-    harness still runs itself, resolved at verification time rather than frozen up front.
+    `Makefile:test`, `llm:<cited path>`, `model-smoke`, `model-declared`), so every
+    run's rubric is auditable. `smoke` is the greenfield floor (ADR-0014): a model-authored
+    check the harness still runs itself, resolved at verification time rather than frozen up
+    front. `declared` is a greenfield model-declared contract (ADR-0038): a real executing
+    check the model authors up front (mandatory for greenfield edits), frozen like tiers 1-3
+    but semi-frozen — amendable only through a gated action. `floor` is the immutable
+    non-vacuity anchor beneath a declared contract; the model can never amend it away.
+
+    `chain` links checks split from one `&&` line (ADR-0045): the verifier stops a chain
+    at its first failure, preserving shell short-circuit semantics — a failing segment
+    still guards a later mutating one. `None` for independent checks. Optional with a
+    default, so journals written before the field parse unchanged (version-skew rule).
     """
 
     name: str
     command: str
-    kind: Literal["test", "lint", "smoke"]
+    kind: Literal["test", "lint", "smoke", "declared", "floor"]
     provenance: str
+    chain: str | None = None
 
 
 class CheckResult(BaseModel):
@@ -108,6 +118,12 @@ class TaskState(BaseModel):
     goal: str
     constraints: list[str] = Field(default_factory=list)
     task_kind: Literal["edit", "investigate", "test_only"] = "edit"
+    # How `task_kind` was decided, for post-hoc routing analysis: "override" (explicit /mode
+    # or CLI flag), "classifier" (LLM verdict), "heuristic" (first-word fallback). `None` when
+    # the core was driven directly (kind given, no REPL classification). Journaled on AgentStart
+    # so a dogfood run can tell a classifier miss from a classifier outage (both surface as the
+    # heuristic's verdict otherwise). Set by the REPL SessionManager; the core only echoes it.
+    mode_source: str | None = None
 
     # Two independent axes (§7): phase = WHERE the work is; outcome = HOW it ended.
     phase: Literal["investigating", "editing", "verifying"] = "investigating"
@@ -116,9 +132,23 @@ class TaskState(BaseModel):
     iterations: int = 0
     consecutive_failures: int = 0  # tool/action errors in a row -> "incomplete" at cap (§5)
     repair_failures: int = 0  # verification rejections in a row -> "failed" at cap (§5)
+    # Greenfield declaration gate (ADR-0038): edit-intent calls refused to nudge the model to
+    # declare a verification contract before editing; at cap the runner falls back to the smoke floor.
+    declaration_nudges: int = 0
     # The greenfield smoke floor (ADR-0014) is resolved with a live model call; attempt it
     # at most once per run so the repair loop doesn't re-spend it each iteration (PR #50).
     smoke_floor_attempted: bool = False
+    # Whether this run was escalated `investigate → edit` mid-run (ADR-0048). One-directional and
+    # once-only: guards a second escalation and lets the artifact/journal read the transition.
+    escalated: bool = False
+    # Consecutive repeated no-progress actions while a non-empty diff persists (ADR-0048): trips the
+    # thrash-escalation nudge at `config.escalation_thrash_repeats`. Reset when a fresh action lands.
+    escalation_thrash_streak: int = 0
+    # Whether the harness's thrash detector nudged this run toward escalating (ADR-0048). Set when the
+    # nudge fires; read at escalation time so `TaskEscalated.trigger` distinguishes a thrash-RESCUED
+    # run from a self-aware one — the eval loop measures how often the safety net (vs. the model
+    # unprompted) catches a misrouted fix, which is unanswerable if every escalation reads "model".
+    escalation_nudged: bool = False
     prompt_tokens: int = 0  # provider-reported usage totals (in-client retries included)
     completion_tokens: int = 0
     files_read: set[str] = Field(default_factory=set)
@@ -137,6 +167,11 @@ class TaskState(BaseModel):
     # `[]` = resolved and nothing was discovered (the verifier fails legibly).
     # Frozen once via `freeze_verification_plan` — the rubric never moves mid-run.
     verification_plan: list[PlannedCheck] | None = None
+
+    # The change kinds a model-declared contract covers (ADR-0044), stamped at freeze
+    # when the declared contract becomes the plan; the verifier audits the actual diff
+    # against them. `None` = no declaration this run (tiers 1-3 / smoke) — no audit.
+    declared_change_kinds: list[str] | None = None
 
     current_plan: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
@@ -191,6 +226,45 @@ class TaskState(BaseModel):
         if self.verification_plan != []:
             raise RuntimeError("smoke floor applies only to an empty frozen plan")
         self.verification_plan = list(checks)
+
+    def append_verification_floor(self, check: PlannedCheck) -> None:
+        """Append the immutable non-vacuity floor beneath a model-declared contract (ADR-0038).
+
+        The floor is a harness-authored check the model can never declare or amend; it is
+        appended (`kind="floor"`) to the frozen plan so `success` always requires it *in
+        addition* to whatever the model declared. Applied at most once — a plan that already
+        carries a floor is left untouched.
+
+        Args:
+            check: The floor check to append (`kind="floor"`).
+
+        Raises:
+            RuntimeError: When no plan is frozen yet.
+        """
+        if self.verification_plan is None:
+            raise RuntimeError("cannot bind a floor before the plan is frozen")
+        if any(c.kind == "floor" for c in self.verification_plan):
+            return
+        self.verification_plan = [*self.verification_plan, check]
+
+    def amend_declared_contract(self, checks: list[PlannedCheck]) -> None:
+        """Replace the model-declared checks in the frozen plan, preserving the floor (ADR-0038).
+
+        The one sanctioned mid-run rewrite of a declared contract, applied by the runner only
+        after a gated `alter_verification` is approved. Entries whose kind is not `"declared"`
+        (the immutable floor, any detected checks) are preserved — the model can move its own
+        goalposts, never the harness's floor.
+
+        Args:
+            checks: The new declared checks (`kind="declared"`) replacing the old ones.
+
+        Raises:
+            RuntimeError: When there is no frozen plan to amend.
+        """
+        if self.verification_plan is None:
+            raise RuntimeError("cannot amend before the plan is frozen")
+        preserved = [c for c in self.verification_plan if c.kind != "declared"]
+        self.verification_plan = [*checks, *preserved]
 
     def block(self, reason: str) -> None:
         """Terminal: the task needs human input (§5 ask_user in a non-interactive run).

@@ -30,6 +30,13 @@ from avatar.state import TaskState
 # Grants never auto-allow tier-4+ (ADR-0002): destructive/external stays human-gated.
 _GRANT_MAX_TIER = 4
 
+# Tools a standing grant may never cover, regardless of tier: an `[a] always` on a contract
+# amendment would let the model re-move its own goalposts without a human for the rest of
+# the session (ADR-0038/0039 — the semi-frozen contract is amendable only through a gate a
+# human answers each time; only the config-gated *unattended* policy may auto-approve).
+# Enforced at grant storage AND grant matching, so even a hand-built grant is inert.
+UNGRANTABLE_TOOLS = frozenset({"alter_verification", "switch_to_editing"})
+
 
 def _grant_prefix(tool: str, tool_input: dict) -> str:
     """The grant key for a call: a command's program (`argv[0]`), else the tool name.
@@ -77,9 +84,11 @@ class ApprovalGrant(BaseModel):
 
         Returns:
             True iff the grant covers the call (same tool + program, at or below the
-            granted tier, and below the tier-4 ceiling). A blank prefix never matches.
+            granted tier, and below the tier-4 ceiling). A blank prefix never matches,
+            and an ungrantable tool (`alter_verification`) never matches — a contract
+            amendment is ratified by a human every time.
         """
-        if tier >= _GRANT_MAX_TIER:
+        if tier >= _GRANT_MAX_TIER or tool in UNGRANTABLE_TOOLS:
             return False
         return self.tool == tool and self.tier >= tier and bool(self.prefix) and self.prefix == program
 
@@ -115,6 +124,13 @@ class Session:
             `resolve_approval` arrives within it, the call is auto-denied so a run can't hang
             forever inside the gate (the wall-clock budget can't preempt an awaited approval).
             `None` (default) waits indefinitely — the right shape for a human at a REPL.
+        amendment_policy: The unattended disposition for an `alter_verification` amendment
+            (ADR-0039). `"deny"` (default) keeps ADR-0016's deny-only posture; `"approve"` lets
+            an autonomous run self-ratify that one action (never any other `ask`).
+        escalation_policy: The unattended disposition for a `switch_to_editing` escalation
+            (ADR-0048). `"deny"` (default) refuses the mid-run investigate→edit switch with no
+            human; `"approve"` lets an autonomous run self-ratify that one action — the same
+            vocabulary as `amendment_policy`, since the two knobs share their semantics.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only DI of the run's collaborators + approval-mode seams
@@ -127,6 +143,8 @@ class Session:
         grants: list[ApprovalGrant] | None = None,
         unattended: bool = False,
         approval_timeout: float | None = None,
+        amendment_policy: str = "deny",
+        escalation_policy: str = "deny",
     ) -> None:
         self.runner = runner
         self.state = state
@@ -137,6 +155,12 @@ class Session:
         self._grants: list[ApprovalGrant] = grants if grants is not None else []
         self._unattended = unattended
         self._approval_timeout = approval_timeout
+        # ADR-0039: an unattended run auto-denies every `ask` EXCEPT — when this is "approve" —
+        # `alter_verification`, the one non-destructive action an autonomous run may self-ratify.
+        self._amendment_policy = amendment_policy
+        # ADR-0048: the parallel unattended disposition for `switch_to_editing` — "approve" lets an
+        # autonomous run self-ratify the investigate→edit escalation; "deny" (default) refuses it.
+        self._escalation_policy = escalation_policy
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
@@ -224,9 +248,20 @@ class Session:
                 input=tool_input,
             )
         )
-        # Unattended (batch/eval/autonomous): no human will resolve this — deny now rather than
-        # deadlock awaiting a `resolve_approval` that never comes. The deny stays observable.
+        # Unattended (batch/eval/autonomous): no human will resolve this — dispose now rather than
+        # deadlock awaiting a `resolve_approval` that never comes. Default deny (ADR-0016); the one
+        # scoped exception is an `alter_verification` amendment under `amendment_policy="approve"`
+        # (ADR-0039) — self-ratified because the immutable floor + held-out grading keep it honest.
+        # Scoped by TOOL NAME, never tier: `run_command` (also tier 3) always denies here.
         if self._unattended:
+            if tool == "alter_verification" and self._amendment_policy == "approve":
+                self._auto_approve(approval_id)
+                return True
+            if tool == "switch_to_editing" and self._escalation_policy == "approve":
+                # ADR-0048: the scoped autonomous escalation disposition, parallel to the amendment
+                # one above — a misrouted fix may recover on its own when the operator opts in.
+                self._auto_approve(approval_id)
+                return True
             self._auto_deny(approval_id)
             return False
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
@@ -256,6 +291,20 @@ class Session:
             ApprovalResolved(task_id=self.state.task_id, approval_id=approval_id, allowed=False, via="auto")
         )
 
+    def _auto_approve(self, approval_id: str) -> None:
+        """Record a no-human auto-approve (ADR-0039 scoped amendment disposition).
+
+        Only reached for `alter_verification` under `amendment_policy="approve"` in an
+        unattended run — the operator granted this scoped autonomy, and the amendment's
+        goalpost move is bounded by the immutable floor and measured by the held-out oracle.
+
+        Args:
+            approval_id: The pending approval being allowed without a human decision.
+        """
+        self.bus.publish_nowait(
+            ApprovalResolved(task_id=self.state.task_id, approval_id=approval_id, allowed=True, via="auto")
+        )
+
     def _tier_of(self, tool: str) -> int:
         """The permission tier of `tool`, or the tier-4 ceiling if it is unknown.
 
@@ -278,7 +327,9 @@ class Session:
         one) so a caller that didn't capture the id can still unblock the run. With
         `allow` and `remember` both set (the `[a] always` choice), stores a session-scoped
         `ApprovalGrant` for the call's program prefix so matching calls auto-allow later.
-        `remember` is ignored on a denial (there is no "always deny") and on a blank prefix.
+        `remember` is ignored on a denial (there is no "always deny"), on a blank prefix,
+        and on an ungrantable tool (`alter_verification` — a contract amendment is ratified
+        by a human every time; `remember` degrades to allow-once).
 
         Args:
             approval_id: The id from the `ApprovalRequested` event.
@@ -290,7 +341,8 @@ class Session:
             pending = next(iter(self._pending.values()))
         if pending is None or pending.future.done():
             return
-        if allow and remember and pending.program and pending.tier < _GRANT_MAX_TIER:
+        grantable = pending.tool not in UNGRANTABLE_TOOLS
+        if allow and remember and grantable and pending.program and pending.tier < _GRANT_MAX_TIER:
             self._grants.append(ApprovalGrant(tool=pending.tool, prefix=pending.program, tier=pending.tier))
         pending.future.set_result(allow)
 

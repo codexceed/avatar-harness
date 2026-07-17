@@ -74,6 +74,52 @@ async def test_approval_modal_shows_exact_command_up_front():
         assert modal.query_one("#approval_command", Static).display is not False  # shown, not toggled
 
 
+async def test_approval_modal_renders_amendment_legibly():
+    # An alter_verification amendment (ADR-0038/0039) shows the rationale + proposed checks — not a
+    # raw args dict — so a human can tell a genuine design change from a real failure papered over.
+    host = _Host(
+        ApprovalModal(
+            tool="alter_verification",
+            reason="tier 3",
+            tool_input={
+                "checks": [{"command": "python -m pytest test_y.py", "kind": "test"}],
+                "rationale": "the row-collapse behavior changed by design",
+            },
+        )
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        modal = cast(ApprovalModal, host.screen)
+        text = modal._command_text()
+        assert "row-collapse behavior changed by design" in text  # the obsolescence rationale
+        assert "python -m pytest test_y.py" in text  # the proposed replacement check
+        assert "immutable floor" in text  # the un-amendable anchor is surfaced
+
+
+async def test_amendment_modal_offers_no_always_option():
+    # A contract amendment is ratified per occurrence: a standing `[a]` grant would let the
+    # model re-move its own goalposts silently for the rest of the session (ADR-0038/0039).
+    # The Always button and its `[a]` hint are absent, and the key itself is inert.
+    host = _Host(
+        ApprovalModal(
+            tool="alter_verification",
+            reason="tier 3",
+            tool_input={"checks": [{"command": "python -m pytest test_y.py"}], "rationale": "r"},
+        )
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        assert not host.screen.query("#always")  # no Always button offered
+        hints = str(host.screen.query_one("#approval_hints", Static).render())
+        assert "always" not in hints  # no [a] hint either
+        await pilot.press("a")  # the key must be inert — not a hidden grant path
+        await pilot.pause()
+        assert host.result == "UNSET"  # nothing dismissed; the modal still awaits a decision
+        await pilot.press("y")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=True, remember=False)  # allow-once still works
+
+
 async def test_approval_modal_deny():
     host = _Host(ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "pytest"}))
     async with host.run_test() as pilot:
@@ -162,3 +208,28 @@ async def test_plan_modal_revise_returns_edit():
         await pilot.click("#revise")
         await pilot.pause()
     assert host.result == PlanChoice(approved=False, text="revised plan")  # revise returns the edit
+
+
+async def test_approval_modal_survives_markup_metacharacters_in_command():
+    # Regression (tetris_grok4): a model-authored command with Textual markup metacharacters
+    # (`[a=1 b=]` — multiple key= pairs, trailing empty value) crashed the modal with a
+    # `MarkupError` during layout, tearing down the whole cockpit. It must render verbatim.
+    host = _Host(
+        ApprovalModal(tool="run_command", reason="tier 3", tool_input={"command": "grep -E '[a=1 b=]' f"})
+    )
+    async with host.run_test() as pilot:
+        await pilot.pause()  # layout runs here — pre-fix this raised MarkupError
+        assert "[a=1 b=]" in cast(ApprovalModal, host.screen)._command_text()  # shown verbatim
+        await pilot.press("y")
+        await pilot.pause()
+    assert host.result == ApprovalChoice(allow=True, remember=False)  # mounted, rendered, routed
+
+
+async def test_diff_modal_survives_markup_metacharacters():
+    # A diff routinely contains `[` (list literals, regex classes); the viewer must not parse it.
+    host = _Host(DiffModal(diff_text="+ pattern = grep -E '[a=1 b=]'  # markup metacharacters"))
+    async with host.run_test() as pilot:
+        await pilot.pause()  # layout runs here — pre-fix this raised MarkupError
+        await pilot.press("escape")
+        await pilot.pause()
+    assert host.result is None  # rendered + dismissed cleanly, no MarkupError

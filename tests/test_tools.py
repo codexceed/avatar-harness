@@ -27,6 +27,13 @@ from avatar.tools.edit import (
 )
 from avatar.tools.filesystem import list_files, read_file
 from avatar.tools.search import search_repo
+from avatar.tools.verification import (
+    AlterVerificationInput,
+    DeclaredCheckInput,
+    DeclareVerificationInput,
+    alter_verification,
+    declare_verification,
+)
 from avatar.workspace import Workspace
 
 
@@ -684,3 +691,115 @@ def test_delete_file_registered_and_editing_phase_tier1():
     assert (
         next(t for t in reg.admitted_for("editing", "edit") if t.name == "delete_file").permission_tier == 1
     )
+
+
+# --- declare_verification (ADR-0038) -----------------------------------------
+
+
+def _declare_deps(tmp_path) -> RunDeps:
+    return RunDeps(workspace=Workspace(tmp_path), config=HarnessConfig(), cancellation=CancellationToken())
+
+
+def test_declare_verification_buffers_valid_checks(tmp_path):
+    # A real declared check is buffered onto RunDeps as a `declared`/`model-declared` PlannedCheck
+    # for the runner to fold into the frozen plan (tools never touch TaskState).
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(checks=[DeclaredCheckInput(command="python -m pytest test_x.py")]), deps
+    )
+    assert res.success
+    assert deps.declared_contract is not None and len(deps.declared_contract) == 1
+    check = deps.declared_contract[0]
+    assert check.kind == "declared" and check.provenance == "model-declared"
+    assert check.command == "python -m pytest test_x.py"
+
+
+def test_declare_verification_rejects_vacuous_check(tmp_path):
+    # A no-op command (`true`, `echo …`) proves nothing; it's model-correctable, and nothing buffers.
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(checks=[DeclaredCheckInput(command="true")]), deps
+    )
+    assert res.success is False and "vacuous" in (res.error or "")
+    assert deps.declared_contract is None
+
+
+def test_declare_verification_judges_vacuity_across_the_contract(tmp_path):
+    # PR-#110 review: one real executing check redeems the CONTRACT — an artifact-inspection
+    # check alongside it is legal (it still runs and must pass), so the model isn't burned a
+    # turn for supplementing `pytest` with a grep over the deliverable's docs.
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(
+            checks=[
+                DeclaredCheckInput(command="python -m pytest test_x.py"),
+                DeclaredCheckInput(command="grep -q '## Verification' DESIGN.md"),
+            ]
+        ),
+        deps,
+    )
+    assert res.success
+    assert deps.declared_contract is not None and len(deps.declared_contract) == 2
+
+
+def test_declare_verification_rejects_all_vacuous_contract(tmp_path):
+    # No check executes anything: rejected, and the error steers toward an executing check.
+    # (A `|| exit 1` variant now rejects earlier, at the ADR-0045 shell-syntax gate —
+    # pinned in test_shell_syntax_boundary.py; this pins the coverage steer itself.)
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(
+        DeclareVerificationInput(
+            checks=[
+                DeclaredCheckInput(command="test -f DESIGN.md"),
+                DeclaredCheckInput(command="grep -q Overview DESIGN.md"),
+            ]
+        ),
+        deps,
+    )
+    assert res.success is False
+    assert "at least one" in (res.error or "").lower()
+    assert deps.declared_contract is None
+
+
+def test_declare_verification_requires_at_least_one_check(tmp_path):
+    deps = _declare_deps(tmp_path)
+    res = declare_verification.handler(DeclareVerificationInput(checks=[]), deps)
+    assert res.success is False
+    assert deps.declared_contract is None
+
+
+def test_declare_verification_registered_in_investigating_only_tier0():
+    # PR #112 review: the plan freezes at the investigating→editing boundary, so an
+    # editing-phase declare could only ever be a phantom success (buffered checks nobody
+    # drains). Investigating-only; post-freeze changes go through gated alter_verification.
+    reg = default_registry()
+    tool = reg.get("declare_verification")
+    assert tool is not None and tool.permission_tier == 0
+    assert set(tool.phases) == {"investigating"}
+    alter = reg.get("alter_verification")
+    assert alter is not None and "editing" in alter.phases  # amendments stay available
+
+
+def test_alter_verification_is_gated_tier3_and_buffers_replacement(tmp_path):
+    # The amendment tool is tier 3 so it routes through the approval gate (ADR-0039); its handler
+    # (reached only post-approval) validates and buffers the replacement for the runner to apply.
+    tool = default_registry().get("alter_verification")
+    assert tool is not None and tool.permission_tier == 3
+    deps = _declare_deps(tmp_path)
+    res = alter_verification.handler(
+        AlterVerificationInput(
+            checks=[DeclaredCheckInput(command="python -m pytest test_y.py")],
+            rationale="the row-collapse behavior changed by design",
+        ),
+        deps,
+    )
+    assert res.success
+    assert deps.declared_contract and deps.declared_contract[0].command == "python -m pytest test_y.py"
+
+
+def test_alter_verification_rejects_vacuous_replacement(tmp_path):
+    deps = _declare_deps(tmp_path)
+    res = alter_verification.handler(
+        AlterVerificationInput(checks=[DeclaredCheckInput(command="true")], rationale="x"), deps
+    )
+    assert res.success is False and "vacuous" in (res.error or "")

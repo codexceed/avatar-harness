@@ -1,15 +1,52 @@
 {
   "_comment": "Single source of truth for per-model inference pricing. Read by evals/cost.py (Python report) AND tools/eval-dashboard (JS), so the two views never disagree on $. Values are a snapshot of OpenRouter list pricing; refresh via the openrouter MCP `model-get` (pricing.prompt / pricing.completion) and bump `as_of`.",
-  "as_of": "2026-07-05",
+  "as_of": "2026-07-13",
   "source": "OpenRouter model-get (pricing.prompt / pricing.completion)",
   "units": "USD per token",
   "models": {
-    "openai/gpt-5.3-codex": {"prompt": 1.75e-06, "completion": 1.4e-05},
-    "deepseek/deepseek-v4-pro": {"prompt": 4.35e-07, "completion": 8.7e-07},
-    "minimax/minimax-m3": {"prompt": 3.0e-07, "completion": 1.2e-06},
-    "z-ai/glm-5.2": {"prompt": 5.6e-07, "completion": 1.76e-06},
-    "openai/gpt-oss-120b": {"prompt": 3.0e-08, "completion": 1.5e-07},
-    "qwen/qwen3.6-27b": {"prompt": 2.85e-07, "completion": 2.4e-06},
-    "google/gemma-4-31b-it": {"prompt": 1.2e-07, "completion": 3.5e-07}
+    "openai/gpt-5.3-codex": {
+      "prompt": 1.75e-06,
+      "completion": 1.4e-05
+    },
+    "deepseek/deepseek-v4-pro": {
+      "prompt": 4.35e-07,
+      "completion": 8.7e-07
+    },
+    "minimax/minimax-m3": {
+      "prompt": 3e-07,
+      "completion": 1.2e-06
+    },
+    "z-ai/glm-5.2": {
+      "prompt": 5.6e-07,
+      "completion": 1.76e-06
+    },
+    "openai/gpt-oss-120b": {
+      "prompt": 3e-08,
+      "completion": 1.5e-07
+    },
+    "qwen/qwen3.6-27b": {
+      "prompt": 2.85e-07,
+      "completion": 2.4e-06
+    },
+    "google/gemma-4-31b-it": {
+      "prompt": 1.2e-07,
+      "completion": 3.5e-07
+    },
+    "x-ai/grok-4.5": {
+      "prompt": 2e-06,
+      "completion": 6e-06
+    },
+    "openai/gpt-5.6-sol": {
+      "prompt": 5e-06,
+      "completion": 3e-05
+    },
+    "openai/gpt-5.6-terra": {
+      "prompt": 2.5e-06,
+      "completion": 1.5e-05
+    },
+    "openai/gpt-5.6-luna": {
+      "prompt": 1e-06,
+      "completion": 6e-06
+    }
   }
 }

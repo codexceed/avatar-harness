@@ -4,14 +4,18 @@ title: avatar.deps
 
 Run-scoped dependencies handed to tools and the runtime (§8).
 
-Tools receive these explicitly — never via globals — so a run stays
-self-contained and replayable. Phase 1 carries the minimum the read tools
-need; `state` and `event_log` join when the runner is built.
+Passed explicitly — never via globals — so a run stays self-contained and replayable.
 
 ## Classes
 ### `CancellationToken`
 
 Trips to abort an in-flight tool (per-tool timeout, user interrupt — §23).
+
+`cancelled` is the source of truth (polled at loop checkpoints). `event()` exposes the
+same trip as an `asyncio.Event` so the runner can *race* a cancel against an in-flight
+model call (ADR-0029 R5) — true mid-call abort, not just between-turn polling. The Event is
+created lazily inside the running loop, so a no-loop construction (and `CancellationToken(
+cancelled=True)` in tests) still works.
 
 ```python
 CancellationToken(cancelled: bool = False) -> None
@@ -19,7 +23,14 @@ CancellationToken(cancelled: bool = False) -> None
 
 #### `CancellationToken.cancel(self) -> None`
 
-Trip the token so an in-flight tool can abort at its next checkpoint.
+Trip the token so an in-flight tool or model call can abort at its next checkpoint.
+
+#### `CancellationToken.event(self) -> Event`
+
+Return the loop-bound cancel Event, creating it on first call (must be inside a loop).
+
+Returns:
+    An `asyncio.Event` set iff the token is cancelled — already set if `cancel()` ran first.
 ### `RunDeps`
 
 The run-scoped dependencies handed explicitly to tools and the runtime (§8).
@@ -29,5 +40,5 @@ The run-scoped dependencies handed explicitly to tools and the runtime (§8).
 config override exists — the model exercises the same rubric the verifier grades.
 
 ```python
-RunDeps(workspace: Workspace, config: HarnessConfig, cancellation: CancellationToken, verification_plan: list[PlannedCheck] | None = None) -> None
+RunDeps(workspace: Workspace, config: HarnessConfig, cancellation: CancellationToken, verification_plan: list[PlannedCheck] | None = None, declared_contract: list[PlannedCheck] | None = None, declared_change_kinds: list[str] | None = None) -> None
 ```

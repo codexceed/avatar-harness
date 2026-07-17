@@ -58,3 +58,10 @@ class RunDeps:
     config: HarnessConfig
     cancellation: CancellationToken
     verification_plan: list[PlannedCheck] | None = None
+    # Buffer the `declare_verification` tool writes and the runner drains at freeze (ADR-0038):
+    # a greenfield model-declared contract. Tools never mutate `TaskState`, so the contract lands
+    # here and the runner folds it into the frozen plan. `None` = nothing declared this run.
+    declared_contract: list[PlannedCheck] | None = None
+    # The change kinds the declared contract covers (ADR-0044), buffered alongside it; the
+    # verifier audits the actual diff against them. `None` = nothing declared this run.
+    declared_change_kinds: list[str] | None = None

@@ -39,9 +39,9 @@ make eval
 make eval MODELS="openai/gpt-5.1,anthropic/claude-sonnet-4-6,google/gemini-3.1-pro-preview" SEEDS=3
 
 # The standing reliability matrix — a named shortcut for the recurring regression run:
-#   the four tracked models × 5 seeds, 8-way concurrent, output kept (--no-cleanup).
+#   the four tracked models × 3 seeds, 8-way concurrent, output kept (--no-cleanup).
 make eval-matrix
-make eval-matrix SEEDS=3 CONCURRENCY=4                       # any knob is overridable
+make eval-matrix SEEDS=5 CONCURRENCY=4                       # any knob is overridable
 make eval-matrix MATRIX_MODELS="minimax/minimax-m3,z-ai/glm-5.2"  # swap the model set
 
 # A subset of tasks (comma-separated ids; an unknown id errors, never silently skips):
@@ -55,7 +55,7 @@ uv run python -m evals.run --models "openai/gpt-5.1" --seeds 1 --no-cleanup
 ```
 
 > **`make eval-matrix`** pins the four models we track for regressions
-> (`minimax/minimax-m3,openai/gpt-oss-120b,openai/gpt-5.3-codex,z-ai/glm-5.2`) at `SEEDS=5`,
+> (`x-ai/grok-4.5,openai/gpt-oss-120b,openai/gpt-5.6-sol,z-ai/glm-5.2`) at `SEEDS=3`,
 > `CONCURRENCY=8`, `NO_CLEANUP=1`. It delegates to `eval` via target-specific variables, so a
 > command-line `SEEDS=`/`CONCURRENCY=`/`MODELS=` (or `MATRIX_MODELS=` for the model set) still wins.
 
@@ -313,6 +313,32 @@ a degraded news API, restart persistence) plus a static config-docs check; the c
 its canned reply on which article appears in the request, so a hardcoded or reused analysis
 cannot pass. Contract rationale: **ADR-0035**; development-run evidence:
 `docs/research/2026-07-04-news-analyzer-eval-development.md`.
+
+The `tetris-easy` probe (`probes/tetris_easy_smoke.py`; the task was formerly `tetris-tui`) grades a **terminal UI by simulating a
+human player**: it writes real ANSI arrow-key bytes to the game's pinned `--no-raw --seed`
+scripted mode (turn-based, one flushed frame per key, a frame sentinel) and asserts
+*differentially* on the rendered frames — arrow moves translate the falling piece's cells
+exactly, rotation steps the pinned clockwise orientations, a hard drop locks flush and scores
+2 x descent, `q` exits 0, unsteered drops top out into `GAME OVER`, and an adaptive packing
+planner fills the bottom row so the clear must score exactly +100 against the probe's running
+ledger. A final phase runs the *interactive* mode on a stdlib pseudo-terminal and asserts the
+reconstructed screen shows aligned board rows (catching the raw-mode `\n` "staircase" that
+pipe-driven phases cannot see) and that `q` exits. The rendered UI is the only grading surface
+(no model-provided hooks — the README the agent writes is itself graded for documenting the
+contract, but never obeyed). Contract rationale + development-run evidence:
+`docs/research/2026-07-11-tetris-tui-eval-development.md`.
+
+The `tetris-hard` task (formerly `tetris-playable`) deliberately measures a broader construct than `tetris-easy`:
+**can the agent build a simple, genuinely playable terminal Tetris?** Its prompt pins only the
+small rendered-frame seam needed for deterministic black-box observation. The probe
+(`probes/tetris_hard_smoke.py`) infers behavior from those frames and checks seeded
+repeatability, directional movement, a working rotation, hard-drop physics, locking, adaptive
+play through a real line clear, scoring response, top-out, and `GAME OVER`. It does not prescribe
+the seed-to-piece mapping, spawn orientation, clockwise versus counter-clockwise rotation,
+wall kicks, or score values. A pseudo-terminal phase separately verifies the human surface:
+an actual terminal arrow moves the visible piece, timer gravity advances it, rows stay aligned,
+and `q` exits. The exact-contract and playable-game tasks remain separate so their signals are
+interpretable rather than silently changing the existing baseline.
 
 ---
 

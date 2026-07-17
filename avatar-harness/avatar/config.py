@@ -5,6 +5,8 @@ Loaded from defaults, then overridden by environment variables (prefix
 threaded through ``RunDeps`` (§8) — never read from globals.
 """
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -49,14 +51,39 @@ class HarnessConfig(BaseSettings):
 
     # Budgets — the bounding conditions of the loop (§5).
     max_iterations: int = 50
-    max_wall_clock_seconds: int = 1800
+    # Per-agent-run wall-clock bound (reset each run, not cumulative across a sitting). `None`
+    # disables it — correct for the attended cockpit, where the human (Ctrl-C) and `max_iterations`
+    # are the backstops; an unattended/eval run keeps a real cap so a runaway can't burn forever.
+    # 1800 (not 600) since PR #104: slow reasoning models exhausted 600s mid-edit; hangs/stalls are
+    # caught independently by the request timeout + idle watchdog (ADR-0028/0029).
+    max_wall_clock_seconds: int | None = 1800
     max_consecutive_failures: int = 5
     max_repair_attempts: int = 3
     max_context_tokens: int = 100_000
+    # Greenfield declaration gate (ADR-0038): how many times the runner refuses an edit-intent call
+    # to nudge the model to `declare_verification` first, before falling back to the smoke floor.
+    max_declaration_nudges: int = 3
     # Backstop on a blocking (attended) approval: deny it after this many seconds so a run can't
     # hang inside the gate (the wall-clock budget can't preempt an awaited approval). `None` (the
     # default) waits indefinitely — correct for a human at a REPL; an unattended run never blocks.
     approval_timeout_seconds: float | None = None
+
+    # Unattended disposition for an `alter_verification` amendment (ADR-0039). "deny" (default)
+    # keeps ADR-0016's deny-only posture; "approve" lets an autonomous run self-ratify a contract
+    # amendment — scoped to that one action, and only safe paired with held-out eval grading.
+    autonomous_amendment_policy: Literal["deny", "approve"] = "deny"
+
+    # Unattended disposition for a `switch_to_editing` escalation (ADR-0048). "deny" (default)
+    # refuses the mid-run investigate→edit escalation when no human is present; "approve" self-ratifies
+    # it — for autonomous runs where a misrouted fix should recover on its own. Scoped by tool name.
+    # Shares the amendment knob's vocabulary above ("deny"/"approve") deliberately: two consent knobs
+    # with the same semantics must not take two different words for the same disposition.
+    autonomous_escalation_policy: Literal["deny", "approve"] = "deny"
+    # Repeat-with-persistent-diff count that trips the harness thrash-escalation nudge (ADR-0048):
+    # after this many repeated no-progress actions while an investigate run holds a non-empty diff,
+    # the harness surfaces the (harness-only) signal and directs the model to `switch_to_editing`.
+    # `ge=1`: a 0/negative threshold would nudge on the very first duplicate action.
+    escalation_thrash_repeats: int = Field(default=3, ge=1)
 
     # Verification commands — the OVERRIDE tier of plan resolution (§12, ADR-0007).
     # A non-empty value always wins: the user's stated contract is never overridden.
@@ -103,6 +130,25 @@ class HarnessConfig(BaseSettings):
 
     # Workspace (§15).
     workspace_root: str = "."
+
+    # Execution sandbox (ADR-0042, implements ADR-0009). Closes Threat C — runtime/substrate
+    # gaming (a planted `PYTEST_ADDOPTS`/`PYTHONPATH`, a phone-home) — at the `Workspace.run`
+    # seam. `hermetic-env` (the default) scrubs the environment to a language-neutral allowlist
+    # on every OS with no dependencies; `sandbox-exec` adds macOS network-deny; `none` restores
+    # the fully-inherited environment (escape hatch). `bwrap`/`container` are reserved for
+    # Increment 2. `sandbox_allow_network` only bites on the OS backends (the env-only floor
+    # cannot gate network). Does NOT cover a model authoring weak tests (Threats A/B).
+    sandbox_mode: Literal["none", "hermetic-env", "sandbox-exec", "bwrap", "container"] = "hermetic-env"
+    sandbox_allow_network: bool = False
+    # POSIX resource ceilings on each sandboxed command (ADR-0042 Increment 2). OFF by default:
+    # they ride `preexec_fn`, which is not thread-safe between fork and exec against the
+    # multithreaded eval runner (ADR-0026), so they are opt-in, not baked into the default.
+    sandbox_rlimits: bool = False
+    # Container backend (`sandbox_mode=container`, ADR-0042 Increment 2): the image carrying the
+    # task's toolchain (required for that mode) and the runtime CLI. Empty image + container mode
+    # is a config error — the guest has no toolchain otherwise.
+    sandbox_image: str = ""
+    sandbox_container_runtime: Literal["podman", "docker"] = "podman"
 
     # Sensitive-path denylist (§11, Phase 2.5) — globs the permission gate refuses to
     # read or patch. Defaults cover common secret files; override via AVATAR_SENSITIVE_PATH_GLOBS.
