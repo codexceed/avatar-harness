@@ -40,11 +40,12 @@ AVATAR_REQUEST_TIMEOUT_SECONDS=240              # per-call model timeout (s); st
 AVATAR_WORKSPACE_ROOT=.                         # repo the agent operates on (default: cwd)
 AVATAR_CONTEXT_VERIFIER_PIN_COUNT=2             # verifier outputs pinned verbatim in context
 AVATAR_SANDBOX_MODE=hermetic-env                # isolation: hermetic-env (default) | none | sandbox-exec | bwrap | container
+AVATAR_AUTONOMOUS_AMENDMENT_POLICY=deny         # unattended contract amendments: deny (default) | approve — scoped to alter_verification only
 ```
 
 Point at OpenAI instead: `AVATAR_BASE_URL=https://api.openai.com/v1`, `AVATAR_MODEL=gpt-4o-mini`.
 
-For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile); a greenfield repo that declares no contract gets a model-authored **smoke check**, run by the harness, as a fallback floor (ADR-0014) — so a from-scratch project verifies out of the box. Set `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` for a stronger, declared contract (it always wins over the floor). The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `avatar-harness/avatar/config.py` is the source of truth.
+For `edit` tasks the harness auto-detects how to verify the work (CI / manifests / Makefile). In a greenfield repo with nothing to detect, the model must **declare an executable verification contract** before it may edit (ADR-0038) — the harness runs those checks, plus an immutable non-vacuity **floor** the model cannot amend away; a model that declines falls back to the floor alone (ADR-0014). Amending a declared check is gated: a human ratifies each amendment when attended, and unattended runs deny by default — `AVATAR_AUTONOMOUS_AMENDMENT_POLICY=approve` opts in to auto-ratification, scoped to the amendment action only (ADR-0039). Set `AVATAR_TEST_COMMAND` / `AVATAR_LINT_COMMAND` for a stronger, declared contract (it always wins over the floor). The **[SDK guide](docs/guides/sdk.mdx)** documents every `AVATAR_*` knob; `avatar-harness/avatar/config.py` is the source of truth.
 
 Every command the harness runs (verifier checks and the agent's own `run_command`) executes through a **sandbox** at the workspace seam (ADR-0042). The default `hermetic-env` scrubs the child environment to a safe allowlist on every OS, so an inherited `PYTEST_ADDOPTS` / `PYTHONPATH` can't rig a verification pass. Stronger backends add network-deny + write-confine: `sandbox-exec` (macOS), `bwrap` (Linux), and `container` (Podman/Docker — set `AVATAR_SANDBOX_IMAGE`, the cross-platform option). `AVATAR_SANDBOX_ALLOW_NETWORK=true` permits egress; `AVATAR_SANDBOX_RLIMITS=true` adds CPU/file-size/pid ceilings; `none` restores the fully-inherited environment.
 
