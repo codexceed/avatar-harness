@@ -1,6 +1,13 @@
 # Coding Agent Harness — Design
 
-> **Status:** Living design spec. The engine is implemented through Phase 2.6 (hardening) and the **Phase 3.0 foundation** (async `arun()` core, typed event bus, two-plane session) is built; the Phase 3.1+ cockpit and §21 extensions remain designed. Phase 3 design now lives in [ADR-0001](docs/adr/0001-async-event-bus-and-durable-execution.md) and [ADR-0002](docs/adr/0002-interactive-tui-cockpit-and-mvp-feature-set.md), which supersede the forward-looking detail in §13/§23 below.
+> **⚠️ Frozen as of 2026-07-17 — the originating design spec, retained as a citable archive; do not add to it.** This document captured the ground-up design and rationale, and roughly two dozen ADRs still anchor to its `§N` sections — so it is kept in place, not deleted. But it is no longer the living source of truth: it drifted behind the as-built system, and the two concerns it once held are now split —
+>
+> - **Current design + rationale** (chosen approach, rejected alternatives, trade-offs, the record going forward) live in the **ADRs** under [`docs/adr/`](../adr/); where an ADR and a `§N` here disagree, the ADR is newer and wins.
+> - **The current system map** — component graph, control-flow deep dives, and implementation status — is [`ARCHITECTURE.md`](../../ARCHITECTURE.md); *what shipped* is [`CHANGELOG.md`](../../avatar-harness/CHANGELOG.md).
+>
+> The sections below are retained as the historical rationale the `§N` citations point at; treat them as a snapshot of the design at authoring time, not as current status. (The former `PROGRESS.md` build ledger, referenced in a few places below, has been retired — build status now lives in `ARCHITECTURE.md`'s status markers and the changelog.)
+>
+> **Status (at freeze):** The engine is implemented through Phase 2.6 (hardening) and the **Phase 3.0 foundation** (async `arun()` core, typed event bus, two-plane session) is built; the Phase 3.1+ cockpit and §21 extensions remain designed. Phase 3 design now lives in [ADR-0001](../adr/0001-async-event-bus-and-durable-execution.md) and [ADR-0002](../adr/0002-interactive-tui-cockpit-and-mvp-feature-set.md), which supersede the forward-looking detail in §13/§23 below.
 > **Scope:** A ground-up, minimally functional but correctly shaped coding agent harness — a new standalone Python project, not an extension of the current CLI chat app.
 > **Posture:** Build the *shape* completely (loop, structured state, permission gate, verification, event log, reversibility); keep each component's *implementation* thin. A shallow-but-complete harness beats a deep-but-partial one, because the shape is what's expensive to change later.
 
