@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-A synthesized, visual map of how avatar-harness fits together — the whole-system picture for **broad work** (feature implementation, deep debugging, deep Q&A, onboarding). For *why* a thing is shaped a certain way, follow the `§N` links into `HARNESS_DESIGN.md` (the source-of-truth spec). For *what's built and what's next*, see `PROGRESS.md`. Keep this file — diagrams and status tags included — current whenever a change alters the architecture.
+A synthesized, visual map of how avatar-harness fits together — the whole-system picture for **broad work** (feature implementation, deep debugging, deep Q&A, onboarding). For *why* a thing is shaped a certain way, see the ADRs under `docs/adr/` (the living decision log), or follow a `§N` link into the **frozen** `docs/archive/HARNESS_DESIGN.md` for the originating rationale. *What's built and what's next* is the status tags in this file (and `CHANGELOG.md` for what shipped). Keep this file — diagrams and status tags included — current whenever a change alters the architecture.
 
 ---
 

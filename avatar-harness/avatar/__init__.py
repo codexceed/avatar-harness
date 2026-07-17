@@ -2,7 +2,8 @@
 
 A bounded, verifiable loop around an LLM: the model proposes actions, the harness
 owns execution/state/permissions/logging, and the loop terminates on external
-verification — never on a text reply. See `HARNESS_DESIGN.md` for the design.
+verification — never on a text reply. See `docs/archive/HARNESS_DESIGN.md` (the frozen
+originating design spec) and `docs/adr/` (the living design log) for the design.
 
 The curated public surface (`__all__`) is the stable importable API. `Harness`
 is the one-call entry point; the rest are the seams a downstream user composes

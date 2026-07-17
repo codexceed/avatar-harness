@@ -2,7 +2,7 @@
 
 ## Project status
 
-**In active development — TDD, phased.** The MVP cockpit (through Phase 3.2) is shipped (v1.0.x), plus post-MVP dogfood hardening. Current focus is the **eval-driven improvement loop** (Phase 4 — eval harness + observability), where agent changes iterate against measured data. Durable crash-resume (3.3) is **deferred, not next**: it's a contained increment on the already-built event journal, to be pulled forward only when an eval run's per-trajectory crash cost is a *measured* problem (e.g. long autonomous tasks in Eval-2) — not built ahead of that friction. **`PROGRESS.md` is the authoritative, checklist-driven build ledger — read it first** to see what's built and what's next. The build follows the phased plan there, which draws on the §20 component order in the design spec.
+**In active development — TDD, phased.** The MVP cockpit (through Phase 3.2) is shipped (v1.0.x), plus post-MVP dogfood hardening. Current focus is the **eval-driven improvement loop** (Phase 4 — eval harness + observability), where agent changes iterate against measured data. Durable crash-resume (3.3) is **deferred, not next**: it's a contained increment on the already-built event journal, to be pulled forward only when an eval run's per-trajectory crash cost is a *measured* problem (e.g. long autonomous tasks in Eval-2) — not built ahead of that friction. **To see what's built and what's next, read `ARCHITECTURE.md`** (component-by-component implementation-status markers); *what shipped* is `CHANGELOG.md`, and *why the build is shaped as it is* is the ADRs under `docs/adr/`.
 
 ## Documentation map — which doc, when
 
@@ -10,9 +10,8 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 
 | Doc | Holds | Consult when |
 | --- | --- | --- |
-| `HARNESS_DESIGN.md` | Full design spec — every decision + rationale, cross-referenced by §N. Source of truth. | Implementing a component (read its §N first); resolving *why* a thing is shaped as it is. |
+| `docs/archive/HARNESS_DESIGN.md` | **Frozen** originating design spec (archived out of the repo root) — the ground-up decisions + rationale, cross-referenced by §N. A citable historical archive, no longer edited; ADRs supersede it where they disagree. | Reading the original rationale a `§N` citation points at. For *current* design, prefer the ADRs. |
 | `ARCHITECTURE.md` | A synthesized, **visual** map: high-level component graph + deep dives on task execution and verification + a dry-run walkthrough, with current implementation status. | **Broad, global-context work** — feature implementation, deep debugging, deep Q&A, onboarding — where you need the whole-system picture. |
-| `PROGRESS.md` | Phased build ledger (checklists), TDD protocol. | Resuming work; knowing what's done and what's next. |
 | `docs/adr/` | Architecture Decision Records — *why* the build is shaped as it is (one decision per ADR: choice, rejected alternatives, trade-offs). The decision log going forward. | Resolving/recording why a design decision was made; before re-litigating a settled choice. |
 | `CHANGELOG.md` | The *what shipped* — generated automatically by release-please from Conventional Commits. Do not hand-edit. | Seeing what changed in a release. |
 | `docs/research/` | Findings from **formally executed research work** — eval baselines/matrices, failure-mode catalogs, trajectory analyses, experiment write-ups. Evidence-linked + reproducible. | Recording the results of an explicit experiment/eval run; sourcing an empirical claim for a write-up. |

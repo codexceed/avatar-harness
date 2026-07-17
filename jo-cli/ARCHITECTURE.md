@@ -3,8 +3,9 @@
 A package-local map of the interactive Textual cockpit — the standalone `jo-cli`
 distribution — in the same visual style as the root
 [`ARCHITECTURE.md`](../ARCHITECTURE.md). This is the whole-package picture for
-cockpit-local work; for *why* the engine around it is shaped as it is, follow the `§N` links
-into `HARNESS_DESIGN.md` (the source-of-truth spec) and the root architecture map. For the
+cockpit-local work; for *why* the engine around it is shaped as it is, read the ADRs under
+[`../docs/adr/`](../docs/adr/) (the living design log) or follow a `§N` link into the frozen
+`../docs/archive/HARNESS_DESIGN.md` for the originating rationale, plus the root architecture map. For the
 package's working rules, see [`CLAUDE.md`](./CLAUDE.md).
 
 ---

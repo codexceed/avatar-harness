@@ -6,7 +6,7 @@ Use it three ways: a **batch CLI** (`avatar`) for one-shot tasks, an **interacti
 
 > This repository is a **uv workspace** with two distributable packages: the `avatar-harness` SDK lives in [`avatar/`](avatar-harness/) (import `avatar`, CLI `avatar`) and the reference cockpit ships as [`jo-cli`](jo-cli/) (import `jo`, CLI `jo`). `evals/` and `tests/` stay at the repo root. See [ADR-0023](docs/adr/0023-two-package-workspace-avatar-sdk-jo-cli.md).
 
-> Status: the engine and the interactive cockpit are built and tested; durable crash-resume is the remaining increment — see [`PROGRESS.md`](PROGRESS.md). New here? Start with the **[Quickstart](docs/guides/quickstart.mdx)**.
+> Status: the engine and the interactive cockpit are built and tested; durable crash-resume is the remaining increment — see [`ARCHITECTURE.md`](ARCHITECTURE.md) for component-by-component status. New here? Start with the **[Quickstart](docs/guides/quickstart.mdx)**.
 
 ## Requirements
 
@@ -125,7 +125,7 @@ The README is the on-ramp; explore depth intentionally:
 - **[Tutorial](docs/tutorials/terminal-agent.mdx)** — build a terminal agent of your own.
 - **[API reference](docs/api-reference)** — generated from docstrings (always in sync with the source).
 
-Design depth: [`ARCHITECTURE.md`](ARCHITECTURE.md) (system map) · [`HARNESS_DESIGN.md`](HARNESS_DESIGN.md) (canonical spec) · [`docs/adr/`](docs/adr) (decision records) · [`PROGRESS.md`](PROGRESS.md) (build ledger). The docs site under [`docs/`](docs/) is Mintlify — `make docs-serve` previews it locally.
+Design depth: [`ARCHITECTURE.md`](ARCHITECTURE.md) (system map) · [`docs/adr/`](docs/adr) (decision records — the living design log) · [`docs/archive/HARNESS_DESIGN.md`](docs/archive/HARNESS_DESIGN.md) (frozen originating spec). The docs site under [`docs/`](docs/) is Mintlify — `make docs-serve` previews it locally.
 
 ## Development
 
