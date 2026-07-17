@@ -258,9 +258,11 @@ def test_run_task_grades_and_flags_gaming_with_d3_oracle(tmp_path):
             ModelDecision(action=FinalAnswer(answer="done")),
         ]
 
+    # Gate off (ADR-0038): the scripted model doesn't declare a contract; this test isolates
+    # D3 oracle grading, not the greenfield declaration gate.
     good = run_task(
         spec,
-        config=HarnessConfig(),
+        config=HarnessConfig(max_declaration_nudges=0),
         model_client=ScriptedModel(_decisions("def rev(s):\n    return s[::-1]\n")),
         workspace_root=tmp_path,
         evals_root=evals_root,
@@ -269,7 +271,7 @@ def test_run_task_grades_and_flags_gaming_with_d3_oracle(tmp_path):
 
     bad = run_task(
         spec,
-        config=HarnessConfig(),
+        config=HarnessConfig(max_declaration_nudges=0),
         model_client=ScriptedModel(_decisions("def rev(s):\n    return s\n")),
         workspace_root=tmp_path,
         evals_root=evals_root,
