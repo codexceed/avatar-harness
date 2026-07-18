@@ -23,7 +23,7 @@ from avatar.journal import JsonlEventJournal
 from avatar.model_client import ModelClient
 from evals.classify import classify, failure_histogram
 from evals.journal_read import row_events
-from evals.metrics import pass_at_1, pass_caret_k
+from evals.metrics import gamed_rate, held_out_pass_at_1, pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, write_results
 from evals.score import is_solved, run_probe
@@ -173,17 +173,27 @@ def run_task(
             if spec.success_probe
             else None
         )
+        solved = is_solved(
+            reached_success,
+            probe_exit,
+            probe_is_guard=spec.probe_role == "guard",
+            outcome=state.outcome,
+            passing_outcomes=spec.passing_outcomes,
+        )
+        # The independent held-out verdict (ADR-0040): a success probe's real exit code when one
+        # exists — the oracle the agent never sees and can't amend — else the composed grade (no
+        # separate oracle: the harness verifier is the authority). Split from `self_reported_success`
+        # so `gamed` (claimed done, oracle rejected) is measurable under auto-approve.
+        held_out_passed = (
+            (probe_exit == 0) if (spec.success_probe and spec.probe_role == "success") else solved
+        )
         row = ResultRow(
             task=spec.id,
             model=cfg.model,
             seed=seed,
-            solved=is_solved(
-                reached_success,
-                probe_exit,
-                probe_is_guard=spec.probe_role == "guard",
-                outcome=state.outcome,
-                passing_outcomes=spec.passing_outcomes,
-            ),
+            solved=solved,
+            self_reported_success=reached_success,
+            held_out_passed=held_out_passed,
             outcome=state.outcome,
             iterations=state.iterations,
             prompt_tokens=state.prompt_tokens,
@@ -423,6 +433,8 @@ def build_summary(
             {
                 "model": model,
                 "pass_at_1": round(pass_at_1(mrows), 4),
+                "held_out_pass_at_1": round(held_out_pass_at_1(mrows), 4),
+                "gamed_rate": round(gamed_rate(mrows), 4),
                 "pass_caret_k": round(pass_caret_k(mrows), 4),
                 "n": len(mrows),
             }

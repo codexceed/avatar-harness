@@ -24,7 +24,7 @@ from avatar.workspace import Workspace
 from evals.classify import classify, failure_histogram, resolve_failure_mode
 from evals.cluster import Cluster, cluster_failures
 from evals.distill import TrajectoryDigest
-from evals.metrics import pass_at_1, pass_caret_k
+from evals.metrics import gamed_rate, held_out_pass_at_1, pass_at_1, pass_caret_k
 from evals.provision import provision
 from evals.result import ResultRow, load_results, write_results
 from evals.run import (
@@ -351,6 +351,33 @@ def test_pass_caret_k():
     assert pass_caret_k(rows) == pytest.approx(0.5)  # a all-pass, b not
 
 
+def _hrow(self_reported: bool, held_out: bool) -> ResultRow:
+    return ResultRow(
+        task="t",
+        model="m",
+        seed=0,
+        solved=held_out,
+        self_reported_success=self_reported,
+        held_out_passed=held_out,
+        outcome="success" if self_reported else "failed",
+        iterations=1,
+    )
+
+
+def test_held_out_pass_at_1_counts_the_oracle_not_the_self_report():
+    # ADR-0040: the honest capability number is the hidden oracle's verdict, not the model's claim.
+    rows = [_hrow(True, True), _hrow(True, False), _hrow(False, False), _hrow(True, True)]
+    assert held_out_pass_at_1(rows) == pytest.approx(0.5)  # 2 of 4 passed the oracle
+    assert held_out_pass_at_1([]) == 0.0
+
+
+def test_gamed_rate_counts_claimed_but_oracle_rejected():
+    # gamed = self_reported ∧ ¬held_out: the model claimed done but the hidden oracle rejected it.
+    rows = [_hrow(True, False), _hrow(True, True), _hrow(False, False), _hrow(True, False)]
+    assert gamed_rate(rows) == pytest.approx(0.5)  # 2 of 4 gamed
+    assert gamed_rate([]) == 0.0
+
+
 # --- E. per-task env (Q3): the user declares the program's runtime env ---------
 
 
@@ -557,6 +584,25 @@ def test_classify_buckets(outcome, solved, probe_exit, bucket):
 )
 def test_classify_surfaces_guard_violation_regardless_of_outcome(outcome, probe_exit, bucket):
     assert classify(_frow(outcome, False, probe_exit, probe_role="guard")) == bucket
+
+
+def test_classify_gamed_when_probe_fails_and_model_claimed_success():
+    # ADR-0040: a success probe the model *claimed* to satisfy (self_reported) but the hidden oracle
+    # rejected is `gamed`; without the self-report the same probe failure is an honest `probe_failed`.
+    gamed = ResultRow(
+        task="t",
+        model="m",
+        seed=0,
+        solved=False,
+        self_reported_success=True,
+        held_out_passed=False,
+        outcome="success",
+        iterations=1,
+        probe_exit=1,
+        probe_role="success",
+    )
+    assert classify(gamed) == "gamed"
+    assert classify(gamed.model_copy(update={"self_reported_success": False})) == "probe_failed"
 
 
 def test_classify_loop_oscillation_from_events():
