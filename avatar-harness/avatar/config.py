@@ -79,6 +79,17 @@ class HarnessConfig(BaseSettings):
     # Shares the amendment knob's vocabulary above ("deny"/"approve") deliberately: two consent knobs
     # with the same semantics must not take two different words for the same disposition.
     autonomous_escalation_policy: Literal["deny", "approve"] = "deny"
+
+    # "YOLO" escape hatch (ADR-0050): when True, an *unattended* run auto-approves arbitrary
+    # `run_command` calls instead of denying them (env `AVATAR_YOLO=1`). This deliberately reverses
+    # ADR-0016's deny-only posture for the one tool it names — the operator has opted a batch run
+    # into fully-autonomous shell. The residual safety envelope is unchanged: commands still run
+    # workspace-confined through `Workspace.run` (hermetic-env scrub + optional POSIX rlimits,
+    # ADR-0042), argv-only (no shell metacharacters, ADR-0045), and the sensitive-path denylist
+    # still gates the *file* tools. It does NOT touch the amendment/escalation knobs above (those
+    # move verification goalposts — a different risk with its own consent). Default False keeps the
+    # deny-only default for every unattended run that has not opted in.
+    yolo: bool = False
     # Repeat-with-persistent-diff count that trips the harness thrash-escalation nudge (ADR-0048):
     # after this many repeated no-progress actions while an investigate run holds a non-empty diff,
     # the harness surfaces the (harness-only) signal and directs the model to `switch_to_editing`.

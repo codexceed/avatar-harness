@@ -241,7 +241,10 @@ class Harness:
             unattended: When `True`, the session auto-denies any tier-3/denylist `ask` instead
                 of awaiting a human — the right disposition for a batch/eval/autonomous run, where
                 blocking on a `resolve_approval` that never comes would deadlock the loop. `False`
-                (default) keeps the interactive path for a TUI/human at a REPL.
+                (default) keeps the interactive path for a TUI/human at a REPL. The deny-only
+                disposition is overridable per action: `config.yolo` (env `AVATAR_YOLO=1`)
+                auto-approves `run_command` (ADR-0050), and the `autonomous_{amendment,escalation}_policy`
+                knobs cover their own tools — each scoped by tool name, never by tier.
 
         Returns:
             A `Session` wrapping the run — observation out, control in.
@@ -255,4 +258,8 @@ class Harness:
             approval_timeout=self.config.approval_timeout_seconds,
             amendment_policy=self.config.autonomous_amendment_policy,
             escalation_policy=self.config.autonomous_escalation_policy,
+            # ADR-0050 ("YOLO", env `AVATAR_YOLO=1`): opt an unattended run into autonomous shell by
+            # auto-approving `run_command`. Only meaningful with `unattended=True` (an attended run
+            # routes every ask to the human regardless); the deny-only default is preserved otherwise.
+            command_policy="approve" if self.config.yolo else "deny",
         )

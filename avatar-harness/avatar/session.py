@@ -131,6 +131,10 @@ class Session:
             (ADR-0048). `"deny"` (default) refuses the mid-run investigate→edit switch with no
             human; `"approve"` lets an autonomous run self-ratify that one action — the same
             vocabulary as `amendment_policy`, since the two knobs share their semantics.
+        command_policy: The unattended disposition for an arbitrary `run_command` — the "YOLO"
+            knob (ADR-0050, set from `config.yolo` / env `AVATAR_YOLO`). `"deny"` (default)
+            keeps ADR-0016; `"approve"` lets a fully-autonomous batch run execute shell with no
+            human. Scoped to `run_command` by name, so a contract amendment is unaffected.
     """
 
     def __init__(  # noqa: PLR0913 — keyword-only DI of the run's collaborators + approval-mode seams
@@ -145,6 +149,7 @@ class Session:
         approval_timeout: float | None = None,
         amendment_policy: str = "deny",
         escalation_policy: str = "deny",
+        command_policy: str = "deny",
     ) -> None:
         self.runner = runner
         self.state = state
@@ -161,6 +166,11 @@ class Session:
         # ADR-0048: the parallel unattended disposition for `switch_to_editing` — "approve" lets an
         # autonomous run self-ratify the investigate→edit escalation; "deny" (default) refuses it.
         self._escalation_policy = escalation_policy
+        # ADR-0050 ("YOLO"): the unattended disposition for arbitrary `run_command` — "approve" lets
+        # a fully-autonomous batch run execute shell without a human; "deny" (default) keeps ADR-0016.
+        # Scoped by tool name like the two above, NOT by tier: a tier-3 that isn't `run_command`
+        # (e.g. `alter_verification`) is unaffected by this knob.
+        self._command_policy = command_policy
         self.cancel_reason: str | None = None  # set by cancel(); the loop records its own feedback
 
     def events(self) -> AsyncIterator[HarnessEvent]:
@@ -249,17 +259,22 @@ class Session:
             )
         )
         # Unattended (batch/eval/autonomous): no human will resolve this — dispose now rather than
-        # deadlock awaiting a `resolve_approval` that never comes. Default deny (ADR-0016); the one
-        # scoped exception is an `alter_verification` amendment under `amendment_policy="approve"`
-        # (ADR-0039) — self-ratified because the immutable floor + held-out grading keep it honest.
-        # Scoped by TOOL NAME, never tier: `run_command` (also tier 3) always denies here.
+        # deadlock awaiting a `resolve_approval` that never comes. Default deny (ADR-0016); the only
+        # exceptions are the scoped auto-approve knobs below, each keyed by TOOL NAME (never tier):
+        #   - `alter_verification` under `amendment_policy="approve"` (ADR-0039): self-ratify a
+        #     contract amendment — safe because the immutable floor + held-out grading keep it honest.
+        #   - `switch_to_editing` under `escalation_policy="approve"` (ADR-0048): self-ratify a
+        #     misrouted-fix escalation so it can recover on its own.
+        #   - `run_command` under `command_policy="approve"` (ADR-0050, "YOLO"): execute arbitrary
+        #     shell autonomously — still sandboxed + argv-only + workspace-confined (ADR-0042/0045).
+        # A tier-3 tool not in this map (or whose knob is "deny") always denies.
         if self._unattended:
-            if tool == "alter_verification" and self._amendment_policy == "approve":
-                self._auto_approve(approval_id)
-                return True
-            if tool == "switch_to_editing" and self._escalation_policy == "approve":
-                # ADR-0048: the scoped autonomous escalation disposition, parallel to the amendment
-                # one above — a misrouted fix may recover on its own when the operator opts in.
+            scoped_policy = {
+                "alter_verification": self._amendment_policy,
+                "switch_to_editing": self._escalation_policy,
+                "run_command": self._command_policy,
+            }.get(tool)
+            if scoped_policy == "approve":
                 self._auto_approve(approval_id)
                 return True
             self._auto_deny(approval_id)

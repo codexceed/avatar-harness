@@ -133,6 +133,23 @@ async def test_harness_arun_runs_investigate_end_to_end(git_repo):
     assert "calc.py" in state.files_read
 
 
+async def test_harness_yolo_config_threads_command_approval(git_repo):
+    # ADR-0050: `config.yolo=True` (env `AVATAR_YOLO=1`) opts an unattended session into autonomous
+    # shell — harness.session() must thread it through as command_policy="approve".
+    harness = Harness(
+        config=HarnessConfig(workspace_root=str(git_repo), yolo=True), model=_read_then_answer()
+    )
+    session = harness.session("explain add()", task_kind="edit", unattended=True)
+    assert await session.request_approval("a1", "run_command", "gated", {}) is True
+
+
+async def test_harness_default_denies_command_without_yolo(git_repo):
+    # Default (yolo unset): the deny-only posture holds — an unattended run_command auto-denies.
+    harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=_read_then_answer())
+    session = harness.session("explain add()", task_kind="edit", unattended=True)
+    assert await session.request_approval("a1", "run_command", "gated", {}) is False
+
+
 async def test_harness_session_streams_to_completion(git_repo):
     # The two-plane SDK shape: harness.session(...) → events() out, run() drives it.
     harness = Harness(config=HarnessConfig(workspace_root=str(git_repo)), model=_read_then_answer())

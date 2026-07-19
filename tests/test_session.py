@@ -271,6 +271,48 @@ async def test_unattended_auto_approve_is_observable(tmp_path):
     assert resolved and resolved[-1].allowed is True and resolved[-1].via == "auto"
 
 
+async def test_unattended_yolo_auto_approves_run_command(tmp_path):
+    # ADR-0050 ("YOLO"): with command_policy="approve", an unattended run self-ratifies arbitrary
+    # `run_command` — but NOTHING else (scoped by tool NAME, not tier, like the amendment knob).
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), []),
+        TaskState(goal="x", task_kind="edit"),
+        unattended=True,
+        command_policy="approve",
+    )
+    assert await session.request_approval("a1", "run_command", "gated", {}) is True
+    # alter_verification is ALSO tier 3 — it must still auto-deny; the command knob is name-scoped.
+    assert await session.request_approval("a2", "alter_verification", "gated", {}) is False
+
+
+async def test_unattended_denies_run_command_by_default(tmp_path):
+    # Default policy "deny" preserves ADR-0016 exactly: `run_command` auto-denies with no opt-in.
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), []),
+        TaskState(goal="x", task_kind="edit"),
+        unattended=True,
+    )
+    assert await session.request_approval("a1", "run_command", "gated", {}) is False
+
+
+async def test_yolo_command_approve_is_observable(tmp_path):
+    # The YOLO auto-approve is recorded ApprovalResolved(allowed=True, via="auto") — visible to the
+    # journal and the eval classifier (invariant #5), never a silent gate bypass.
+    session = Session(
+        _runner(tmp_path, _gated_registry(tmp_path), []),
+        TaskState(goal="x", task_kind="edit"),
+        unattended=True,
+        command_policy="approve",
+    )
+    queue = session.bus.subscribe()
+    await session.request_approval("a1", "run_command", "gated", {})
+    seen: list[EventBase] = []
+    while not queue.empty():
+        seen.append(queue.get_nowait())
+    resolved = [e for e in seen if isinstance(e, ApprovalResolved)]
+    assert resolved and resolved[-1].allowed is True and resolved[-1].via == "auto"
+
+
 async def test_auto_denied_call_is_model_correctable(tmp_path):
     # The auto-deny is fed back as recoverable feedback (not a system failure, not a terminate):
     # the loop advances past the denied call to the next decision.
