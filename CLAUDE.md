@@ -6,7 +6,7 @@
 
 ## Documentation map — which doc, when
 
-Four docs, deepest to most operational. Pick by the *breadth* of the task:
+Deepest to most operational. Pick by the *breadth* of the task:
 
 | Doc | Holds | Consult when |
 | --- | --- | --- |
@@ -17,6 +17,7 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 | `docs/research/` | Findings from **formally executed research work** — eval baselines/matrices, failure-mode catalogs, trajectory analyses, experiment write-ups. Evidence-linked + reproducible. | Recording the results of an explicit experiment/eval run; sourcing an empirical claim for a write-up. |
 | `jo-cli/ARCHITECTURE.md` + `jo-cli/CLAUDE.md` | Package-local docs for the interactive cockpit (the standalone `jo-cli` package, a consumer of the core): its component graph, the two planes, and the goal/approval/plan/render flows. | Cockpit-local work — editing `jo-cli/` (the TUI shell, modals, the `jo` launcher). |
 | `evals/improvement-loop-design.md` + `evals/CLAUDE.md` | The evals-driven improvement loop (ADR-0024): two human-gated workflows over a deterministic core — motivation, component breakdown, flow diagrams, execution checklist; `evals/CLAUDE.md` holds the package-local principles. | Building or running the eval→proposal→PR loop, or any work under `evals/`. |
+| `docs/blogging/blog-candidates.md` | The blog plan of action — **Standing rules** (the non-negotiable writing contract), status board, queue, backlog, distribution plan, and the evidence index mapping each post to its raw artifacts. The only place a post's status or position is recorded. | **Any blog/write-up work** — drafting, outlining, retitling, promoting a backlog item, or shipping a post. |
 
 > `DECISIONS.md` is a **frozen historical archive** (decisions through 2026-06-11); it is no longer appended to. New design decisions are ADRs; new changes are the changelog.
 
@@ -29,6 +30,18 @@ Four docs, deepest to most operational. Pick by the *breadth* of the task:
 **Record design decisions as ADRs:** when you make a **major design decision** — a chosen approach, a rejected alternative, a scope cut, a non-obvious trade-off, or a load-bearing clarification — write a new ADR under `docs/adr/` (Nygard-style, one decision per ADR; supersede rather than edit an accepted one) and add it to `docs/adr/README.md`. Capture the *why* and the alternatives, not just the *what*. Routine implementation that merely follows an existing decision needs no ADR. Do **not** append to `DECISIONS.md` (frozen) or hand-write changelog prose — the *what shipped* comes from Conventional Commit messages, which release-please rolls into `CHANGELOG.md`.
 
 **Record research findings under `docs/research/`:** when you **formally and explicitly execute research work** — an eval run or baseline matrix, a trajectory analysis, a failure-mode investigation, a benchmark — write its findings to a dated, evidence-linked doc under `docs/research/`, citing the raw artifact path and the command to reproduce. This is the durable, citable home for empirical results that feed write-ups and the eval-driven self-improvement signal. A *deliberately executed* experiment belongs here; ad-hoc observations during ordinary dev do not. Distinguish measured fact from interpretation, and don't bury findings in commit messages or scratch files.
+
+**Write every blog post against the Standing rules:** when asked to draft, outline, revise, or ship a blog post — or any public write-up about this project — **read `docs/blogging/blog-candidates.md` first** and treat its *Standing rules* section as the binding contract for the piece. They are not style suggestions; a draft that violates one is not ready. In force, every post, no exceptions:
+
+1. **Directional evidence or a case study, never a leaderboard** — n=5 seeds, few tasks, one project, an evolving harness. "Failure-mode discovery," never "model X beats Y."
+2. **The 6-question arc** — what motivated this · what we did · what we measured · what we inferred · what we're uncertain about · where we go next.
+3. **Split measured fact from interpretation, visibly** — hedge the interpretation; never hedge the data.
+4. **Ship the receipts** — the reproduce command plus a link to the raw artifact (source them from that doc's *Evidence index*).
+5. **One reusable principle** a reader can apply without adopting this harness.
+6. **Adversarial pre-publish pass** — review the draft like a PR before any cross-post.
+7. **Comparisons to other harnesses** (Pi, opencode, Aider) go in a *section*, never a headline — and get verified against their current source first.
+
+Plus the **shape**: 700–1200 words (or 5–8 dense sections), carrying at least one run table, journal excerpt, diff, failing/passing test pair, eval result, or source-tied architecture diagram. The same doc also owns each post's **status, ID, and queue position** — read status from it (and from `sarthak-blog/` git state), never from memory, and follow its *Update protocol* when a post ships: flip the status, delete every backlog row it consumed, re-date the queue.
 
 ## Commands
 
