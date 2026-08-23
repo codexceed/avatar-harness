@@ -79,7 +79,8 @@ written this; 2 = commodity take).
 | `05` | The model proposes, the harness disposes | 3 | 4 | 3 | 2 | **Deferred** — 2026-08-23. Lowest uniqueness in the series (U2) and pure architecture-stance. Its own gate was "earned by the empirical posts beneath it"; with `03`/`04` deferred there is even less under it. Revisit only once the queue below has landed. |
 | `06` | When the agent games the verifier | 5 | 4 | 3 | 3 | **Stub** — the flagship; **blocked on the demo** |
 
-**Snapshot (2026-08-23):** 3 live · 0 in review · 3 deferred · 1 stub (`06`, demo-gated) · 16 backlog.
+**Snapshot (2026-08-23):** 3 live · 0 in review · 3 deferred · 1 stub (`06`, demo-gated) · 17 backlog
+(counted from the table below — the four queued rows still live there until they get directories).
 Nothing has shipped since `02` merged on 2026-07-16 — five weeks against a 1–2 week cadence. The queue
 below is re-cut from that date, and the three deferrals are the reason it is now led by backlog items
 rather than by the numbered stubs.
@@ -100,7 +101,7 @@ govern **how** a post is written, this governs **whether it is written at all**.
 | # | Ship | Why here | Gate | Target |
 | --- | --- | --- | --- | --- |
 | **1** | `provider-reliability` → next free number | A provider hung ~5 min and returned a `\x00` body as **HTTP 200** — an error wearing a success costume — and it looked like a code regression until a serial control run (20/20, 0 NULs) exonerated the model. The rule (**classify by layer:** dead/empty = transport, malformed-but-present = model, slow-but-streaming = neither) applies to anyone calling an LLM API. Six-row run table already written. | none — 21KB kit | 2026-08-29 |
-| **2** | `shell-syntax-boundary` → next free number | **The most broadcastable item in the backlog.** Every harness that avoids `shell=True` inherits this: `shlex.split` turns model-authored `&&` into argv words, so a declared 10-section verification chain **passed having verified 1 section** (`grep -q` exits 0 on first match while patterns 2–10 became unopenable filenames). Deterministic one-line repro; E5/P4/U4. | none — kit | 2026-09-12 |
+| **2** | `shell-syntax-boundary` → next free number | **The most broadcastable item in the backlog.** The exposure is specific — a harness that hands model-authored command *strings* to `shlex.split` with `shell=False` and never checks them for shell syntax; one that takes structured argv, or rejects metacharacters at the seam, does not inherit it. In ours, `&&` became argv words and a declared 10-section verification chain **passed having verified 1 section** (`grep -q` exits 0 on first match while patterns 2–10 became unopenable filenames). Deterministic one-line repro; E5/P4/U4. *Draft the post to the same scope: name the pattern, don't generalize to every harness.* | none — kit | 2026-09-12 |
 | **3** | `eval-probe-false-rejections` → next free number | **Three models flipped FAIL→PASS with zero capability change** — the only delta was a sentence added to the task spec. That is "your benchmark is measuring your benchmark" with a number attached, plus a false *pass* (the raw-mode staircase) for symmetry. E5/P4/U4. | none — kit | 2026-09-26 |
 | **4** | `deterministic-grader` → next free number | A construction, not a claim about a model — the hardest item here to nitpick. Schedule-invariant assertions over a genuinely nondeterministic scenario, randomness pushed into a probe stub, no LLM judge. A web scan for this recipe fell through to formal-methods papers. | none — ADR-0036 + baseline | 2026-10-10 |
 | **5** | `06` oracle-gaming *(flagship)* | The credibility peak and the only non-commodity claim in the series; also the one topic with a pre-existing public audience. **Now also carries `04`'s argument** as a section — evidence-producing tools vs. the harness-owned scorer — since `04` will not ship on its own. | **the demo** | demo-gated |
@@ -210,7 +211,9 @@ stay out of headlines.
 
 ## Evidence index
 
-Every path below re-verified 2026-08-23 (all resolve). Research docs are date-prefixed (commit
+Re-verified 2026-08-23: every **linked** path below resolves. One artifact does **not** — the
+oracle-gaming build plan (`increment-4-plan.md`), recorded as missing in its own row; it is
+cited as a bare filename rather than a link precisely because there is nothing to link to. Research docs are date-prefixed (commit
 `7ca2e64`) — the old `name-YYYY-MM-DD.md` forms are dead links.
 
 | Artifact | Path | Feeds |
