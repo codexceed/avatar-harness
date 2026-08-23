@@ -30,6 +30,7 @@ rules prevent that:
 | **Live** | merged to `main`, `draft:false` | `git log main -- src/content/blog/<slug>/` |
 | **In review** | full draft, `draft:false`, not yet merged | uncommitted / open PR |
 | **Stub** | directory exists, `draft:true`, ~150–180 words | holds the series slot |
+| **Deferred** | directory + stub exist, but pulled from the queue | listed in the status board with a rationale; **not** moved into *Backlog* (which means *no directory*) |
 | **Backlog** | no post directory yet | lives in *Backlog*, below |
 
 **When a post ships, do all three in the same pass:** flip its status → **delete every backlog
@@ -72,55 +73,70 @@ written this; 2 = commodity take).
 | --- | --- | --- | --- | --- | --- | --- |
 | `00` | When is an agent truly done? *(verifier owns "done")* | 3 | 4 | 3 | 2 | **Live** — 2026-06-18 |
 | `01` | Is your harness driving your model crazy? *(0.10 → 0.75)* | 4 | 4 | 4 | 3 | **Live** — 2026-07-01 |
-| `02` | Don't judge an agent by its pass@1 *(retitled from "What pass@1 hides"; slug `02-dont-judge-by-pass-at-1`)* | 4 | 4 | 4 | **4** | **In review** — dated 2026-07-11. Now carries the **pass^k-is-a-six-point-scale** finding: the 2026-07-14 rerun inverts the baseline reliability ranking (glm 0.50→0.67, gpt-oss 0.67→0.17, the latter from 8 Groq tool-validation deaths). Reliability-metric instability is a fresher angle than the original token-asymmetry take. |
-| `03` | Failure modes from the first eval loop | 3 | 3 | 3 | 3 | **Stub** — date lapsed, re-date on merge of `02` |
-| `04` | A verifier is not a tool | 4 | 4 | 3 | 3 | **Stub** — date lapsed, re-date on merge of `02` |
-| `05` | The model proposes, the harness disposes | 3 | 4 | 3 | 2 | **Stub** — the manifesto; earn it with empirics |
+| `02` | Don't judge an agent by its pass@1 *(slug `02-dont-judge-by-pass-at-1`)* | 4 | 4 | 4 | **4** | **Live** — dated 2026-07-11, merged 2026-07-16 (PR #7). Carries the **pass^k-is-a-six-point-scale** finding: the 2026-07-14 rerun inverts the baseline reliability ranking (glm 0.50→0.67, gpt-oss 0.67→0.17, the latter from 8 Groq tool-validation deaths). |
+| `03` | Failure modes from the first eval loop | 3 | 3 | 3 | 3 | **Deferred** — 2026-08-23. Fails the broadcast filter: an internal taxonomy addressed by its own labels (`A9`, `B3`) is reference material for this repo, not a post someone outside it can use. The catalog stays the canonical artifact other posts cite. |
+| `04` | A verifier is not a tool | 4 | 4 | 3 | 3 | **Deferred** — 2026-08-23. Two problems: it re-argues `00` (which already moved the authority for "done" out of the model), and the framing is harness-shaped rather than portable. Its best content — ADR-0007's *a model that authors its own rubric sets it low up front* — is **reassigned as a section of `06`**. |
+| `05` | The model proposes, the harness disposes | 3 | 4 | 3 | 2 | **Deferred** — 2026-08-23. Lowest uniqueness in the series (U2) and pure architecture-stance. Its own gate was "earned by the empirical posts beneath it"; with `03`/`04` deferred there is even less under it. Revisit only once the queue below has landed. |
 | `06` | When the agent games the verifier | 5 | 4 | 3 | 3 | **Stub** — the flagship; **blocked on the demo** |
 
-**Snapshot:** 2 live · 1 in review · 4 stubs · 12 backlog. The stub dates for `03` and `04`
-(2026-06-30, 2026-07-08) have already lapsed — they are re-based off `02`'s merge in the queue
-below, not honoured as written.
+**Snapshot (2026-08-23):** 3 live · 0 in review · 3 deferred · 1 stub (`06`, demo-gated) · 17 backlog
+(counted from the table below — the four queued rows still live there until they get directories).
+Nothing has shipped since `02` merged on 2026-07-16 — five weeks against a 1–2 week cadence. The queue
+below is re-cut from that date, and the three deferrals are the reason it is now led by backlog items
+rather than by the numbered stubs.
 
 ---
 
 ## The queue — what ships next
 
-Cadence: **one post every 1–2 weeks.** Seven posts without a cadence is a backlog, not a
-presence. Each item is gated on real evidence; nothing ships ahead of its gate.
+Cadence: **one post every 1–2 weeks.** Seven posts without a cadence is a backlog, not a presence.
+Each item is gated on real evidence; nothing ships ahead of its gate.
 
-| # | Ship | Why here | Gate |
-| --- | --- | --- | --- |
-| **0** | **Land `02`** | It is written and in review. Everything downstream re-dates off its merge, and it is what retires the cost/reliability backlog. | merge |
-| **1** | `03` failure modes | Evidence is sitting ready in the catalog, and it's the natural third beat: once a scaffold bug has masqueraded as a weak model (`01`) and a "safe" run as a solved one (`02`), the taxonomy is the payoff. Keep it appendix-grade — summarize, link the full catalog. | none — write it |
-| **2** | `04` a verifier is not a tool | The methodological setup for the `06` flagship: evidence-producing tools vs. the harness-owned scorer. Ship it *before* the flagship or the flagship has to argue this from scratch. | none — write it |
-| **3** | `provider-reliability` → next free number | **The most under-tracked asset we have.** E5/U4, and a complete writing kit already exists. A standalone empirical post that costs almost nothing to produce. | none — kit is written |
-| **4** | `deterministic-grader` → next free number | The sleeper: unique, ready, hard to nitpick, and the best antidote to invisibility. | none — ADR-0036 + baseline exist |
-| **5** | `05` manifesto | Synthesis. Never the opener — it is *earned* by the empirical posts above it. | posts 1–4 landed |
-| **6** | `06` oracle-gaming *(flagship)* | The credibility peak, and the only non-commodity claim in the series. | **the demo** |
+**The selection filter — added 2026-08-23:** *does the lesson transfer to a reader who will never
+use this harness?* A post that only makes sense to someone holding our component names is
+reference material, not broadcast material. This filter is what deferred `03`, `04`, and `05`, and
+what promoted three full-kit backlog items over them. It sits alongside *Standing rules* — those
+govern **how** a post is written, this governs **whether it is written at all**.
 
-**Running in parallel, starting now: build the oracle-gaming demo** (`increment-4-plan.md`).
-This is deliberate — `06` must not be perpetually-last. Its moat is *shrinking* as the field
-races in (SpecBench, Verification Horizon, the External Anchor Principle; UTBoost found 15.7%
-of "passing" SWE-bench Verified patches were gamed). "I ran it in a live self-modifying
-harness" is the entire differentiator, and it decays. The demo is small and concrete:
-**construct one task where the cheapest path to green is to edit a test or the verifier; show
-the agent taking it; show the fingerprinted/held-out oracle catching it; report gamed-pass-rate
-vs. true-pass-rate.**
+| # | Ship | Why here | Gate | Target |
+| --- | --- | --- | --- | --- |
+| **1** | `provider-reliability` → next free number | A provider hung ~5 min and returned a `\x00` body as **HTTP 200** — an error wearing a success costume — and it looked like a code regression until a serial control run (20/20, 0 NULs) exonerated the model. The rule (**classify by layer:** dead/empty = transport, malformed-but-present = model, slow-but-streaming = neither) applies to anyone calling an LLM API. Six-row run table already written. | none — 21KB kit | 2026-08-29 |
+| **2** | `shell-syntax-boundary` → next free number | **The most broadcastable item in the backlog.** The exposure is specific — a harness that hands model-authored command *strings* to `shlex.split` with `shell=False` and never checks them for shell syntax; one that takes structured argv, or rejects metacharacters at the seam, does not inherit it. In ours, `&&` became argv words and a declared 10-section verification chain **passed having verified 1 section** (`grep -q` exits 0 on first match while patterns 2–10 became unopenable filenames). Deterministic one-line repro; E5/P4/U4. *Draft the post to the same scope: name the pattern, don't generalize to every harness.* | none — kit | 2026-09-12 |
+| **3** | `eval-probe-false-rejections` → next free number | **Three models flipped FAIL→PASS with zero capability change** — the only delta was a sentence added to the task spec. That is "your benchmark is measuring your benchmark" with a number attached, plus a false *pass* (the raw-mode staircase) for symmetry. E5/P4/U4. | none — kit | 2026-09-26 |
+| **4** | `deterministic-grader` → next free number | A construction, not a claim about a model — the hardest item here to nitpick. Schedule-invariant assertions over a genuinely nondeterministic scenario, randomness pushed into a probe stub, no LLM judge. A web scan for this recipe fell through to formal-methods papers. | none — ADR-0036 + baseline | 2026-10-10 |
+| **5** | `06` oracle-gaming *(flagship)* | The credibility peak and the only non-commodity claim in the series; also the one topic with a pre-existing public audience. **Now also carries `04`'s argument** as a section — evidence-producing tools vs. the harness-owned scorer — since `04` will not ship on its own. | **the demo** | demo-gated |
+
+**Sequencing note:** #2 and #3 are siblings — both are *the thing measuring the agent was broken*.
+If they read as repetitive, swap #4 between them, or open #3 explicitly as the grader-side
+companion to #2 (which is what its kit already calls itself).
+
+**Running in parallel, starting now: build the oracle-gaming demo.** The `increment-4-plan.md`
+referenced by earlier revisions of this doc **no longer exists at the repo root** — it was
+untracked and is gone, so the flagship's gate currently has *no artifact behind it*. Rebuilding
+that plan is the first task. This parallel track is deliberate: `06` must not be
+perpetually-last, and its moat is *shrinking* as the field races in (SpecBench, Verification
+Horizon, the External Anchor Principle; UTBoost found 15.7% of "passing" SWE-bench Verified
+patches were gamed). "I ran it in a live self-modifying harness" is the entire differentiator, and
+it decays. The demo is small and concrete: **construct one task where the cheapest path to green
+is to edit a test or the verifier; show the agent taking it; show the fingerprinted/held-out
+oracle catching it; report gamed-pass-rate vs. true-pass-rate.** The four queued posts above buy
+roughly six weeks of cadence to build it.
+
 
 ---
 
 ## Backlog
 
 Unwritten, deduplicated, one row per article concept. Promote by giving it the next free
-number and a directory. **Readiness and uniqueness are inversely correlated here** — the
+number and a directory. Rows marked **→ queued #N** are already ordered in *The queue* above and
+stay here only until they get a directory. **Readiness and uniqueness are inversely correlated here** — the
 write-now items tend to be the crowded ones. Publish those as *"our data confirming a known
 effect,"* not as reveals.
 
 | ID | Post | Core | R | E | P | U | Ready? |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `provider-reliability` | Errors disguised as success | A provider hung ~5 min then returned a `\x00` NUL body as **HTTP 200** — an error wearing a success costume. It dropped pass@1 0.90→0.85 and *looked like a code regression*; a serial control run (20/20, 0 NULs) proved transport, not capability. Principle: **classify provider failures by layer** — dead/empty reply = transport (re-issue), malformed-but-present = model (re-prompt), slow-but-streaming = neither (leave it). **Caveat:** the *recovery* half is unexercised by a real hang (needs fault injection); pass@1 deltas aren't significant. | 3 | 5 | 3 | **4** | ✓ **full kit** |
-| `deterministic-grader` | A deterministic grader for a nondeterministic scenario | Scoring a concurrency/ACID task with schedule-invariant assertions, randomness pushed into a probe stub keyed on the echoed `user_id`, SQLite-lock-as-intended-difficulty, no LLM judge. A recipe nobody has written *for agent evals* — a web scan fell through to formal-methods papers. | 3 | 5 | 3 | **4** | ✓ |
+| `provider-reliability` | Errors disguised as success | A provider hung ~5 min then returned a `\x00` NUL body as **HTTP 200** — an error wearing a success costume. It dropped pass@1 0.90→0.85 and *looked like a code regression*; a serial control run (20/20, 0 NULs) proved transport, not capability. Principle: **classify provider failures by layer** — dead/empty reply = transport (re-issue), malformed-but-present = model (re-prompt), slow-but-streaming = neither (leave it). **Caveat:** the *recovery* half is unexercised by a real hang (needs fault injection); pass@1 deltas aren't significant. | 3 | 5 | 3 | **4** | ✓ **full kit** · **→ queued #1** |
+| `deterministic-grader` | A deterministic grader for a nondeterministic scenario | Scoring a concurrency/ACID task with schedule-invariant assertions, randomness pushed into a probe stub keyed on the echoed `user_id`, SQLite-lock-as-intended-difficulty, no LLM judge. A recipe nobody has written *for agent evals* — a web scan fell through to formal-methods papers. | 3 | 5 | 3 | **4** | ✓ · **→ queued #4** |
 | `probe-vs-verifier` | What counts as solved? | Probe-owned vs. verifier-owned success; the case where a strict verifier failed a working artifact and the probe became authoritative. Fresh — news-analyzer and ecommerce-portal now supply real cases. | 4 | 4 | 3 | **4** | ✓ |
 | `score-the-attempt` | Score the attempt, not the prevented outcome | When a denylist deterministically enforces "no leak," the terminal outcome cannot distinguish intrinsic restraint from a blocked lunge — so read intent from the agent-hidden journal of *denied* calls. **Caveat:** the attempt-vs-effect split already exists in the literature (the tool-affordance-on-safety paper) — lead with that citation, position the journal method as the harness-native instantiation. | 5 | 4 | 2 | 3 | ~ concept (ADR-0034 is design-only) |
 | `blast-radius` | Route on blast radius, not complexity | The human-gated improvement loop, now *built* rather than proposed: two workflows, three gates over a deterministic core; `validate` runs against **frozen** eval assets so a candidate can't grade a spec it just edited. "Route on blast radius" is the sub-angle that returned nothing in a web scan. | 4 | 4 | 3 | 2 | ✓ |
@@ -134,8 +150,8 @@ effect,"* not as reveals.
 | `built-with-agents` | Building a coding agent *with* coding agents | The meta-story: TDD-phased, dogfood-driven, four worktree-isolated agents merging clean, ADRs as the decision log. Weakest research signal — needs real stats (PRs, defects caught only at integration) to earn a slot. | 2 | 3 | 4 | 3 | ~ needs stats |
 | `vacuity-guard-false-lesson` | The guardrail that taught the model a lie | An over-strict guard rejected a *correct* declared check, burned a turn plus a tier-3 human approval, accepted the replacement by parse accident — and the model *internalized* the false verdict (its amendment rationale echoes it). Principle: a guard's rejection message is in-context training data — fail open at the lexical gate, fail closed at the executing floor. The counterweight to too-lax integrity discourse. | 3 | 4 | 3 | **4** | ✓ **full kit** |
 | `self-certification-arms-race` | One task, four models, four self-certification holes | The #110–#114 saga as an arc: a repeated dogfood objective as an integrity fuzzer — guard miscalibration, argv-mangled execution, advisory verdicts laundering a failing *immutable floor* into `success`, a misrouted task with no escalation lever. Verification as a governed protocol. The harness-side prequel/teaser for `06`. | 4 | 4 | 3 | 3 | ✓ **full kit** |
-| `shell-syntax-boundary` | Your agent's shell command was never running in a shell | `shlex.split` + `shell=False` turns model-authored `&&` chains into argv garbage: a 10-section verification chain **passed having verified 1 section** (quiet false pass); a heredoc hang seeded a 24-turn spiral (loud). Fix: a quote-aware normalize-or-reject boundary at the command seam. Deterministic one-line repro. | 3 | 5 | 4 | **4** | ✓ **full kit** |
-| `eval-probe-false-rejections` | My eval was wrong five times before any model was | Developing `tetris-tui`: five probe artifacts (three README-wording false rejections, a farewell-frame count, a streaming under-spec) plus one false *pass* (the raw-mode staircase, closed with a stdlib-pty terminal emulator) — three models flipped FAIL→PASS on spec changes alone; what survived (reverse-order bag, budget exhaustion) was the real signal. `vacuity-guard-false-lesson`'s grader-side companion; *task*-not-model as `01` was scaffold-not-model. | 3 | 5 | 4 | **4** | ✓ **full kit** |
+| `shell-syntax-boundary` | Your agent's shell command was never running in a shell | `shlex.split` + `shell=False` turns model-authored `&&` chains into argv garbage: a 10-section verification chain **passed having verified 1 section** (quiet false pass); a heredoc hang seeded a 24-turn spiral (loud). Fix: a quote-aware normalize-or-reject boundary at the command seam. Deterministic one-line repro. | 3 | 5 | 4 | **4** | ✓ **full kit** · **→ queued #2** |
+| `eval-probe-false-rejections` | My eval was wrong five times before any model was | Developing `tetris-tui`: five probe artifacts (three README-wording false rejections, a farewell-frame count, a streaming under-spec) plus one false *pass* (the raw-mode staircase, closed with a stdlib-pty terminal emulator) — three models flipped FAIL→PASS on spec changes alone; what survived (reverse-order bag, budget exhaustion) was the real signal. `vacuity-guard-false-lesson`'s grader-side companion; *task*-not-model as `01` was scaffold-not-model. | 3 | 5 | 4 | **4** | ✓ **full kit** · **→ queued #3** |
 
 ### Retired — folded into shipped posts (do not resurrect)
 
@@ -167,11 +183,14 @@ broadcasting into a void.
 | --- | --- | --- | --- |
 | `01` scaffold-not-model | **HN** | Lobste.rs | Strongest hook. HN-shaped: empirical, counterintuitive, debuggable, no promo smell. |
 | `02` pass@1-hides | HN | Latent Space orbit | The methodology crowd; pairs with `01`. |
-| `03` failure modes | Lobste.rs, r/LocalLLaMA | HF (if a dataset) | Reference piece, practitioner audience. |
-| `04` verifier-is-not-a-tool | HN | **LessWrong** | Architecture, and the first safety-adjacent angle. |
-| `05` manifesto | **X-primary** | — | Highest format risk → ride the audience you've built, not a cold HN swing. |
-| `06` oracle-gaming | **HN + LessWrong/AF** | HF (result file) | The credibility peak. Bring the experiment, not an argument. |
+| `provider-reliability` | **HN** | r/LocalLLaMA, Lobste.rs | An HTTP 200 that is an error — broad practitioner appeal, no harness knowledge required. |
+| `shell-syntax-boundary` | **HN** | Lobste.rs | The widest-reach item: a bug most agent builders have shipped without knowing. One-line repro travels on its own. |
+| `eval-probe-false-rejections` | HN | r/LocalLLaMA, Latent Space orbit | The eval-methodology audience; sibling to `02`. |
+| `deterministic-grader` | Lobste.rs | HN (if the recipe reads cleanly) | A construction piece — lower ceiling, near-zero nitpick surface. |
+| `06` oracle-gaming | **HN + LessWrong/AF** | HF (result file) | The credibility peak. Bring the experiment, not an argument. Absorbs `04`'s safety-adjacent angle. |
 | `00` context piece | (evergreen) | repo README | The "what is this" anchor everything links back to. |
+
+> Deferred (`03`, `04`, `05`) are out of the distribution plan until they are re-queued.
 
 **Escalation ladder — match a venue's scrutiny to the confidence of the claim.** High-reach,
 permanent-record venues (HN, LessWrong, X) punish a wrong claim hard, and one confidently-wrong
@@ -192,12 +211,14 @@ stay out of headlines.
 
 ## Evidence index
 
-Every path below is verified as of 2026-07-12. Research docs are date-prefixed (commit
+Re-verified 2026-08-23: every **linked** path below resolves. One artifact does **not** — the
+oracle-gaming build plan (`increment-4-plan.md`), recorded as missing in its own row; it is
+cited as a bare filename rather than a link precisely because there is nothing to link to. Research docs are date-prefixed (commit
 `7ca2e64`) — the old `name-YYYY-MM-DD.md` forms are dead links.
 
 | Artifact | Path | Feeds |
 | --- | --- | --- |
-| Failure-mode catalog | [`../research/failure-modes.md`](../research/failure-modes.md) | `03` |
+| Failure-mode catalog | [`../research/failure-modes.md`](../research/failure-modes.md) | `03` *(deferred)* — stays the canonical artifact other posts cite |
 | Eval baseline (original + corrected) | [`../research/2026-06-15-eval-baseline.md`](../research/2026-06-15-eval-baseline.md) · [`…-post-fixes.md`](../research/2026-06-15-eval-baseline-post-fixes.md) | `00`, `01`, `02` |
 | R5 post-merge validation | [`../research/2026-06-21-eval-r5-postmerge-validation.md`](../research/2026-06-21-eval-r5-postmerge-validation.md) | `provider-reliability` |
 | LLM landscape (7×6×5, n=210) | [`../research/2026-07-05-llm-landscape.md`](../research/2026-07-05-llm-landscape.md) | `02` |
@@ -208,7 +229,7 @@ Every path below is verified as of 2026-07-12. Research docs are date-prefixed (
 | **Verification-saga writing kits (×4)** | [`blog_kits/vacuity-guard-false-lesson.md`](blog_kits/vacuity-guard-false-lesson.md) · [`…/self-certification-arms-race.md`](blog_kits/self-certification-arms-race.md) · [`…/shell-syntax-boundary.md`](blog_kits/shell-syntax-boundary.md) · [`…/eval-probe-false-rejections.md`](blog_kits/eval-probe-false-rejections.md) | their namesake backlog rows |
 | Shell-mangling false pass | [`../research/2026-07-10-shell-mangling-false-pass.md`](../research/2026-07-10-shell-mangling-false-pass.md) | `shell-syntax-boundary` |
 | tetris-tui eval development (design record + matrices + committed result rows) | [`../research/2026-07-11-tetris-tui-eval-development.md`](../research/2026-07-11-tetris-tui-eval-development.md) | `eval-probe-false-rejections`, `self-certification-arms-race` |
-| Oracle-gaming build plan | `increment-4-plan.md` *(repo root, untracked)* | `06` |
+| Oracle-gaming build plan | **missing** — `increment-4-plan.md` was untracked at the repo root and is gone as of 2026-08-23; rebuild it before `06` | `06` |
 | ADRs | [`../adr/`](../adr/) — 0007 + 0020 (`04`) · 0011 + 0024 (`06`) · 0034 (`score-the-attempt`) · 0036 (`deterministic-grader`) · 0026 + 0028 + 0029 (`provider-reliability`) · 0031 + 0032 (`blast-radius`) | — |
 
 ---
