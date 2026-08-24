@@ -72,11 +72,27 @@ Status legend: ✅ fixed · 🔧 open · 📋 designed-not-built.
 - **Fix:** ADR-0018 — hide the entire journal *directory* (all sessions' journals + pointer) as a path prefix when it is a real subdir; a root-level `--log` still hides only the journal pair so it can never blank the workspace.
 - **Feeds:** Path C; security-adjacent — a journal can contain a secret leaked by an *earlier* run, so reading a sibling journal is also a cross-run exfiltration channel. Narrows C1's search surface in the *interactive cockpit* path — there `--log` / `config.log_path` drives the hide-set, so the agent can no longer mine the journal for a leaked token. **It does not yet narrow it under the Eval-0 harness**, where C1 was actually measured: `evals/run.py` injects `journal=JsonlEventJournal(repo / "journal.jsonl")` separately and leaves `config.log_path` unset, so `Workspace` derives no journal-ignore (`_journal_ignores` returns empty for a falsy `log_path`) and the root `journal.jsonl` stays listable/readable for `make eval`. Closing this for evals (thread `log_path` through the eval `cfg`, or hide the injected journal path) is open follow-up — until then, do **not** attribute a changed C1 search surface to ADR-0018 in an eval re-run.
 
-### A9 · A NUL/hung provider reply truncates the run 🔧 · fix implemented (ADR-0028, PR #87) — pending merge + eval validation
+### A9 · A NUL/hung provider reply truncates the run ✅
 - **Mechanism:** the OpenAI client is built with **no `timeout=` / `max_retries=`** (`model_client.py:484`), so the SDK default timeout (~600s) equals `max_wall_clock_seconds` (600) — one hung call can eat the *entire* run budget. A `\x00` (NUL) / empty body is a successful HTTP 200, so the SDK never retries it; it falls through to `parse_decision()` → `DecisionParseError` → the **model parse-retry** (`max_parse_retries`), which *re-prompts the model in-conversation*. That is the wrong layer for a transport failure (it pollutes context and re-issues a call that can hang again), and it **violates §16** (system failures must be surfaced, never auto-retried *through the model loop*). The journal records the NUL as `decision_error`, conflating provider noise with model-quality defects and corrupting the `failure_mode` histogram (ADR-0025).
 - **Evidence:** `eval_run_20260620T142752Z` (concurrent, ADR-0026 `--concurrency>1`): 4 `minimax/minimax-m3` cells returned `decision_error raw="\x00"` after 297–364s hangs with convergent end-timestamps (~14:38:1x = simultaneous provider degradation under parallel load); 3 failed, two truncated to a **single turn → `outcome=incomplete`**. The serial control (`eval_run_20260620T161006Z`, `--concurrency 1`) scored **20/20, 0 NULs** — minimax pass@1 0.90 (serial) → 0.85 (concurrent/NUL) → 1.00 (serial rerun). Transport, not capability.
 - **Fix:** ADR-0028 + `CP-transport-retry-nul-resilience` — bound every request (`request_timeout_seconds=240`, calibrated above the longest legit generation ~203s and below the hang→NUL latency ~297s); classify empty/NUL bodies as a new `EmptyResponseError` (transport, not parse); retry transport with **backoff + jitter** (`transport_max_retries=2`) re-issuing the same `messages` (usage summed across attempts); on exhaustion surface a **system failure** (§16) via a `transport_error` event, and journal a recovered retry as `transport_retry` — neither enters the model context. Pairs with an eval-runner jitter / per-provider concurrency-cap change that removes the trigger.
 - **Feeds:** Path A — the run-C "regression" was this defect, not a model or code-quality change; a transport hang must fail one request, not a whole cell. Distinct from A4 (oscillation) and A6 (`list_files` silent-zero — here the *model call* hung, not a tool); ADR-0026 is the trigger, not the defect.
+- **Status:** ✅ fixed — **ADR-0028** (R1–R4, PR #87) + **ADR-0029** (R5 streaming idle-timeout, PR #89), both merged
+  2026-06-21, validated by [`2026-06-21-eval-r5-postmerge-validation.md`](2026-06-21-eval-r5-postmerge-validation.md):
+  across 80 rows at concurrency 8 — the same load case that produced the incident — **0** `transport_error`, **0**
+  `iterations==0`, and **525/525** model decisions tagged `transport="native_stream"` with **0** `streaming_fallback`.
+  ADR-0029 also corrected ADR-0028's framing: httpx has only per-*operation* timeouts and **no total**, so R1's "240s
+  request timeout" was always a per-read bound — which is why a legitimate 358s generation slipped past it. R5 makes
+  that bound explicit and small rather than pretending a total exists.
+  **Caveat (measured, not interpreted):** what is fixed is the *layering* — a transport failure no longer routes
+  through the model parse-retry. The *recovery* path (transport retry / idle timeout firing on a real hang) is still
+  **unexercised in the wild**: no hang has occurred since the fix, so 0 retries have fired. Proven correct offline
+  (scripted NUL-then-valid client) and non-destructive to legitimate long work, but not proven to catch a live stall.
+  Fault injection remains the honest next step.
+- **Artifacts:** the raw run files this entry cites (`eval_run_20260620T142752Z/`, `…T161006Z/`, and the six
+  `evals/results/2026062*.jsonl`) were **never committed and are lost** to a machine migration. Every number above
+  survives because it was written into this entry, ADR-0028/0029 and the validation note at the time. This is the
+  loss the artifact-commit rule in the root `CLAUDE.md` now exists to prevent.
 
 ---
 
