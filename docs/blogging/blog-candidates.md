@@ -33,6 +33,13 @@ rules prevent that:
 | **Deferred** | directory + stub exist, but pulled from the queue | listed in the status board with a rationale; **not** moved into *Backlog* (which means *no directory*) |
 | **Backlog** | no post directory yet | lives in *Backlog*, below |
 
+**Consolidation posts retire their sources only on publish.** When a queued post is built by
+merging others (`verification-first-synthesis` merges `03`+`04`+`05`), the sources stay fully
+intact — directory, stub, scores, evidence links — while the consolidated draft is written
+*and* evaluated. Retirement happens when the consolidation **ships**, never when it is
+merely planned; if the draft is judged not publishable, the sources are still there and
+nothing was lost. `02` could delete its backlog rows because it had already shipped.
+
 **When a post ships, do all three in the same pass:** flip its status → **delete every backlog
 row it consumed** → re-date the queue. That middle step is the one that was skipped: `02`
 swallowed both the cost and the reliability candidates while the doc still advertised them as
@@ -51,13 +58,19 @@ ready-to-write.
    denylist" claim was confidently wrong and was caught *only* by reading the trajectories.
    Hedge the interpretation; never hedge the data.
 4. **Ship the receipts:** the reproduce command plus a link to the raw artifact.
-5. **One reusable principle** a reader can apply *without* adopting this harness.
+5. **At least one reusable principle** a reader can apply *without* adopting this harness.
+   One is the floor, not the ceiling — a synthesis post may carry several, provided each is
+   stated plainly and carries its own evidence. What is forbidden is *zero*, not *many*.
 6. **Adversarial pre-publish pass** (review the draft like a PR) before any cross-post.
 7. **Comparisons to other harnesses** (Pi, opencode, Aider) go in a *section*, never a
    headline — and get verified against their current source first. Claims about other
    people's systems are the highest-nitpick surface there is.
 
-**Shape:** 700–1200 words, or 5–8 dense sections. Every post carries at least one of: a run
+**Shape:** 700–1200 words, or 5–8 dense sections, is the default — the length at which a
+single finding lands hardest. **A synthesis or consolidation post may run longer** when it is
+genuinely carrying more: several principles, or evidence merged from multiple sources. Length
+is earned by content, never by padding, and the adversarial pass (rule 6) is where a long
+draft proves it needed the words. Every post, at any length, carries at least one of: a run
 table, a journal excerpt, a diff, a failing/passing test pair, an eval result, or an
 architecture diagram tied to source.
 
@@ -74,16 +87,17 @@ written this; 2 = commodity take).
 | `00` | When is an agent truly done? *(verifier owns "done")* | 3 | 4 | 3 | 2 | **Live** — 2026-06-18 |
 | `01` | Is your harness driving your model crazy? *(0.10 → 0.75)* | 4 | 4 | 4 | 3 | **Live** — 2026-07-01 |
 | `02` | Don't judge an agent by its pass@1 *(slug `02-dont-judge-by-pass-at-1`)* | 4 | 4 | 4 | **4** | **Live** — dated 2026-07-11, merged 2026-07-16 (PR #7). Carries the **pass^k-is-a-six-point-scale** finding: the 2026-07-14 rerun inverts the baseline reliability ranking (glm 0.50→0.67, gpt-oss 0.67→0.17, the latter from 8 Groq tool-validation deaths). |
-| `03` | Failure modes from the first eval loop | 3 | 3 | 3 | 3 | **Deferred** — 2026-08-23. Fails the broadcast filter: an internal taxonomy addressed by its own labels (`A9`, `B3`) is reference material for this repo, not a post someone outside it can use. The catalog stays the canonical artifact other posts cite. |
-| `04` | A verifier is not a tool | 4 | 4 | 3 | 3 | **Deferred** — 2026-08-23. Two problems: it re-argues `00` (which already moved the authority for "done" out of the model), and the framing is harness-shaped rather than portable. Its best content — ADR-0007's *a model that authors its own rubric sets it low up front* — is **reassigned as a section of `06`**. |
-| `05` | The model proposes, the harness disposes | 3 | 4 | 3 | 2 | **Deferred** — 2026-08-23. Lowest uniqueness in the series (U2) and pure architecture-stance. Its own gate was "earned by the empirical posts beneath it"; with `03`/`04` deferred there is even less under it. Revisit only once the queue below has landed. |
+| `03` | Failure modes from the first eval loop | 3 | 3 | 3 | 3 | **Deferred** — 2026-08-23. Fails the broadcast filter: an internal taxonomy addressed by its own labels (`A9`, `B3`) is reference material for this repo, not a post someone outside it can use. The catalog stays the canonical artifact other posts cite. **Sources the `verification-first-synthesis` draft** (queue #5) — supplies its evidence base. Nothing here is retired: directory, stub, scores and evidence links **stay** until that draft exists and has been evaluated for publishing. |
+| `04` | A verifier is not a tool | 4 | 4 | 3 | 3 | **Deferred** — 2026-08-23. Two problems: it re-argues `00` (which already moved the authority for "done" out of the model), and the framing is harness-shaped rather than portable. Its best content — ADR-0007's *a model that authors its own rubric sets it low up front* — goes to the consolidated draft; it falls back to a section of `06` only if that draft is not published. **Sources the `verification-first-synthesis` draft** (queue #5) — supplies its mechanism. Nothing here is retired: directory, stub, scores and evidence links **stay** until that draft exists and has been evaluated for publishing. |
+| `05` | The model proposes, the harness disposes | 3 | 4 | 3 | 2 | **Deferred** — 2026-08-23. Lowest uniqueness in the series (U2) and pure architecture-stance. Its own gate was "earned by the empirical posts beneath it"; with `03`/`04` deferred there is even less under it. Revisit only once the queue below has landed. **Sources the `verification-first-synthesis` draft** (queue #5) — supplies its thesis. Nothing here is retired: directory, stub, scores and evidence links **stay** until that draft exists and has been evaluated for publishing. |
 | `06` | When the agent games the verifier | 5 | 4 | 3 | 3 | **Stub** — the flagship; **blocked on the demo** |
 
-**Snapshot (2026-08-23):** 3 live · 0 in review · 3 deferred · 1 stub (`06`, demo-gated) · 17 backlog
+**Snapshot (2026-08-23):** 3 live · 0 in review · 3 deferred *(all three sourcing the queued
+consolidation, none retired)* · 1 stub (`06`, demo-gated) · 17 backlog
 (counted from the table below — the four queued rows still live there until they get directories).
-Nothing has shipped since `02` merged on 2026-07-16 — five weeks against a 1–2 week cadence. The queue
-below is re-cut from that date, and the three deferrals are the reason it is now led by backlog items
-rather than by the numbered stubs.
+Nothing has shipped since `02` merged on 2026-07-16 — five weeks against a 1–2 week cadence. The
+queue below is re-cut from that date, and the three deferrals are the reason it is now led by
+backlog items rather than by the numbered stubs.
 
 ---
 
@@ -104,7 +118,8 @@ govern **how** a post is written, this governs **whether it is written at all**.
 | **2** | `shell-syntax-boundary` → next free number | **The most broadcastable item in the backlog.** The exposure is specific — a harness that hands model-authored command *strings* to `shlex.split` with `shell=False` and never checks them for shell syntax; one that takes structured argv, or rejects metacharacters at the seam, does not inherit it. In ours, `&&` became argv words and a declared 10-section verification chain **passed having verified 1 section** (`grep -q` exits 0 on first match while patterns 2–10 became unopenable filenames). Deterministic one-line repro; E5/P4/U4. *Draft the post to the same scope: name the pattern, don't generalize to every harness.* | none — kit | 2026-09-12 |
 | **3** | `eval-probe-false-rejections` → next free number | **Three models flipped FAIL→PASS with zero capability change** — the only delta was a sentence added to the task spec. That is "your benchmark is measuring your benchmark" with a number attached, plus a false *pass* (the raw-mode staircase) for symmetry. E5/P4/U4. | none — kit | 2026-09-26 |
 | **4** | `deterministic-grader` → next free number | A construction, not a claim about a model — the hardest item here to nitpick. Schedule-invariant assertions over a genuinely nondeterministic scenario, randomness pushed into a probe stub, no LLM judge. A web scan for this recipe fell through to formal-methods papers. | none — ADR-0036 + baseline | 2026-10-10 |
-| **5** | `06` oracle-gaming *(flagship)* | The credibility peak and the only non-commodity claim in the series; also the one topic with a pre-existing public audience. **Now also carries `04`'s argument** as a section — evidence-producing tools vs. the harness-owned scorer — since `04` will not ship on its own. | **the demo** | demo-gated |
+| **5** | `verification-first-synthesis` → next free number *(draft first, then decide)* | **The `03`+`04`+`05` consolidation.** Each of those three fails on its own for a *different* reason — `03` is evidence without a thesis, `05` is a thesis without evidence, `04` is the bridge but re-treads `00`. Merged, each supplies what the others lack. The generalization argument: a taxonomy transfers only when it is *used* to argue something — "here are 19 ways runs failed" transfers to nobody; "failures sort into four kinds, and the ones you cannot see are exactly the ones a self-grading model hides" transfers to anyone running an agent. May run long (see *Shape*) and may land several principles. **Must** differentiate from `00` by arguing the position *from failure data* where `00` argued it *from design*; if a draft cannot hold that line, it is `00` at triple length and does not publish. | **write the draft, then evaluate it** — publication is not pre-approved | 2026-10-24 (draft) |
+| **6** | `06` oracle-gaming *(flagship)* | The credibility peak and the only non-commodity claim in the series; also the one topic with a pre-existing public audience. If #5 publishes, it carries the tools-vs-scorer argument and `06` simply cites it, staying focused on the demo. If #5 is not published, `06` absorbs that argument as a section instead. | **the demo** | demo-gated |
 
 **Sequencing note:** #2 and #3 are siblings — both are *the thing measuring the agent was broken*.
 If they read as repetitive, swap #4 between them, or open #3 explicitly as the grader-side
