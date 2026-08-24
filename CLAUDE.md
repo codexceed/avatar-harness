@@ -31,6 +31,17 @@ Deepest to most operational. Pick by the *breadth* of the task:
 
 **Record research findings under `docs/research/`:** when you **formally and explicitly execute research work** — an eval run or baseline matrix, a trajectory analysis, a failure-mode investigation, a benchmark — write its findings to a dated, evidence-linked doc under `docs/research/`, citing the raw artifact path and the command to reproduce. This is the durable, citable home for empirical results that feed write-ups and the eval-driven self-improvement signal. A *deliberately executed* experiment belongs here; ad-hoc observations during ordinary dev do not. Distinguish measured fact from interpretation, and don't bury findings in commit messages or scratch files.
 
+**Commit experiment artifacts before the run is done — and ask first:** when *you* execute an experiment (an eval run, a baseline matrix, a benchmark, a fault-injection or trajectory study), the run is not finished when the numbers land. Before reporting completion, **enumerate every artifact it produced and prompt the user to confirm committing them.** Never auto-commit them, and never leave them silently untracked — an untracked artifact is one machine migration away from gone, which is exactly how the 2026-06 transport-resilience run files (`evals/results/2026062*.jsonl`) were lost while the findings survived only because they had been written into ADR-0028/0029 and a research note.
+
+The prompt must be a *decision*, not a reflex — name the paths, the file count, and the total size, split into two classes, because they carry different risk:
+
+| Class | Examples | Default |
+| --- | --- | --- |
+| **Results** — small, structured, already the citable receipt | `evals/results/*.jsonl` + `.summary.json`, generated plots under `docs/research/assets/` | **Offer to commit.** These are what *Ship the receipts* points a reader at. |
+| **Journals / run trees** — bulky, full trajectories | `eval_run_<stamp>/**/journal.jsonl` kept by `--no-cleanup` | **Ask separately, with the size, and scan before offering.** Trajectories carry whatever the agent read; failure-mode **D1** is a secret reaching log *and* context. Size and leak risk both argue against reflexive commit. |
+
+If the user declines, say so in your summary so the loss is a recorded choice rather than an accident. If an artifact is too large to commit, propose what to keep instead — the summary, a digest, or the numbers transcribed into the research note — since a finding whose evidence is unciteable violates *Ship the receipts* later, when a write-up needs it.
+
 **Write every blog post against the Standing rules:** when asked to draft, outline, revise, or ship a blog post — or any public write-up about this project — **read `docs/blogging/blog-candidates.md` first** and treat its *Standing rules* section as the binding contract for the piece. They are not style suggestions; a draft that violates one is not ready. In force, every post, no exceptions:
 
 1. **Directional evidence or a case study, never a leaderboard** — n=5 seeds, few tasks, one project, an evolving harness. "Failure-mode discovery," never "model X beats Y."
