@@ -37,11 +37,11 @@ Deepest to most operational. Pick by the *breadth* of the task:
 2. **The 6-question arc** — what motivated this · what we did · what we measured · what we inferred · what we're uncertain about · where we go next.
 3. **Split measured fact from interpretation, visibly** — hedge the interpretation; never hedge the data.
 4. **Ship the receipts** — the reproduce command plus a link to the raw artifact (source them from that doc's *Evidence index*).
-5. **One reusable principle** a reader can apply without adopting this harness.
+5. **At least one reusable principle** a reader can apply without adopting this harness — one is the floor, not the ceiling; a synthesis post may carry several, each with its own evidence.
 6. **Adversarial pre-publish pass** — review the draft like a PR before any cross-post.
 7. **Comparisons to other harnesses** (Pi, opencode, Aider) go in a *section*, never a headline — and get verified against their current source first.
 
-Plus the **shape**: 700–1200 words (or 5–8 dense sections), carrying at least one run table, journal excerpt, diff, failing/passing test pair, eval result, or source-tied architecture diagram. The same doc also owns each post's **status, ID, and queue position** — read status from it (and from `sarthak-blog/` git state), never from memory, and follow its *Update protocol* when a post ships: flip the status, delete every backlog row it consumed, re-date the queue.
+Plus the **shape**: 700–1200 words (or 5–8 dense sections) by default — a synthesis or consolidation post may run longer when it is genuinely carrying more — carrying at least one run table, journal excerpt, diff, failing/passing test pair, eval result, or source-tied architecture diagram. The same doc also owns each post's **status, ID, and queue position** — read status from it (and from `sarthak-blog/` git state), never from memory, and follow its *Update protocol* when a post ships: flip the status, delete every backlog row it consumed, re-date the queue.
 
 ## Commands
 
