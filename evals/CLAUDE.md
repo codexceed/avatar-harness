@@ -18,7 +18,14 @@ Two things live here, layered:
 6. **Freeze the grading surface during `validate`.** Run against `evals/` (specs · probes · fixtures) restored from a trusted ref, never the agent's worktree — a pragmatic ADR-0011 D1+D2. Necessary, **not sufficient**: it does not stop special-casing a frozen-but-visible test, cannot fix a construct-validity gap (a guard probe), and cannot cover the verifier when the verifier is itself the target.
 7. **Cost is intentional.** The eval re-run dominates (one full matrix ≈ 2.5M tokens; 85% of the 2026-06-15 run's tokens were the 10 failures). Workflow A spends **$0**; Workflow B is the only spender, via the **canary ladder** (unit/local → 1-seed canary on affected models → full matrix on survival) with a hard rework cap. Every proposal carries a `predicted_validation_cost`.
 8. **HITL stays until the integrity substrate exists.** No auto-merge, and no automating the eval-run trigger, until **ADR-0011 D1–D4 + a train/test split** are built and calibrated. Only then do the gates become triggers (cron / selection policy / auto-merge on held-out green) — the "golden loop." The human moves author → reviewer → auditor, never skips to auditor.
-9. **No LLM-judge scoring; no SendMessage agent team.** Scoring is deterministic (ADR-0004). Proposal compatibility is handled by a single reconciliation **barrier**, not open-ended cross-agent chat.
+9. **A run ends with an artifact-commit prompt.** `make eval` leaves results (`evals/results/*.jsonl` +
+   `.summary.json`) and, under `--no-cleanup`, whole journal trees. When an *agent* drives the run, it must
+   enumerate what was produced and ask the user to confirm committing it before calling the run done —
+   results offered by default, journals asked separately with their size and a leak scan (D1). Untracked
+   artifacts do not survive a machine change: the 2026-06 transport-resilience run files were lost that way,
+   and only survived as prose because the numbers had been written into ADR-0028/0029 and a research note.
+   See the root `CLAUDE.md` rule for the full contract.
+10. **No LLM-judge scoring; no SendMessage agent team.** Scoring is deterministic (ADR-0004). Proposal compatibility is handled by a single reconciliation **barrier**, not open-ended cross-agent chat.
 
 ## Conventions for code here
 
