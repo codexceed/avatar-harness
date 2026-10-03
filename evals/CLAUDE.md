@@ -11,7 +11,7 @@ Two things live here, layered:
 ## Core principles of the improvement loop (do not violate)
 
 1. **Two workflows, three human gates — not one auto-run.** `G0` (human runs `make eval`) → **Workflow A `evals-to-proposals`** (read-only, **zero eval spend**) → `G1` (human funds proposals) → **Workflow B `proposal-to-pr`** (the **only** eval spender) → `G2` (human reviews & merges). The two costly/irreversible acts — running evals and merging — stay human longest.
-2. **Two layers + one typed seam.** Deterministic **Layer-1 CLIs** in `evals/` (`distill`, `triage`, `score`/`route`, `validate`) hold everything exact/cheap (no model, TDD'd). **Layer-2 workflow scripts** orchestrate only reasoning subagents and shell out to Layer 1. A typed **`ChangeProposal`** (`evals/proposal.py`) is the A→B seam; `remediation_type` (prompt/guardrail/code/doc) is **orthogonal** to `blast_radius`.
+2. **Two layers + one typed seam.** Deterministic **Layer-1 CLIs** in `evals/` (`distill`, `triage`, `score`, `validate`; routing is `ChangeProposal.route` in `evals/proposal.py`) hold everything exact/cheap (no model, TDD'd). **Layer-2 workflow scripts** orchestrate only reasoning subagents and shell out to Layer 1. A typed **`ChangeProposal`** (`evals/proposal.py`) is the A→B seam; `remediation_type` (prompt/guardrail/code/doc) is **orthogonal** to `blast_radius`.
 3. **Dedup before debug.** Match each failure cluster against `docs/research/failure-modes.md` (the A/B/C/D catalog = the loop's memory) + open ADRs *first*. Only **novel** clusters reach the analysis fan-out — never re-diagnose a catalogued/already-ADR'd mode (e.g. C1 → ADR-0022).
 4. **Route on blast-radius/risk, not implementation size.** A one-line always-on change (e.g. a prompt rule) is *high* blast-radius. Grader-touching changes (specs, probes, fixtures, verifier, scoring) are always high-governance → ADR-route.
 5. **Validate globally, never per-failed-task.** Use the built machinery: `make eval` → `python -m evals.diff` (full matrix + McNemar + clustered CI + the model-agnosticism check). A single re-run is too narrow and too noisy.
@@ -22,15 +22,14 @@ Two things live here, layered:
    `.summary.json`) and, under `--no-cleanup`, whole journal trees. When an *agent* drives the run, it must
    enumerate what was produced and ask the user to confirm committing it before calling the run done —
    results offered by default, journals asked separately with their size and a leak scan (D1). Untracked
-   artifacts do not survive a machine change: the 2026-06 transport-resilience run files were lost that way,
-   and only survived as prose because the numbers had been written into ADR-0028/0029 and a research note.
+   artifacts do not survive a machine change.
    See the root `CLAUDE.md` rule for the full contract.
 10. **No LLM-judge scoring; no SendMessage agent team.** Scoring is deterministic (ADR-0004). Proposal compatibility is handled by a single reconciliation **barrier**, not open-ended cross-agent chat.
 
 ## Conventions for code here
 
 - Every Layer-1 module is a `python -m evals.<name>` CLI with an argparse `main()`, mirrors the pydantic style of `result.py`/`spec.py` (`to_jsonl` / `load_*` / `write_*`), and is **TDD'd in `tests/test_evals.py`** with an injected `ScriptedModel` (offline, no network).
-- `evals/` is held to the same gates as `src/` (ADR-0013): ruff · pyrefly · pydoclint · deptry. `evals/probes/` and `evals/fixtures/` are the only carve-outs. Run `make check` before committing.
+- `evals/` is held to the same gates as the packages (ADR-0013): ruff · pyrefly · pydoclint — but not deptry, since it is dev tooling rather than a distributable package. `evals/probes/` and `evals/fixtures/` are the only carve-outs. Run `make check` before committing.
 - Saved Workflow scripts live in `evals/workflows/` (invoked via `Workflow({scriptPath})`), and are **not** unit-tested or held to the Python gates — they orchestrate reasoning subagents and shell out to the TDD'd Layer-1 CLIs (where all determinism lives). Two exist: **A** `evals_to_proposals.js` → the human-readable digest `evals/proposals/<stamp>/proposals.md` (ADR-0031 — code-free, no per-`<id>.md` files); **B** `proposal_to_pr.js` → per *funded* digest entry, reconstructs the typed `ChangeProposal` (ADR-0032), routes on blast-radius, builds under TDD in a worktree, validates via `python -m evals.validate`, opens a PR — never merges (Gate 2 is human).
 - `evals/validate.py` is the loop's **only eval-spender**: `run_ladder` (local → 1-seed canary on affected models → full matrix) is TDD'd offline with injected stage runners; `frozen_assets` restores the grading surface from a trusted ref so a candidate can't grade itself against a spec it edited. Its verdict reuses `evals.stats` (McNemar + per-model agnosticism) — the same machinery `evals.diff` reports with.
-- Run journals must stay **distillable**: never let a tool dump unbounded output into `ToolEnd.content`, and keep the journal out of the agent-searchable tree (the 875 MB blowup; Increment 0).
+- Run journals must stay **distillable**: never let a tool dump unbounded output into `ToolEnd.content`, and keep the journal out of the agent-searchable tree, since a `search_repo` that reaches `journal.jsonl` feeds its own output back into the journal.
