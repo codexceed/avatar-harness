@@ -31,7 +31,7 @@ that depends on `avatar-harness`. Consume the public surface — `Harness` / `Re
   the screen.** `_write` mirrors each line's plain text into `self.rendered: list[str]` for
   exactly this.
 - **A worker exception must not tear down the app.** A goal that raises is caught and surfaced as
-  a transcript line; the REPL stays alive (the dogfood crash a `DirtyWorkspaceError` once caused).
+  a transcript line; the REPL stays alive.
 
 ## Where things live
 
@@ -49,5 +49,5 @@ that depends on `avatar-harness`. Consume the public surface — `Harness` / `Re
 ```bash
 jo                                       # launch the cockpit
 uv run pytest tests/test_cockpit.py      # the cockpit tests (test_cockpit*.py — at the repo root)
-make check                               # lint + typecheck + full suite — run before committing
+make check                               # the repo's hard gate (see root CLAUDE.md) — run before committing
 ```
