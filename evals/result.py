@@ -14,6 +14,15 @@ class ResultRow(BaseModel):
     model: str
     seed: int
     solved: bool
+    # The two signals `solved` composes, split out so gaming is measurable (ADR-0040). Under
+    # auto-approved self-amendment (ADR-0039) a model's own contract passing certifies nothing, so
+    # the honest grade is the held-out oracle, not the self-report. `self_reported_success` is the
+    # model's own claim (it reached `final_answer` / its own contract passed); `held_out_passed` is
+    # the independent hidden oracle's verdict (the success probe, or the verifier when no probe).
+    # `gamed` = self_reported ∧ ¬held_out (see `metrics.gamed_rate`). Both default False so rows
+    # written before the split load cleanly.
+    self_reported_success: bool = False
+    held_out_passed: bool = False
     outcome: str | None
     iterations: int
     prompt_tokens: int = 0
